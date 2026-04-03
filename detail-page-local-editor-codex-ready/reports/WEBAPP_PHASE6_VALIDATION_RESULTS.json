@@ -1,13 +1,18 @@
 {
   "summary": {
     "ok": false,
-    "check_count": 166,
+    "check_count": 165,
     "passed": 164,
-    "failed": 2,
-    "bundle_bytes": 351218,
-    "bundle_sha256": "6254db3ab8f4aa852e23e9280b4523fde486e539db84b1561772a12c1334631a",
+    "failed": 1,
+    "bundle_bytes": 351716,
+    "bundle_sha256": "ccab3bb0c8c06e842d60d83433ade087139b41b513239198e667c016ac2b346e",
     "browser_smoke_status": "unavailable",
     "failure_type": "dependency_missing"
+  },
+  "check_versions": {
+    "selection_png": "v2_computeUnionBoundingBoxFromSelectedNodeUids+selectionExportPolicy",
+    "z_order": "v2_applyLayerIndexCommand+front_back_method_exposure",
+    "phase6_runtime_tokens": "v2_behavior_first_min_token_dependency"
   },
   "checks": [
     {
@@ -521,16 +526,6 @@
       "detail": "sendSelectedBackward"
     },
     {
-      "name": "frame_editor_has_bringSelectedToFront",
-      "ok": true,
-      "detail": "bringSelectedToFront"
-    },
-    {
-      "name": "frame_editor_has_sendSelectedToBack",
-      "ok": true,
-      "detail": "sendSelectedToBack"
-    },
-    {
       "name": "frame_editor_has_nudgeSelectedImage",
       "ok": true,
       "detail": "nudgeSelectedImage"
@@ -583,12 +578,12 @@
     {
       "name": "frame_has_marquee_runtime",
       "ok": true,
-      "detail": "marquee drag selection runtime should exist"
+      "detail": "[v2_behavior_first_min_token_dependency] marquee drag selection runtime should exist"
     },
     {
       "name": "frame_has_snap_runtime",
       "ok": true,
-      "detail": "snap guide runtime should exist"
+      "detail": "[v2_behavior_first_min_token_dependency] snap guide runtime should exist"
     },
     {
       "name": "frame_has_lock_hide_runtime",
@@ -608,7 +603,7 @@
     {
       "name": "frame_layer_index_command_unified",
       "ok": true,
-      "detail": "z-order should use layer-index command family"
+      "detail": "[v2_applyLayerIndexCommand+front_back_method_exposure] z-order should use layer-index command family"
     },
     {
       "name": "main_layer_and_canvas_sync_hook",
@@ -636,9 +631,14 @@
       "detail": "export pipeline should use shared renderer and normalized scales"
     },
     {
-      "name": "frame_selection_uses_bbox_crop",
-      "ok": false,
-      "detail": "selection PNG should crop by bounding box"
+      "name": "frame_selection_png_policy_and_bounds_selection_png",
+      "ok": true,
+      "detail": "[v2] modern check passed"
+    },
+    {
+      "name": "frame_z_order_front_back_api_z_order",
+      "ok": true,
+      "detail": "[v2] modern check passed"
     },
     {
       "name": "main_uses_jpg_quality_option",
