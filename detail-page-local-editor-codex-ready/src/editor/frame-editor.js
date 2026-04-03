@@ -192,6 +192,10 @@ function stripTransientRuntime(doc) {
     element.removeAttribute('data-detected-slot-score');
     element.removeAttribute('data-detected-slot-reasons');
     element.removeAttribute('data-slot-near-miss');
+    element.removeAttribute('data-editor-crop-active');
+    element.removeAttribute('data-editor-crop-zoom');
+    element.removeAttribute('data-editor-crop-offset-x');
+    element.removeAttribute('data-editor-crop-offset-y');
   }
 }
 
@@ -339,6 +343,7 @@ export function createFrameEditor({
   let hoverSlot = null;
   let editingTextElement = null;
   let editingTextOriginalHtml = '';
+  let imageCropRuntime = null;
   let dragState = null;
   let resizeState = null;
   let suppressClickUntil = 0;
@@ -895,6 +900,10 @@ export function createFrameEditor({
   }
 
   function selectElements(nextElements, { silent = false } = {}) {
+    if (imageCropRuntime) {
+      const nextSingle = uniqueConnectedElements(nextElements)[0] || null;
+      if (!nextSingle || nextSingle !== imageCropRuntime.slot) finishImageCropMode({ apply: true, emit: false });
+    }
     clearSelectionClasses();
     selectedElements = uniqueConnectedElements(nextElements);
     syncSelectionInfo();
@@ -1259,6 +1268,7 @@ export function createFrameEditor({
   function startTextEdit(element = selectedElement) {
     if (!isTextEditableTarget(element)) return { ok: false, message: '텍스트 요소를 먼저 선택해 주세요.' };
     if (isLockedElement(element)) return { ok: false, message: '잠긴 레이어는 텍스트 편집할 수 없습니다.' };
+    if (imageCropRuntime) finishImageCropMode({ apply: true, emit: false });
     if (editingTextElement && editingTextElement !== element) finishTextEdit({ commit: true, emit: false });
     if (editingTextElement === element) return { ok: true, message: '이미 텍스트 편집 중입니다.' };
     editingTextElement = element;
@@ -1293,6 +1303,91 @@ export function createFrameEditor({
   function toggleTextEdit() {
     if (editingTextElement) return finishTextEdit({ commit: true });
     return startTextEdit(selectedElement);
+  }
+
+  function updateImageCropRuntimeDataset(state) {
+    if (!state?.slot || !state?.img) return;
+    state.slot.dataset.editorCropActive = '1';
+    state.img.dataset.editorCropActive = '1';
+    state.slot.dataset.editorCropZoom = String(Number(state.zoom.toFixed(3)));
+    state.slot.dataset.editorCropOffsetX = String(Number(state.offsetX.toFixed(3)));
+    state.slot.dataset.editorCropOffsetY = String(Number(state.offsetY.toFixed(3)));
+  }
+
+  function updateImageCropRuntimeStyles(state) {
+    if (!state?.img || !state?.slot) return;
+    updateImageCropRuntimeDataset(state);
+    setInlineStyle(state.slot, { overflow: 'hidden' });
+    setInlineStyle(state.img, {
+      transformOrigin: 'center center',
+      transform: `translate(${Number(state.offsetX.toFixed(3))}px, ${Number(state.offsetY.toFixed(3))}px) scale(${Number(state.zoom.toFixed(3))})`,
+    });
+  }
+
+  function resetImageCropRuntime({ emit = true } = {}) {
+    if (!imageCropRuntime) return { ok: false, message: '현재 이미지 크롭 편집 중이 아닙니다.' };
+    imageCropRuntime.zoom = 1;
+    imageCropRuntime.offsetX = 0;
+    imageCropRuntime.offsetY = 0;
+    updateImageCropRuntimeStyles(imageCropRuntime);
+    if (emit) emitState();
+    return { ok: true, message: '이미지 크롭 위치/확대를 초기화했습니다.' };
+  }
+
+  function finishImageCropMode({ apply = true, emit = true } = {}) {
+    if (!imageCropRuntime) return { ok: false, message: '현재 이미지 크롭 편집 중이 아닙니다.' };
+    const state = imageCropRuntime;
+    const { slot, img } = state;
+    if (apply) {
+      setInlineStyle(img, {
+        transformOrigin: 'center center',
+        transform: `translate(${Number(state.offsetX.toFixed(3))}px, ${Number(state.offsetY.toFixed(3))}px) scale(${Number(state.zoom.toFixed(3))})`,
+      });
+      img.dataset.editorImageModified = '1';
+      slot.dataset.editorModified = '1';
+      if (slot.dataset.nodeUid) modifiedSlots.add(slot.dataset.nodeUid);
+    } else if (state.initialStyle) {
+      img.setAttribute('style', state.initialStyle);
+    } else {
+      img.removeAttribute('style');
+    }
+    if (state.initialExportStyle) img.dataset.exportStyle = state.initialExportStyle;
+    else img.removeAttribute('data-export-style');
+    slot.removeAttribute('data-editor-crop-active');
+    slot.removeAttribute('data-editor-crop-zoom');
+    slot.removeAttribute('data-editor-crop-offset-x');
+    slot.removeAttribute('data-editor-crop-offset-y');
+    img.removeAttribute('data-editor-crop-active');
+    imageCropRuntime = null;
+    if (emit) {
+      emitState();
+      if (apply) emitMutation('image-crop-apply');
+    }
+    return { ok: true, message: apply ? '이미지 크롭 편집을 적용했습니다.' : '이미지 크롭 편집을 취소했습니다.' };
+  }
+
+  function enterImageCropMode(element = selectedElement) {
+    const slot = selectionTypeOf(element) === 'slot' ? element : getSelectedSlotElement();
+    if (!slot) return { ok: false, message: '먼저 이미지 슬롯을 선택해 주세요.' };
+    if (isLockedElement(slot)) return { ok: false, message: '잠긴 레이어는 이미지 크롭 편집할 수 없습니다.' };
+    const img = slot.querySelector('img');
+    if (!img) return { ok: false, message: '슬롯 안에 이미지가 없습니다.' };
+    if (editingTextElement) finishTextEdit({ commit: true, emit: false });
+    if (imageCropRuntime?.slot === slot) return { ok: true, message: '이미 이미지 크롭 편집 중입니다. Enter=적용, Esc=취소.' };
+    if (imageCropRuntime) finishImageCropMode({ apply: true, emit: false });
+    imageCropRuntime = {
+      slot,
+      img,
+      zoom: 1,
+      offsetX: 0,
+      offsetY: 0,
+      initialStyle: img.getAttribute('style') || '',
+      initialExportStyle: img.dataset.exportStyle || '',
+    };
+    selectElements([slot], { silent: true });
+    updateImageCropRuntimeStyles(imageCropRuntime);
+    emitState();
+    return { ok: true, message: '이미지 크롭 편집 시작: 화살표 이동, +/- 확대, 0 초기화, Enter 적용, Esc 취소.' };
   }
 
   function readTransformState(element) {
@@ -1666,6 +1761,13 @@ export function createFrameEditor({
   }
 
   function nudgeImagePosition(dx = 0, dy = 0) {
+    if (imageCropRuntime) {
+      imageCropRuntime.offsetX += dx;
+      imageCropRuntime.offsetY += dy;
+      updateImageCropRuntimeStyles(imageCropRuntime);
+      emitState();
+      return { ok: true, message: `크롭 프리뷰를 ${dx || 0}, ${dy || 0}만큼 이동했습니다.` };
+    }
     const slot = getSelectedSlotElement();
     if (!slot) return { ok: false, message: '먼저 이미지 슬롯을 선택해 주세요.' };
     const img = slot.querySelector('img');
@@ -2784,6 +2886,10 @@ export function createFrameEditor({
     }
     const target = resolveSelectionTarget(event.target);
     if (!target) return;
+    if (imageCropRuntime && target !== imageCropRuntime.slot) {
+      const cropResult = finishImageCropMode({ apply: true, emit: true });
+      onStatus(cropResult.message);
+    }
     const anchor = closestElement(event.target)?.closest?.('a[href]');
     if (anchor) event.preventDefault();
     selectElement(target, {
@@ -2795,7 +2901,12 @@ export function createFrameEditor({
   function handleDocDoubleClick(event) {
     const target = resolveSelectionTarget(event.target);
     if (!target) return;
-    const result = startTextEdit(target);
+    const targetType = selectionTypeOf(target);
+    const result = targetType === 'text'
+      ? startTextEdit(target)
+      : targetType === 'slot'
+        ? enterImageCropMode(target)
+        : { ok: false, message: '' };
     if (result.ok) {
       event.preventDefault();
       onStatus(result.message);
@@ -2812,6 +2923,10 @@ export function createFrameEditor({
     if (command === 'add-element-box') return addElement('box');
     if (command === 'add-element-slot') return addElement('slot');
     if (command === 'toggle-text-edit') return toggleTextEdit();
+    if (command === 'image-crop-enter') return enterImageCropMode(selectedElement);
+    if (command === 'image-crop-apply') return finishImageCropMode({ apply: true });
+    if (command === 'image-crop-cancel') return finishImageCropMode({ apply: false });
+    if (command === 'image-crop-reset') return resetImageCropRuntime();
     if (command === 'layer-index-forward') return applyLayerIndexCommand('forward');
     if (command === 'layer-index-backward') return applyLayerIndexCommand('backward');
     if (command === 'layer-index-front') return applyLayerIndexCommand('front');
@@ -2824,6 +2939,42 @@ export function createFrameEditor({
   }
 
   function handleKeydown(event) {
+    if (imageCropRuntime) {
+      const step = event.shiftKey ? 10 : event.altKey ? 1 : 2;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onStatus(finishImageCropMode({ apply: false }).message);
+        return;
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        onStatus(finishImageCropMode({ apply: true }).message);
+        return;
+      }
+      if (event.key === '0') {
+        event.preventDefault();
+        onStatus(resetImageCropRuntime().message);
+        return;
+      }
+      if (event.key === '+' || event.key === '=') {
+        event.preventDefault();
+        imageCropRuntime.zoom = Math.min(4, imageCropRuntime.zoom + 0.05);
+        updateImageCropRuntimeStyles(imageCropRuntime);
+        emitState();
+        return;
+      }
+      if (event.key === '-') {
+        event.preventDefault();
+        imageCropRuntime.zoom = Math.max(0.5, imageCropRuntime.zoom - 0.05);
+        updateImageCropRuntimeStyles(imageCropRuntime);
+        emitState();
+        return;
+      }
+      if (event.key === 'ArrowLeft') { event.preventDefault(); onStatus(nudgeImagePosition(-step, 0).message); return; }
+      if (event.key === 'ArrowRight') { event.preventDefault(); onStatus(nudgeImagePosition(step, 0).message); return; }
+      if (event.key === 'ArrowUp') { event.preventDefault(); onStatus(nudgeImagePosition(0, -step).message); return; }
+      if (event.key === 'ArrowDown') { event.preventDefault(); onStatus(nudgeImagePosition(0, step).message); return; }
+    }
     const withModifier = event.ctrlKey || event.metaKey;
     const typingInput = isTypingInputTarget(closestElement(event.target));
     if (typingInput && !editingTextElement) return;
@@ -3065,6 +3216,7 @@ export function createFrameEditor({
       if (destroyed) return;
       destroyed = true;
       if (editingTextElement) finishTextEdit({ commit: false, emit: false });
+      if (imageCropRuntime) finishImageCropMode({ apply: false, emit: false });
       doc.removeEventListener('click', handleDocClick, true);
       doc.removeEventListener('dblclick', handleDocDoubleClick, true);
       doc.removeEventListener('keydown', handleKeydown, true);

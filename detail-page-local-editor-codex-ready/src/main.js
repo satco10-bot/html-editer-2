@@ -1169,6 +1169,7 @@ function executeCanvasContextAction(action) {
   if (action === 'layer-index-front') return executeEditorCommand('layer-index-front');
   if (action === 'layer-index-back') return executeEditorCommand('layer-index-back');
   if (action === 'toggle-text-edit') return executeEditorCommand('toggle-text-edit');
+  if (action === 'image-crop-enter') return executeEditorCommand('image-crop-enter');
   if (action === 'image-cover') return activeEditor.applyImagePreset('cover');
   if (action === 'image-contain') return activeEditor.applyImagePreset('contain');
   if (action === 'image-nudge-left') return activeEditor.nudgeSelectedImage({ dx: -2, dy: 0 });
@@ -1286,7 +1287,7 @@ function renderShell(state) {
   elements.toggleLockButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
   if (elements.arrangeToggleHideButton) elements.arrangeToggleHideButton.disabled = elements.toggleHideButton.disabled;
   if (elements.arrangeToggleLockButton) elements.arrangeToggleLockButton.disabled = elements.toggleLockButton.disabled;
-  elements.textEditButton.disabled = !hasEditor;
+  if (elements.textEditButton) elements.textEditButton.disabled = !hasEditor;
   elements.groupButton.disabled = !hasEditor || !state.editorMeta?.canGroupSelection;
   elements.ungroupButton.disabled = !hasEditor || !state.editorMeta?.canUngroupSelection;
   elements.preflightRefreshButton.disabled = !hasEditor;
@@ -1892,7 +1893,7 @@ elements.redetectButton.addEventListener('click', () => {
   setStatus('슬롯 자동 감지를 다시 실행했습니다.');
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
-elements.textEditButton.addEventListener('click', () => {
+elements.textEditButton?.addEventListener('click', () => {
   executeEditorCommand('toggle-text-edit');
 });
 elements.duplicateButton?.addEventListener('click', () => { executeEditorCommand('duplicate'); });
