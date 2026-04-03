@@ -58,7 +58,46 @@
   </style>
 </head>
 <body>
-  <div class="app-shell">
+  <section id="appLauncher" class="app-launcher">
+    <div class="app-launcher__panel">
+      <div class="app-launcher__header">
+        <p class="app-launcher__eyebrow">빠른 시작</p>
+        <h2>무엇을 시작할까요?</h2>
+        <p>이 앱은 <code>file://</code>에서 바로 실행되는 로컬 편집기입니다. 서버 없이 HTML 파일을 열어 편집할 수 있어요.</p>
+      </div>
+
+      <div class="app-launcher__cards">
+        <button id="launcherNewButton" class="launcher-card" type="button" data-launch-fixture="F01">
+          <strong>새로 만들기</strong>
+          <span>빈 860px 템플릿(F01)으로 바로 시작</span>
+        </button>
+        <button id="launcherUploadButton" class="launcher-card" type="button">
+          <strong>HTML 업로드</strong>
+          <span>내 컴퓨터의 .html 파일을 열기</span>
+        </button>
+        <button id="launcherRecentButton" class="launcher-card" type="button">
+          <strong>최근 작업 열기</strong>
+          <span>자동저장본이 있으면 이어서 작업</span>
+        </button>
+      </div>
+
+      <div class="app-launcher__quick">
+        <h3>대표 fixture 빠른 시작</h3>
+        <div class="app-launcher__quick-grid">
+          <button class="fixture-quick-card" type="button" data-launch-fixture="F01">
+            <strong>F01</strong>
+            <span>Blank Builder · 슬롯 3개</span>
+          </button>
+          <button class="fixture-quick-card" type="button" data-launch-fixture="F05">
+            <strong>F05</strong>
+            <span>실사용 샘플 · 혼합 슬롯/이미지</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div id="appShell" class="app-shell" hidden>
     <header class="topbar">
       <div class="topbar__left">
         <div class="topbar__brand">
@@ -535,7 +574,7 @@
     </aside>
   </div>
 
-  <footer class="statusbar">
+  <footer id="appStatusbar" class="statusbar" hidden>
     <div id="documentStatusChip" class="status-chip status-chip--document" data-status="idle">문서 없음</div>
     <div id="statusText">대기 중</div>
   </footer>
