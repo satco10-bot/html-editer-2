@@ -16,7 +16,9 @@ export const SLOT_NEAR_MISS_MIN = 48;
 export const FRAME_STYLE_ID = '__phase5_local_editor_style';
 export const FRAME_OVERLAY_ID = '__phase5_local_editor_overlay';
 export const AUTOSAVE_KEY = 'detail-local-webapp-autosave-v6';
+export const PROJECT_SNAPSHOT_KEY = 'detail-local-webapp-project-snapshots-v1';
 export const HISTORY_LIMIT = 80;
+export const PROJECT_SNAPSHOT_LIMIT = 30;
 
 export const EXPORT_PRESETS = [
   { id: 'default', label: '기본 패키지', scale: 1, bundleMode: 'basic', description: '편집 HTML + 전체 PNG + 리포트' },

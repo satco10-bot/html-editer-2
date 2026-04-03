@@ -193,6 +193,7 @@
           <button id="undoButton" class="button">되돌리기</button>
           <button id="redoButton" class="button button--secondary" data-beginner-more-item="workspace">다시하기</button>
           <button id="restoreAutosaveButton" class="button button--ghost" data-beginner-more-item="workspace">자동저장 복구</button>
+          <button id="saveProjectSnapshotButton" class="button button--ghost" data-beginner-more-item="workspace">스냅샷 저장</button>
           <button id="toggleLeftSidebarButton" class="button button--ghost" data-beginner-more-item="workspace">왼쪽 패널</button>
           <button id="toggleRightSidebarButton" class="button button--ghost" data-beginner-more-item="workspace">오른쪽 패널</button>
           <button id="focusModeButton" class="button button--ghost" data-beginner-more-item="workspace">캔버스 집중</button>
@@ -253,6 +254,15 @@
         <section class="upload-bucket">
           <h3>깨진 자산</h3>
           <div id="uploadBrokenList" class="upload-slot-list"></div>
+        </section>
+        <section class="upload-bucket">
+          <h3>프로젝트 스냅샷(타임머신)</h3>
+          <div class="snapshot-composer">
+            <input id="snapshotNameInput" class="asset-filter" type="text" maxlength="40" placeholder="예: 어제 최종안" />
+            <button id="saveSnapshotFromPanelButton" class="button button--secondary button--small">시점 저장</button>
+          </div>
+          <p class="hint">복원 버튼을 누르면 현재 상태를 자동 백업한 뒤 해당 시점으로 이동합니다.</p>
+          <div id="snapshotList" class="snapshot-list"></div>
         </section>
         <details class="left-accordion">
           <summary><strong>고급</strong> · 코드/진단</summary>
