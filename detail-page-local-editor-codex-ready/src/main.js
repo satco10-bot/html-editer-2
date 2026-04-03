@@ -361,8 +361,8 @@ function selectionExportBackground() {
   return raw === 'opaque' ? 'opaque' : 'transparent';
 }
 
-function setStatus(text) {
-  store.setStatus(text);
+function setStatus(text, options = undefined) {
+  store.setStatus(text, options);
 }
 
 function extractErrorMessage(error) {
@@ -376,7 +376,7 @@ function setStatusWithError(prefix, error, { logTag = 'APP_ERROR' } = {}) {
   const detail = extractErrorMessage(error);
   if (logTag) console.error(`[${logTag}]`, error);
   store.setLastError(detail);
-  setStatus(detail ? `${prefix} (${detail})` : prefix);
+  setStatus(prefix, { preserveLastError: true });
 }
 
 function isTypingInputTarget(target) {

@@ -52,8 +52,9 @@ export function createProjectStore() {
     notify();
   }
 
-  function setStatus(text) {
+  function setStatus(text, { preserveLastError = false } = {}) {
     state.statusText = String(text || '대기 중');
+    if (!preserveLastError) state.lastError = '';
     notify();
   }
 
