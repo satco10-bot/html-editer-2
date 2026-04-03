@@ -111,23 +111,34 @@ def run() -> dict[str, object]:
                 image_chooser_info.value.set_files(str(image_path))
                 wait_status_contains(page, '이미지를 적용', 30000, '이미지 적용')
 
-                with page.expect_download(timeout=10000) as download_info:
-                    page.click('#exportPngButton')
-                download = download_info.value
-                suggested_name = download.suggested_filename
-                saved_path = tmp_dir / suggested_name
-                download.save_as(str(saved_path))
+                try:
+                    with page.expect_download(timeout=10000) as download_info:
+                        page.click('#exportPngButton')
+                    download = download_info.value
+                    suggested_name = download.suggested_filename
+                    saved_path = tmp_dir / suggested_name
+                    download.save_as(str(saved_path))
 
-                final_status = page.locator('#statusText').inner_text()
-                browser.close()
+                    final_status = page.locator('#statusText').inner_text()
+                    browser.close()
 
-                return {
-                    'status': 'ok',
-                    'downloaded_file': suggested_name,
-                    'download_exists': saved_path.exists(),
-                    'download_size': saved_path.stat().st_size if saved_path.exists() else 0,
-                    'final_status': final_status,
-                }
+                    return {
+                        'status': 'ok',
+                        'downloaded_file': suggested_name,
+                        'download_exists': saved_path.exists(),
+                        'download_size': saved_path.stat().st_size if saved_path.exists() else 0,
+                        'final_status': final_status,
+                    }
+                except TimeoutErrorType as error:
+                    final_status = page.locator('#statusText').inner_text() if page.locator('#statusText').count() else ''
+                    browser.close()
+                    return {
+                        'status': 'failed',
+                        'error_type': 'download_timeout',
+                        'error': str(error),
+                        'final_status': final_status,
+                        'hint': 'export 버튼 클릭 후 다운로드 이벤트가 발생하지 않았습니다.',
+                    }
         except TimeoutErrorType as error:
             return {'status': 'failed', 'error_type': 'timeout', 'error': str(error)}
         except Exception as error:  # pragma: no cover
