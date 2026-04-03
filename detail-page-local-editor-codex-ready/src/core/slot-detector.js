@@ -76,7 +76,7 @@ function groupKeyFor(element) {
     : element.tagName.toLowerCase();
 }
 
-function evaluateCandidate(element) {
+export function evaluateCandidate(element) {
   const className = typeof element.className === 'string' ? element.className : '';
   const text = placeholderText(element);
   const hasPlaceholder = PLACEHOLDER_TEXT_RE.test(text);
