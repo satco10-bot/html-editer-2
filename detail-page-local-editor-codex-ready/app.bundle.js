@@ -4708,7 +4708,8 @@ let geometryCoordMode = 'relative';
 let currentSaveFormat = 'linked';
 let currentWorkflowStep = 'load';
 let lastSaveConversion = null;
-let importRequestSequence = 0;
+let advancedSettingsDirty = false;
+let lastFocusedBeforeShortcutHelp = null;
 const zoomState = { mode: 'fit', value: 1 };
 const WORKFLOW_STEP_GUIDES = Object.freeze({
   load: 'HTML 파일이나 폴더를 먼저 불러오세요.',
@@ -5075,8 +5076,11 @@ function toggleShortcutHelp(forceOpen = null) {
   const shouldOpen = forceOpen == null ? overlay.hidden : !!forceOpen;
   overlay.hidden = !shouldOpen;
   if (shouldOpen) {
+    lastFocusedBeforeShortcutHelp = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     elements.shortcutHelpCloseButton?.focus();
     setStatus('단축키 치트시트를 열었습니다.');
+  } else if (lastFocusedBeforeShortcutHelp && typeof lastFocusedBeforeShortcutHelp.focus === 'function') {
+    lastFocusedBeforeShortcutHelp.focus();
   }
   return shouldOpen;
 }
@@ -5216,8 +5220,9 @@ function syncSaveFormatUi() {
 }
 
 function markAdvancedSettingsDirty(isDirty) {
+  advancedSettingsDirty = !!isDirty;
   if (!elements.advancedSettingsState) return;
-  elements.advancedSettingsState.textContent = isDirty ? '고급값 변경됨 · 적용 필요' : '고급값 대기 없음';
+  elements.advancedSettingsState.textContent = advancedSettingsDirty ? '고급값 변경됨 · 적용 필요' : '고급값 대기 없음';
 }
 
 function getFirstControlValue(controlList, fallbackValue) {
@@ -5272,6 +5277,12 @@ function applyAdvancedSettingsFromForm() {
   };
 }
 
+function applyAdvancedSettingsIfDirty() {
+  if (!advancedSettingsDirty) return false;
+  applyAdvancedSettingsFromForm();
+  return true;
+}
+
 function readPanelLayoutState() {
   try {
     const raw = window.localStorage.getItem(PANEL_LAYOUT_STORAGE_KEY);
@@ -5304,10 +5315,22 @@ function restorePanelLayoutState() {
 }
 
 function setSidebarTab(panelId) {
+  const scope = String(panelId || '').startsWith('left-')
+    ? 'left'
+    : (String(panelId || '').startsWith('right-') ? 'right' : '');
+  if (!scope) return;
   for (const button of elements.sidebarTabButtons) {
+    const buttonScope = String(button.dataset.sidebarTab || '').startsWith('left-')
+      ? 'left'
+      : (String(button.dataset.sidebarTab || '').startsWith('right-') ? 'right' : '');
+    if (buttonScope !== scope) continue;
     button.classList.toggle('is-active', button.dataset.sidebarTab === panelId);
   }
   for (const panel of elements.sidebarPanels) {
+    const panelScope = String(panel.dataset.sidebarPanel || '').startsWith('left-')
+      ? 'left'
+      : (String(panel.dataset.sidebarPanel || '').startsWith('right-') ? 'right' : '');
+    if (panelScope !== scope) continue;
     panel.classList.toggle('is-active', panel.dataset.sidebarPanel === panelId);
   }
 }
@@ -5910,14 +5933,11 @@ function loadFixture(fixtureId) {
 
 async function openHtmlFile(file) {
   if (!file) return;
-  const requestId = importRequestSequence += 1;
   try {
     const html = await file.text();
-    if (requestId !== importRequestSequence) return;
     const fileIndex = createImportFileIndex([file], 'html-file');
     pendingMountOptions = { snapshot: null, preserveHistory: false };
     const project = normalizeProject({ html, sourceName: file.name, sourceType: 'html-file', fileIndex, htmlEntryPath: file.name });
-    if (requestId !== importRequestSequence) return;
     store.setProject(project);
     setStatus(`HTML 파일 ${file.name}을 불러왔습니다. 미해결 자산 ${project.summary.assetsUnresolved}개입니다.`);
   } catch (error) {
@@ -6060,29 +6080,32 @@ async function downloadByFormat(format, { forceZip = false } = {}) {
 async function exportFullPng() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
+  const autoApplied = applyAdvancedSettingsIfDirty();
   if (!ensurePreflightBeforeExport('전체 PNG 저장')) return;
   if (!(await ensureFixtureIntegrityBeforeExport('전체 PNG 저장'))) return;
   const blob = await activeEditor.exportFullPngBlob(exportScale());
   const fileName = `${projectBaseName(project)}__full.png`;
   downloadBlob(fileName, blob);
-  setStatus(`전체 PNG를 저장했습니다: ${fileName} (${exportScale()}x)`);
+  setStatus(`전체 PNG를 저장했습니다: ${fileName} (${exportScale()}x)${autoApplied ? ' · 변경된 고급값 자동 반영' : ''}`);
 }
 
 async function exportFullJpg() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
+  const autoApplied = applyAdvancedSettingsIfDirty();
   if (!ensurePreflightBeforeExport('전체 JPG 저장')) return;
   if (!(await ensureFixtureIntegrityBeforeExport('전체 JPG 저장'))) return;
   const quality = exportJpgQuality();
   const blob = await activeEditor.exportFullJpgBlob(exportScale(), quality);
   const fileName = `${projectBaseName(project)}__full.jpg`;
   downloadBlob(fileName, blob);
-  setStatus(`전체 JPG를 저장했습니다: ${fileName} (${exportScale()}x, 품질 ${quality.toFixed(2)})`);
+  setStatus(`전체 JPG를 저장했습니다: ${fileName} (${exportScale()}x, 품질 ${quality.toFixed(2)})${autoApplied ? ' · 변경된 고급값 자동 반영' : ''}`);
 }
 
 async function exportSelectionPng() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
+  const autoApplied = applyAdvancedSettingsIfDirty();
   if (!(await ensureFixtureIntegrityBeforeExport('선택 영역 PNG 저장'))) return;
   const options = {
     padding: selectionExportPadding(),
@@ -6094,20 +6117,21 @@ async function exportSelectionPng() {
   const skipped = meta?.policy?.skippedHidden + meta?.policy?.skippedLocked || 0;
   const bgLabel = options.background === 'opaque' ? '불투명(흰색)' : '투명';
   setStatus(
-    `선택 영역 PNG를 저장했습니다: ${fileName} (${exportScale()}x, union bbox, 여백 ${options.padding}px, 배경 ${bgLabel}, 포함 ${meta?.targetCount || 0}개, 제외 ${skipped}개·숨김 제외 ${meta?.policy?.excludeHidden ? 'ON' : 'OFF'}·잠금 제외 ${meta?.policy?.excludeLocked ? 'ON' : 'OFF'})`,
+    `선택 영역 PNG를 저장했습니다: ${fileName} (${exportScale()}x, union bbox, 여백 ${options.padding}px, 배경 ${bgLabel}, 포함 ${meta?.targetCount || 0}개, 제외 ${skipped}개·숨김 제외 ${meta?.policy?.excludeHidden ? 'ON' : 'OFF'}·잠금 제외 ${meta?.policy?.excludeLocked ? 'ON' : 'OFF'})${autoApplied ? ' · 변경된 고급값 자동 반영' : ''}`,
   );
 }
 
 async function exportSectionsZip() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
+  const autoApplied = applyAdvancedSettingsIfDirty();
   if (!ensurePreflightBeforeExport('섹션 PNG ZIP 저장')) return;
   if (!(await ensureFixtureIntegrityBeforeExport('섹션 PNG ZIP 저장'))) return;
   const entries = await activeEditor.exportSectionPngEntries(exportScale());
   const zipBlob = await buildZipBlob(entries);
   const fileName = `${projectBaseName(project)}__sections_png.zip`;
   downloadBlob(fileName, zipBlob);
-  setStatus(`섹션 PNG ZIP을 저장했습니다: ${fileName}`);
+  setStatus(`섹션 PNG ZIP을 저장했습니다: ${fileName}${autoApplied ? ' · 변경된 고급값 자동 반영' : ''}`);
 }
 
 function downloadReportJson() {
@@ -6122,6 +6146,7 @@ function downloadReportJson() {
 async function downloadExportPresetPackage() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
+  applyAdvancedSettingsIfDirty();
   const preset = currentExportPreset();
   const baseName = projectBaseName(project);
   const report = getEditorReport(project);
@@ -6473,11 +6498,8 @@ elements.applyAdvancedSettingsButton?.addEventListener('click', () => {
 
 elements.htmlFileInput.addEventListener('change', async (event) => {
   const [file] = event.target.files || [];
-  try {
-    await openHtmlFile(file);
-  } finally {
-    event.target.value = '';
-  }
+  await openHtmlFile(file);
+  event.target.value = '';
 });
 
 elements.folderInput.addEventListener('change', async (event) => {
@@ -6594,6 +6616,28 @@ window.addEventListener('keydown', (event) => {
     event.preventDefault();
     toggleShortcutHelp();
     return;
+  }
+  if (!elements.shortcutHelpOverlay?.hidden && event.key === 'Tab') {
+    const focusable = Array.from(elements.shortcutHelpOverlay.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])'))
+      .filter((node) => node instanceof HTMLElement && !node.hasAttribute('disabled') && node.getAttribute('aria-hidden') !== 'true');
+    if (focusable.length < 1) {
+      event.preventDefault();
+      elements.shortcutHelpCloseButton?.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last.focus();
+      return;
+    }
+    if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+      return;
+    }
   }
   if (!elements.shortcutHelpOverlay?.hidden) return;
 
