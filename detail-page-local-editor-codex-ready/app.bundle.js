@@ -2745,6 +2745,66 @@ function createFrameEditor({
     };
   }
 
+  function groupSelected() {
+    const targets = filterTopLevelSelection(selectedElements).filter((element) => !isLockedElement(element));
+    if (targets.length < 2) return { ok: false, message: '그룹은 2개 이상 선택해야 합니다.' };
+    const parent = targets[0]?.parentElement;
+    if (!parent || parent === doc.body || ['HTML', 'BODY'].includes(parent.tagName)) {
+      return { ok: false, message: '그룹을 만들 공통 부모를 찾지 못했습니다.' };
+    }
+    if (!targets.every((element) => element.parentElement === parent)) {
+      return { ok: false, message: '같은 부모 레벨의 요소만 그룹으로 묶을 수 있습니다.' };
+    }
+    const siblingOrder = Array.from(parent.children || []);
+    const orderedTargets = targets.slice().sort((a, b) => siblingOrder.indexOf(a) - siblingOrder.indexOf(b));
+    const group = doc.createElement('div');
+    group.dataset.nodeRole = 'group';
+    group.dataset.nodeUid = nextId('node');
+    group.dataset.groupLabel = `그룹 ${orderedTargets.length}`;
+    group.setAttribute('aria-label', group.dataset.groupLabel);
+    parent.insertBefore(group, orderedTargets[0]);
+    for (const target of orderedTargets) group.appendChild(target);
+    group.dataset.editorModified = '1';
+    modifiedSlots.add(group.dataset.nodeUid);
+    redetect({ preserveSelectionUids: [group.dataset.nodeUid] });
+    emitMutation('group-selection');
+    return { ok: true, message: `선택 요소 ${orderedTargets.length}개를 그룹으로 묶었습니다.` };
+  }
+
+  function ungroupSelected() {
+    const targets = filterTopLevelSelection(selectedElements);
+    if (!targets.length) return { ok: false, message: '먼저 그룹(또는 그룹 안 요소)을 선택해 주세요.' };
+    const groups = [];
+    const seen = new Set();
+    const pushGroup = (group) => {
+      if (!isGroupElement(group) || !group.isConnected || isLockedElement(group)) return;
+      const uid = group.dataset.nodeUid || nextId('node');
+      group.dataset.nodeUid = uid;
+      if (seen.has(uid)) return;
+      seen.add(uid);
+      groups.push(group);
+    };
+    for (const target of targets) {
+      if (isGroupElement(target)) pushGroup(target);
+      else pushGroup(target.parentElement);
+    }
+    if (!groups.length) return { ok: false, message: '해제할 그룹을 찾지 못했습니다.' };
+    const keepSelectionUids = [];
+    for (const group of groups) {
+      const parent = group.parentElement;
+      if (!parent) continue;
+      const children = Array.from(group.children || []).filter((child) => isElement(child));
+      for (const child of children) {
+        parent.insertBefore(child, group);
+        if (child.dataset.nodeUid) keepSelectionUids.push(child.dataset.nodeUid);
+      }
+      group.remove();
+    }
+    redetect({ preserveSelectionUids: keepSelectionUids });
+    emitMutation('ungroup-selection');
+    return { ok: true, message: `그룹 ${groups.length}개를 해제했습니다.` };
+  }
+
   function deleteSelected() {
     return deleteSelection({
       selectedElements: () => uniqueConnectedElements(selectedElements),
@@ -3862,6 +3922,8 @@ function createFrameEditor({
   function executeCommand(command, payload = {}) {
     if (command === 'duplicate') return duplicateSelected();
     if (command === 'delete') return deleteSelected();
+    if (command === 'group-selection') return groupSelected();
+    if (command === 'ungroup-selection') return ungroupSelected();
     if (command === 'nudge-selection') return nudgeSelectedElements(payload.dx || 0, payload.dy || 0);
     if (command === 'undo' || command === 'redo' || command === 'save-edited') {
       onShortcut(command);
@@ -3892,6 +3954,11 @@ function createFrameEditor({
       if (key === 'd') {
         event.preventDefault();
         onStatus(executeCommand('duplicate').message);
+        return;
+      }
+      if (key === 'g') {
+        event.preventDefault();
+        onStatus(executeCommand(event.shiftKey ? 'ungroup-selection' : 'group-selection').message);
         return;
       }
     }
@@ -4974,6 +5041,75 @@ function syncGeometryControls() {
   }
 }
 
+function resolveCanvasContextScope(editorMeta) {
+  const count = Number(editorMeta?.selectionCount || 0);
+  if (count > 1) return 'multi';
+  if (count < 1) return '';
+  const selectedType = editorMeta?.selectedItems?.[0]?.type || editorMeta?.selected?.type || '';
+  if (selectedType === 'slot') return 'image';
+  if (selectedType === 'text') return 'text';
+  return '';
+}
+
+function executeCanvasContextAction(action) {
+  if (!activeEditor) return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
+  if (action === 'duplicate' || action === 'delete') return executeEditorCommand(action);
+  if (action === 'bring-forward') return activeEditor.bringSelectedForward();
+  if (action === 'send-backward') return activeEditor.sendSelectedBackward();
+  if (action === 'text-edit') return activeEditor.toggleTextEdit();
+  if (action === 'image-cover') return activeEditor.applyImagePreset('cover');
+  if (action === 'image-contain') return activeEditor.applyImagePreset('contain');
+  if (action === 'image-nudge-left') return activeEditor.nudgeSelectedImage({ dx: -2, dy: 0 });
+  if (action === 'image-nudge-right') return activeEditor.nudgeSelectedImage({ dx: 2, dy: 0 });
+  if (action === 'image-nudge-up') return activeEditor.nudgeSelectedImage({ dx: 0, dy: -2 });
+  if (action === 'image-nudge-down') return activeEditor.nudgeSelectedImage({ dx: 0, dy: 2 });
+  if ([
+    'same-width',
+    'same-height',
+    'same-size',
+    'align-left',
+    'align-center',
+    'align-right',
+    'align-top',
+    'align-middle',
+    'align-bottom',
+    'distribute-horizontal',
+    'distribute-vertical',
+  ].includes(action)) return activeEditor.applyBatchLayout(action);
+  return { ok: false, message: `지원하지 않는 캔버스 액션: ${action}` };
+}
+
+function syncCanvasDirectUi(editorMeta) {
+  const selectionCount = Number(editorMeta?.selectionCount || 0);
+  const hasSelection = selectionCount > 0;
+  if (elements.canvasContextBar) elements.canvasContextBar.hidden = !hasSelection;
+  if (!hasSelection) return;
+
+  const scope = resolveCanvasContextScope(editorMeta);
+  for (const button of elements.canvasActionButtons) {
+    const buttonScope = button.dataset.canvasScope || 'common';
+    const visible = buttonScope === 'common' || (scope && buttonScope === scope);
+    button.hidden = !visible;
+    button.disabled = !visible || !activeEditor;
+  }
+
+  const geometryEnabled = !!activeEditor?.getSelectionGeometry?.();
+  const mirrorPairs = [
+    [elements.canvasGeometryXInput, elements.geometryXInput],
+    [elements.canvasGeometryYInput, elements.geometryYInput],
+    [elements.canvasGeometryWInput, elements.geometryWInput],
+    [elements.canvasGeometryHInput, elements.geometryHInput],
+  ];
+  for (const [canvasInput, sourceInput] of mirrorPairs) {
+    if (!canvasInput || !sourceInput) continue;
+    canvasInput.value = sourceInput.value;
+    canvasInput.placeholder = sourceInput.placeholder || '';
+    canvasInput.dataset.mixed = sourceInput.dataset.mixed || '0';
+    canvasInput.disabled = !geometryEnabled;
+  }
+  if (elements.applyCanvasGeometryButton) elements.applyCanvasGeometryButton.disabled = !geometryEnabled;
+}
+
 function applyGeometryFromInputs() {
   if (!activeEditor) return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
   const values = {
@@ -5081,38 +5217,8 @@ function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
   const fallback = {
     duplicate: () => activeEditor.duplicateSelected(),
     delete: () => activeEditor.deleteSelected(),
-  };
-  const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
-  setStatus(result.message);
-  if (refresh && (store.getState().currentView === 'edited' || store.getState().currentView === 'report')) refreshComputedViews(store.getState());
-  return result;
-}
-
-function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
-  if (!activeEditor) {
-    setStatus('먼저 미리보기를 로드해 주세요.');
-    return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
-  }
-  const fallback = {
-    duplicate: () => activeEditor.duplicateSelected(),
-    delete: () => activeEditor.deleteSelected(),
     'group-selection': () => activeEditor.groupSelected?.() || { ok: false, message: 'group-selection 명령을 지원하지 않습니다.' },
     'ungroup-selection': () => activeEditor.ungroupSelected?.() || { ok: false, message: 'ungroup-selection 명령을 지원하지 않습니다.' },
-  };
-  const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
-  setStatus(result.message);
-  if (refresh && (store.getState().currentView === 'edited' || store.getState().currentView === 'report')) refreshComputedViews(store.getState());
-  return result;
-}
-
-function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
-  if (!activeEditor) {
-    setStatus('먼저 미리보기를 로드해 주세요.');
-    return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
-  }
-  const fallback = {
-    duplicate: () => activeEditor.duplicateSelected(),
-    delete: () => activeEditor.deleteSelected(),
   };
   const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
   setStatus(result.message);
@@ -5537,12 +5643,40 @@ for (const button of elements.actionButtons) {
   });
 }
 for (const button of elements.batchActionButtons) button.addEventListener('click', () => applyBatchAction(button.dataset.batchAction));
+for (const button of elements.canvasActionButtons) {
+  button.addEventListener('click', () => {
+    const result = executeCanvasContextAction(button.dataset.canvasAction);
+    if (result?.message) setStatus(result.message);
+    if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+  });
+}
 for (const button of elements.textAlignButtons) {
   button.addEventListener('click', () => {
     if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
     const result = activeEditor.applyTextStyle({ textAlign: button.dataset.textAlign });
     setStatus(result.message);
     if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+  });
+}
+elements.applyCanvasGeometryButton?.addEventListener('click', () => {
+  if (elements.geometryXInput) elements.geometryXInput.value = elements.canvasGeometryXInput?.value || '';
+  if (elements.geometryYInput) elements.geometryYInput.value = elements.canvasGeometryYInput?.value || '';
+  if (elements.geometryWInput) elements.geometryWInput.value = elements.canvasGeometryWInput?.value || '';
+  if (elements.geometryHInput) elements.geometryHInput.value = elements.canvasGeometryHInput?.value || '';
+  const result = applyGeometryFromInputs();
+  setStatus(result.message);
+});
+for (const [canvasInput, sourceInput] of [
+  [elements.canvasGeometryXInput, elements.geometryXInput],
+  [elements.canvasGeometryYInput, elements.geometryYInput],
+  [elements.canvasGeometryWInput, elements.geometryWInput],
+  [elements.canvasGeometryHInput, elements.geometryHInput],
+]) {
+  canvasInput?.addEventListener('input', () => {
+    if (!sourceInput) return;
+    sourceInput.value = canvasInput.value;
+    const result = applyGeometryFromInputs();
+    if (result.ok) setStatus(result.message);
   });
 }
 
@@ -5589,6 +5723,8 @@ elements.textEditButton.addEventListener('click', () => {
 });
 elements.duplicateButton?.addEventListener('click', () => { executeEditorCommand('duplicate'); });
 elements.deleteButton?.addEventListener('click', () => { executeEditorCommand('delete'); });
+elements.groupButton?.addEventListener('click', () => { executeEditorCommand('group-selection'); });
+elements.ungroupButton?.addEventListener('click', () => { executeEditorCommand('ungroup-selection'); });
 elements.addTextButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.addTextElement();
