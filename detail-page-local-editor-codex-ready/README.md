@@ -63,6 +63,67 @@ python3 -m playwright install chromium
 
 만약 실패하면, 테스트 스크립트가 JSON 형태로 `how_to_fix` 항목에 다음 실행 순서를 다시 안내합니다.
 
+## 초보자용 QA 실행 순서 (명령 2개 + 결과 판독 2단계)
+아래 순서는 **"구조 점검 → 실제 워크플로우 점검 → 실패 원인 분리 → 리포트 확인"** 흐름입니다.
+
+### 1) 정적 구조 점검
+목적: 앱의 핵심 구조/규칙이 깨지지 않았는지 빠르게 확인합니다.
+```bash
+python3 scripts/validate_phase8.py
+```
+실패 시 다음 행동(재시도 명령): 의존성 설치 후 같은 검증을 다시 실행합니다.
+```bash
+python3 scripts/install_regression_dependencies.py
+python3 scripts/validate_phase8.py
+```
+
+### 2) 워크플로우 스모크 테스트
+목적: "HTML 불러오기 → 이미지 반영 → PNG 저장"의 실제 사용자 흐름이 동작하는지 확인합니다.
+```bash
+python3 scripts/test_workflow_html_image_png.py
+```
+실패 시 다음 행동(재시도 명령): 브라우저 테스트 의존성 재설치 후 동일 테스트를 다시 실행합니다.
+```bash
+python3 scripts/install_regression_dependencies.py
+python3 -m playwright install chromium
+python3 scripts/test_workflow_html_image_png.py
+```
+
+### 3) 실패 원인 분리 판독(Dependency 부족 vs 시나리오 실패)
+목적: "실행 환경 문제"와 "앱 동작 문제"를 분리해서, 초보자도 다음 액션을 정확히 고릅니다.
+- **Dependency 부족(환경 문제)** 신호
+  - 로그에 `ModuleNotFoundError`, `No module named ...`, `playwright` 설치 관련 오류가 보입니다.
+  - 이 경우는 코드 버그가 아니라 설치 문제일 가능성이 큽니다.
+  - 재시도 명령:
+    ```bash
+    python3 scripts/install_regression_dependencies.py
+    python3 -m playwright install chromium
+    python3 scripts/validate_phase8.py
+    python3 scripts/test_workflow_html_image_png.py
+    ```
+- **시나리오 실패(기능 문제)** 신호
+  - 의존성 오류 없이 테스트가 실행되었지만 `assert`, `FAILED`, `gate failed` 같은 실패 결과가 나옵니다.
+  - 이 경우는 앱 동작/회귀 이슈 가능성이 큽니다.
+  - 재시도 명령(1회 재검증):
+    ```bash
+    python3 scripts/validate_phase8.py
+    python3 scripts/test_workflow_html_image_png.py
+    ```
+
+### 4) 결과 리포트(`reports/`) 확인 위치 + 합격 기준
+목적: 터미널 출력만 보지 않고, 저장된 결과 파일로 "최종 합격/불합격"을 명확히 판단합니다.
+- 확인 폴더: `reports/`
+- 대표 파일:
+  - `reports/WEBAPP_PHASE8_VALIDATION_RESULTS.json`
+  - `reports/WEBAPP_PHASE8_REGRESSION_RESULTS_YYYY-MM-DD.json` (날짜별 결과)
+- 초보자용 합격 기준(간단판):
+  1. 1단계 명령(`validate_phase8.py`)이 **종료 코드 0**으로 끝난다.
+  2. 2단계 명령(`test_workflow_html_image_png.py`)이 **종료 코드 0**으로 끝난다.
+  3. 최신 리포트 JSON에서 실패 카운트가 0이거나, 요약이 `passed`로 표시된다.
+- 불합격 기준:
+  - 의존성 누락으로 테스트가 미실행(`not_run`)이거나,
+  - 시나리오 실패(`failed`)가 1개라도 있으면 불합격으로 보고 원인 분리를 먼저 진행합니다.
+
 ### `build_local_bundle` 실행 기준(입력/출력)
 - 입력(Entry): `src/main.js` (내부에서 `src/` 상대 import를 따라가며 하나로 합칩니다)
 - 출력(Output): `app.bundle.js` (브라우저가 `index.html`에서 직접 읽는 단일 번들 파일)
