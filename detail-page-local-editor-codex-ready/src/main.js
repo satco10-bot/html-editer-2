@@ -25,6 +25,7 @@ let pendingMountOptions = null;
 let currentExportPresetId = 'market';
 let currentCodeSource = 'edited';
 let codeEditorDirty = false;
+let geometryCoordMode = 'relative';
 const zoomState = { mode: 'fit', value: 1 };
 const BOOT_LOCAL_POLICY = Object.freeze({
   requiresStartupFetch: false,
@@ -107,6 +108,8 @@ const elements = {
   geometryYInput: document.getElementById('geometryYInput'),
   geometryWInput: document.getElementById('geometryWInput'),
   geometryHInput: document.getElementById('geometryHInput'),
+  geometryCoordModeSelect: document.getElementById('geometryCoordModeSelect'),
+  geometryRuleHint: document.getElementById('geometryRuleHint'),
   applyGeometryButton: document.getElementById('applyGeometryButton'),
   bringForwardButton: document.getElementById('bringForwardButton'),
   sendBackwardButton: document.getElementById('sendBackwardButton'),
@@ -532,6 +535,7 @@ function syncGeometryControls() {
   const geometry = activeEditor?.getSelectionGeometry?.() || null;
   const enabled = !!geometry;
   const controls = [
+    elements.geometryCoordModeSelect,
     elements.geometryXInput,
     elements.geometryYInput,
     elements.geometryWInput,
@@ -550,46 +554,54 @@ function syncGeometryControls() {
     if (!control) continue;
     control.disabled = !enabled;
   }
-  if (!enabled) return;
-  elements.geometryXInput.value = String(geometry.x ?? 0);
-  elements.geometryYInput.value = String(geometry.y ?? 0);
-  elements.geometryWInput.value = String(geometry.w ?? 0);
-  elements.geometryHInput.value = String(geometry.h ?? 0);
-  if (elements.canvasGeometryXInput) elements.canvasGeometryXInput.value = String(geometry.x ?? 0);
-  if (elements.canvasGeometryYInput) elements.canvasGeometryYInput.value = String(geometry.y ?? 0);
-  if (elements.canvasGeometryWInput) elements.canvasGeometryWInput.value = String(geometry.w ?? 0);
-  if (elements.canvasGeometryHInput) elements.canvasGeometryHInput.value = String(geometry.h ?? 0);
+  if (!enabled) {
+    for (const input of [elements.geometryXInput, elements.geometryYInput, elements.geometryWInput, elements.geometryHInput]) {
+      if (!input) continue;
+      input.value = '';
+      input.placeholder = '';
+      input.dataset.mixed = '0';
+    }
+    if (elements.geometryRuleHint) elements.geometryRuleHint.textContent = '요소를 선택하면 좌표/크기를 표시합니다.';
+    return;
+  }
+  const mode = geometryCoordMode === 'absolute' ? 'absolute' : 'relative';
+  const group = geometry[mode] || geometry.relative;
+  const mapping = [
+    [elements.geometryXInput, 'x'],
+    [elements.geometryYInput, 'y'],
+    [elements.geometryWInput, 'w'],
+    [elements.geometryHInput, 'h'],
+  ];
+  for (const [input, key] of mapping) {
+    if (!input) continue;
+    const mixed = !!group?.mixed?.[key];
+    input.dataset.mixed = mixed ? '1' : '0';
+    input.placeholder = mixed ? '혼합' : '';
+    input.value = mixed ? '' : String(group?.[key] ?? '');
+  }
+  const modeText = mode === 'absolute'
+    ? '절대 좌표: 문서의 왼쪽/위(0,0) 기준'
+    : '상대 좌표: 각 요소의 transform 이동값 기준';
+  if (elements.geometryRuleHint) {
+    elements.geometryRuleHint.textContent = `${modeText} · Shift=10px, Alt=1px, 기본=2px`;
+  }
 }
 
-function syncCanvasDirectUi(editorMeta) {
-  const hasEditor = !!activeEditor;
-  const selectionCount = Number(editorMeta?.selectionCount || 0);
-  const geometry = activeEditor?.getSelectionGeometry?.() || null;
-  const hud = activeEditor?.getSelectionHud?.() || null;
-  const hasSingle = !!geometry && selectionCount >= 1;
-
-  if (elements.canvasContextBar) elements.canvasContextBar.hidden = !(hasEditor && selectionCount >= 1);
-  if (elements.miniHud) elements.miniHud.hidden = !hasSingle;
-
-  const multiActions = new Set(['same-width', 'same-height', 'same-size', 'align-left', 'align-center', 'align-right']);
-  for (const button of elements.canvasActionButtons) {
-    const action = button.dataset.canvasAction;
-    button.disabled = !hasEditor || (multiActions.has(action) ? selectionCount < 2 : selectionCount < 1);
+function applyGeometryFromInputs() {
+  if (!activeEditor) return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
+  const values = {
+    x: Number.parseFloat(elements.geometryXInput.value),
+    y: Number.parseFloat(elements.geometryYInput.value),
+    w: Number.parseFloat(elements.geometryWInput.value),
+    h: Number.parseFloat(elements.geometryHInput.value),
+  };
+  const patch = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (!Number.isFinite(value)) continue;
+    patch[key] = value;
   }
-  if (elements.applyCanvasGeometryButton) elements.applyCanvasGeometryButton.disabled = !hasSingle;
-  for (const input of [elements.canvasGeometryXInput, elements.canvasGeometryYInput, elements.canvasGeometryWInput, elements.canvasGeometryHInput]) {
-    if (!input) continue;
-    input.disabled = !hasSingle;
-  }
-
-  if (!hasSingle) return;
-  if (elements.miniHudPos) elements.miniHudPos.textContent = `X ${hud?.x ?? geometry.x ?? 0} / Y ${hud?.y ?? geometry.y ?? 0}`;
-  if (elements.miniHudSize) elements.miniHudSize.textContent = `W ${hud?.w ?? geometry.w ?? 0} / H ${hud?.h ?? geometry.h ?? 0}`;
-  if (elements.miniHudLayer) {
-    const current = Number(hud?.layerIndexFromBack || 0);
-    const total = Number(hud?.layerTotal || 0);
-    elements.miniHudLayer.textContent = total > 0 ? `레이어 ${current}/${total}` : '레이어 -/-';
-  }
+  if (!Object.keys(patch).length) return { ok: false, message: '적용할 숫자 값을 입력해 주세요.' };
+  return activeEditor.applyGeometryPatch(patch, { coordinateSpace: geometryCoordMode });
 }
 
 function renderShell(state) {
@@ -1136,38 +1148,19 @@ elements.addSlotButton?.addEventListener('click', () => {
   setStatus(result.message);
 });
 elements.applyGeometryButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const patch = {
-    x: Number.parseFloat(elements.geometryXInput.value),
-    y: Number.parseFloat(elements.geometryYInput.value),
-    w: Number.parseFloat(elements.geometryWInput.value),
-    h: Number.parseFloat(elements.geometryHInput.value),
-  };
-  const result = activeEditor.applyGeometryPatch(patch);
+  const result = applyGeometryFromInputs();
   setStatus(result.message);
 });
-elements.applyCanvasGeometryButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const patch = {
-    x: Number.parseFloat(elements.canvasGeometryXInput?.value || ''),
-    y: Number.parseFloat(elements.canvasGeometryYInput?.value || ''),
-    w: Number.parseFloat(elements.canvasGeometryWInput?.value || ''),
-    h: Number.parseFloat(elements.canvasGeometryHInput?.value || ''),
-  };
-  const result = activeEditor.applyGeometryPatch(patch);
-  setStatus(result.message);
+elements.geometryCoordModeSelect?.addEventListener('change', () => {
+  geometryCoordMode = elements.geometryCoordModeSelect.value === 'absolute' ? 'absolute' : 'relative';
+  syncGeometryControls();
+  setStatus(geometryCoordMode === 'absolute' ? '절대 좌표 모드로 전환했습니다.' : '상대 좌표 모드로 전환했습니다.');
 });
-for (const button of elements.canvasActionButtons) {
-  button.addEventListener('click', () => {
-    if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-    const action = button.dataset.canvasAction;
-    let result = { ok: false, message: '지원하지 않는 액션입니다.' };
-    if (action === 'duplicate') result = activeEditor.duplicateSelected();
-    else if (action === 'delete') result = activeEditor.deleteSelected();
-    else if (action === 'bring-forward') result = activeEditor.bringSelectedForward();
-    else if (action === 'send-backward') result = activeEditor.sendSelectedBackward();
-    else result = activeEditor.applyBatchLayout(action);
-    setStatus(result.message);
+for (const input of [elements.geometryXInput, elements.geometryYInput, elements.geometryWInput, elements.geometryHInput]) {
+  input?.addEventListener('input', () => {
+    if (!activeEditor) return;
+    const result = applyGeometryFromInputs();
+    if (result.ok) setStatus(result.message);
   });
 }
 elements.bringForwardButton?.addEventListener('click', () => {

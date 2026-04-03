@@ -2600,60 +2600,91 @@ function createFrameEditor({
     if (!element) return null;
     const rect = element.getBoundingClientRect();
     const state = readTransformState(element);
+    const scrollX = Number(win.scrollX || win.pageXOffset || 0);
+    const scrollY = Number(win.scrollY || win.pageYOffset || 0);
     return {
-      x: Math.round(state.tx),
-      y: Math.round(state.ty),
+      relative: {
+        x: Math.round(state.tx),
+        y: Math.round(state.ty),
+      },
+      absolute: {
+        x: Math.round(rect.left + scrollX),
+        y: Math.round(rect.top + scrollY),
+      },
       w: Math.max(1, Math.round(rect.width)),
       h: Math.max(1, Math.round(rect.height)),
     };
   }
 
-  function selectionHudState() {
-    const geometry = elementGeometry(selectedElement);
-    if (!selectedElement || !geometry) return null;
-    const siblings = selectedElement.parentElement
-      ? Array.from(selectedElement.parentElement.children).filter((node) => node.nodeType === 1)
-      : [];
-    const index = siblings.indexOf(selectedElement);
+  function summarizeGeometryForSelection(elements) {
+    const rows = uniqueConnectedElements(elements).map((element) => elementGeometry(element)).filter(Boolean);
+    if (!rows.length) return null;
+    const same = (getter) => rows.every((row) => getter(row) === getter(rows[0]));
+    const pick = (getter) => (same(getter) ? getter(rows[0]) : null);
+    const buildMode = (mode) => ({
+      x: pick((row) => row[mode].x),
+      y: pick((row) => row[mode].y),
+      w: pick((row) => row.w),
+      h: pick((row) => row.h),
+      mixed: {
+        x: !same((row) => row[mode].x),
+        y: !same((row) => row[mode].y),
+        w: !same((row) => row.w),
+        h: !same((row) => row.h),
+      },
+    });
     return {
-      ...geometry,
-      layerIndexFromBack: index >= 0 ? index + 1 : 0,
-      layerTotal: siblings.length,
+      count: rows.length,
+      relative: buildMode('relative'),
+      absolute: buildMode('absolute'),
     };
   }
 
-  function applyGeometryPatch(patch = {}) {
-    const target = selectedElement;
-    if (!target) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
-    if (isLockedElement(target)) return { ok: false, message: '잠긴 요소는 편집할 수 없습니다.' };
-    if (Number.isFinite(patch.w) || Number.isFinite(patch.h)) {
-      const uid = target.dataset.nodeUid || nextId('node');
-      target.dataset.nodeUid = uid;
-      const boundsPatch = {};
-      const stylePatch = {};
-      if (Number.isFinite(patch.w)) {
-        boundsPatch.width = Math.max(8, patch.w);
-        stylePatch.width = `${Math.max(8, patch.w)}px`;
+  function applyGeometryPatch(patch = {}, { coordinateSpace = 'relative' } = {}) {
+    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
+    if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
+    const scrollX = Number(win.scrollX || win.pageXOffset || 0);
+    const scrollY = Number(win.scrollY || win.pageYOffset || 0);
+    let changed = 0;
+
+    for (const target of targets) {
+      if (Number.isFinite(patch.w) || Number.isFinite(patch.h)) {
+        const stylePatch = {};
+        if (Number.isFinite(patch.w)) stylePatch.width = `${Math.max(8, patch.w)}px`;
+        if (Number.isFinite(patch.h)) stylePatch.height = `${Math.max(8, patch.h)}px`;
+        setInlineStyle(target, stylePatch);
       }
-      if (Number.isFinite(patch.h)) {
-        boundsPatch.height = Math.max(8, patch.h);
-        stylePatch.height = `${Math.max(8, patch.h)}px`;
+      const state = readTransformState(target);
+      let nextX = state.tx;
+      let nextY = state.ty;
+      if (coordinateSpace === 'absolute') {
+        const rect = target.getBoundingClientRect();
+        const absX = rect.left + scrollX;
+        const absY = rect.top + scrollY;
+        if (Number.isFinite(patch.x)) nextX = state.tx + (patch.x - absX);
+        if (Number.isFinite(patch.y)) nextY = state.ty + (patch.y - absY);
+      } else {
+        if (Number.isFinite(patch.x)) nextX = patch.x;
+        if (Number.isFinite(patch.y)) nextY = patch.y;
       }
-      patchModelNode(editorModel, uid, {
-        bounds: boundsPatch,
-        style: stylePatch,
-      });
-      applyModelNodesToDom(doc, editorModel, [uid]);
+      writeTransformState(target, nextX, nextY);
+      target.dataset.editorModified = '1';
+      if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
+      changed += 1;
     }
-    const state = readTransformState(target);
-    const nextX = Number.isFinite(patch.x) ? patch.x : state.tx;
-    const nextY = Number.isFinite(patch.y) ? patch.y : state.ty;
-    writeTransformState(target, nextX, nextY);
-    target.dataset.editorModified = '1';
-    if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
+
     emitState();
     emitMutation('geometry-patch');
-    return { ok: true, message: '선택 요소의 XYWH를 적용했습니다.' };
+    return { ok: true, message: `선택 요소 ${changed}개에 XYWH를 적용했습니다.` };
+  }
+
+  function nudgeSelectedElements(dx = 0, dy = 0) {
+    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
+    if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
+    for (const element of targets) shiftElementBy(element, dx, dy);
+    emitState();
+    emitMutation('nudge');
+    return { ok: true, message: `선택 요소 ${targets.length}개를 (${dx}, ${dy})만큼 이동했습니다.` };
   }
 
   function duplicateSelected() {
@@ -3658,6 +3689,14 @@ function createFrameEditor({
       onStatus(deleteSelected().message);
       return;
     }
+    if (!withModifier && !editingTextElement && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+      event.preventDefault();
+      const unit = event.altKey ? 1 : event.shiftKey ? 10 : 2;
+      const dx = event.key === 'ArrowLeft' ? -unit : event.key === 'ArrowRight' ? unit : 0;
+      const dy = event.key === 'ArrowUp' ? -unit : event.key === 'ArrowDown' ? unit : 0;
+      onStatus(nudgeSelectedElements(dx, dy).message);
+      return;
+    }
     if (!editingTextElement) return;
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -3753,11 +3792,10 @@ function createFrameEditor({
     addBoxElement: () => addElement('box'),
     addSlotElement: () => addElement('slot'),
     applyGeometryPatch,
-    getSelectionGeometry: () => elementGeometry(selectedElement),
-    bringSelectedForward: () => applyLayerIndexCommand('forward'),
-    sendSelectedBackward: () => applyLayerIndexCommand('backward'),
-    bringSelectedToFront: () => applyLayerIndexCommand('front'),
-    sendSelectedToBack: () => applyLayerIndexCommand('back'),
+    nudgeSelectedElements,
+    getSelectionGeometry: () => summarizeGeometryForSelection(selectedElements),
+    bringSelectedForward: () => reorderSelected('forward'),
+    sendSelectedBackward: () => reorderSelected('backward'),
     nudgeSelectedImage: ({ dx = 0, dy = 0 } = {}) => nudgeImagePosition(dx, dy),
     getEditedHtml: serializeEditedHtml,
     getCurrentPortableHtml: async () => {
@@ -4112,6 +4150,7 @@ let pendingMountOptions = null;
 let currentExportPresetId = 'market';
 let currentCodeSource = 'edited';
 let codeEditorDirty = false;
+let geometryCoordMode = 'relative';
 const zoomState = { mode: 'fit', value: 1 };
 const BOOT_LOCAL_POLICY = Object.freeze({
   requiresStartupFetch: false,
@@ -4194,6 +4233,8 @@ const elements = {
   geometryYInput: document.getElementById('geometryYInput'),
   geometryWInput: document.getElementById('geometryWInput'),
   geometryHInput: document.getElementById('geometryHInput'),
+  geometryCoordModeSelect: document.getElementById('geometryCoordModeSelect'),
+  geometryRuleHint: document.getElementById('geometryRuleHint'),
   applyGeometryButton: document.getElementById('applyGeometryButton'),
   bringForwardButton: document.getElementById('bringForwardButton'),
   sendBackwardButton: document.getElementById('sendBackwardButton'),
@@ -4619,6 +4660,7 @@ function syncGeometryControls() {
   const geometry = activeEditor?.getSelectionGeometry?.() || null;
   const enabled = !!geometry;
   const controls = [
+    elements.geometryCoordModeSelect,
     elements.geometryXInput,
     elements.geometryYInput,
     elements.geometryWInput,
@@ -4637,46 +4679,54 @@ function syncGeometryControls() {
     if (!control) continue;
     control.disabled = !enabled;
   }
-  if (!enabled) return;
-  elements.geometryXInput.value = String(geometry.x ?? 0);
-  elements.geometryYInput.value = String(geometry.y ?? 0);
-  elements.geometryWInput.value = String(geometry.w ?? 0);
-  elements.geometryHInput.value = String(geometry.h ?? 0);
-  if (elements.canvasGeometryXInput) elements.canvasGeometryXInput.value = String(geometry.x ?? 0);
-  if (elements.canvasGeometryYInput) elements.canvasGeometryYInput.value = String(geometry.y ?? 0);
-  if (elements.canvasGeometryWInput) elements.canvasGeometryWInput.value = String(geometry.w ?? 0);
-  if (elements.canvasGeometryHInput) elements.canvasGeometryHInput.value = String(geometry.h ?? 0);
+  if (!enabled) {
+    for (const input of [elements.geometryXInput, elements.geometryYInput, elements.geometryWInput, elements.geometryHInput]) {
+      if (!input) continue;
+      input.value = '';
+      input.placeholder = '';
+      input.dataset.mixed = '0';
+    }
+    if (elements.geometryRuleHint) elements.geometryRuleHint.textContent = '요소를 선택하면 좌표/크기를 표시합니다.';
+    return;
+  }
+  const mode = geometryCoordMode === 'absolute' ? 'absolute' : 'relative';
+  const group = geometry[mode] || geometry.relative;
+  const mapping = [
+    [elements.geometryXInput, 'x'],
+    [elements.geometryYInput, 'y'],
+    [elements.geometryWInput, 'w'],
+    [elements.geometryHInput, 'h'],
+  ];
+  for (const [input, key] of mapping) {
+    if (!input) continue;
+    const mixed = !!group?.mixed?.[key];
+    input.dataset.mixed = mixed ? '1' : '0';
+    input.placeholder = mixed ? '혼합' : '';
+    input.value = mixed ? '' : String(group?.[key] ?? '');
+  }
+  const modeText = mode === 'absolute'
+    ? '절대 좌표: 문서의 왼쪽/위(0,0) 기준'
+    : '상대 좌표: 각 요소의 transform 이동값 기준';
+  if (elements.geometryRuleHint) {
+    elements.geometryRuleHint.textContent = `${modeText} · Shift=10px, Alt=1px, 기본=2px`;
+  }
 }
 
-function syncCanvasDirectUi(editorMeta) {
-  const hasEditor = !!activeEditor;
-  const selectionCount = Number(editorMeta?.selectionCount || 0);
-  const geometry = activeEditor?.getSelectionGeometry?.() || null;
-  const hud = activeEditor?.getSelectionHud?.() || null;
-  const hasSingle = !!geometry && selectionCount >= 1;
-
-  if (elements.canvasContextBar) elements.canvasContextBar.hidden = !(hasEditor && selectionCount >= 1);
-  if (elements.miniHud) elements.miniHud.hidden = !hasSingle;
-
-  const multiActions = new Set(['same-width', 'same-height', 'same-size', 'align-left', 'align-center', 'align-right']);
-  for (const button of elements.canvasActionButtons) {
-    const action = button.dataset.canvasAction;
-    button.disabled = !hasEditor || (multiActions.has(action) ? selectionCount < 2 : selectionCount < 1);
+function applyGeometryFromInputs() {
+  if (!activeEditor) return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
+  const values = {
+    x: Number.parseFloat(elements.geometryXInput.value),
+    y: Number.parseFloat(elements.geometryYInput.value),
+    w: Number.parseFloat(elements.geometryWInput.value),
+    h: Number.parseFloat(elements.geometryHInput.value),
+  };
+  const patch = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (!Number.isFinite(value)) continue;
+    patch[key] = value;
   }
-  if (elements.applyCanvasGeometryButton) elements.applyCanvasGeometryButton.disabled = !hasSingle;
-  for (const input of [elements.canvasGeometryXInput, elements.canvasGeometryYInput, elements.canvasGeometryWInput, elements.canvasGeometryHInput]) {
-    if (!input) continue;
-    input.disabled = !hasSingle;
-  }
-
-  if (!hasSingle) return;
-  if (elements.miniHudPos) elements.miniHudPos.textContent = `X ${hud?.x ?? geometry.x ?? 0} / Y ${hud?.y ?? geometry.y ?? 0}`;
-  if (elements.miniHudSize) elements.miniHudSize.textContent = `W ${hud?.w ?? geometry.w ?? 0} / H ${hud?.h ?? geometry.h ?? 0}`;
-  if (elements.miniHudLayer) {
-    const current = Number(hud?.layerIndexFromBack || 0);
-    const total = Number(hud?.layerTotal || 0);
-    elements.miniHudLayer.textContent = total > 0 ? `레이어 ${current}/${total}` : '레이어 -/-';
-  }
+  if (!Object.keys(patch).length) return { ok: false, message: '적용할 숫자 값을 입력해 주세요.' };
+  return activeEditor.applyGeometryPatch(patch, { coordinateSpace: geometryCoordMode });
 }
 
 function renderShell(state) {
@@ -5218,38 +5268,19 @@ elements.addSlotButton?.addEventListener('click', () => {
   setStatus(result.message);
 });
 elements.applyGeometryButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const patch = {
-    x: Number.parseFloat(elements.geometryXInput.value),
-    y: Number.parseFloat(elements.geometryYInput.value),
-    w: Number.parseFloat(elements.geometryWInput.value),
-    h: Number.parseFloat(elements.geometryHInput.value),
-  };
-  const result = activeEditor.applyGeometryPatch(patch);
+  const result = applyGeometryFromInputs();
   setStatus(result.message);
 });
-elements.applyCanvasGeometryButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const patch = {
-    x: Number.parseFloat(elements.canvasGeometryXInput?.value || ''),
-    y: Number.parseFloat(elements.canvasGeometryYInput?.value || ''),
-    w: Number.parseFloat(elements.canvasGeometryWInput?.value || ''),
-    h: Number.parseFloat(elements.canvasGeometryHInput?.value || ''),
-  };
-  const result = activeEditor.applyGeometryPatch(patch);
-  setStatus(result.message);
+elements.geometryCoordModeSelect?.addEventListener('change', () => {
+  geometryCoordMode = elements.geometryCoordModeSelect.value === 'absolute' ? 'absolute' : 'relative';
+  syncGeometryControls();
+  setStatus(geometryCoordMode === 'absolute' ? '절대 좌표 모드로 전환했습니다.' : '상대 좌표 모드로 전환했습니다.');
 });
-for (const button of elements.canvasActionButtons) {
-  button.addEventListener('click', () => {
-    if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-    const action = button.dataset.canvasAction;
-    let result = { ok: false, message: '지원하지 않는 액션입니다.' };
-    if (action === 'duplicate') result = activeEditor.duplicateSelected();
-    else if (action === 'delete') result = activeEditor.deleteSelected();
-    else if (action === 'bring-forward') result = activeEditor.bringSelectedForward();
-    else if (action === 'send-backward') result = activeEditor.sendSelectedBackward();
-    else result = activeEditor.applyBatchLayout(action);
-    setStatus(result.message);
+for (const input of [elements.geometryXInput, elements.geometryYInput, elements.geometryWInput, elements.geometryHInput]) {
+  input?.addEventListener('input', () => {
+    if (!activeEditor) return;
+    const result = applyGeometryFromInputs();
+    if (result.ok) setStatus(result.message);
   });
 }
 elements.bringForwardButton?.addEventListener('click', () => {
