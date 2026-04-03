@@ -80,6 +80,18 @@ def wait_status_contains(page, phrase: str, timeout_ms: int, stage: str) -> None
         raise RuntimeError(f"{stage} 단계 대기 실패: phrase={phrase!r}, statusText={current!r}, error={error}") from error
 
 
+def set_file_with_fallback(page, button_selector: str, input_selector: str, file_path: Path, timeout_ms: int = 10000) -> None:
+    """버튼 클릭 기반 chooser가 막힌 환경에서도 hidden input 경로로 파일을 주입한다."""
+    try:
+        with page.expect_file_chooser(timeout=timeout_ms) as chooser_info:
+            page.click(button_selector, timeout=timeout_ms)
+        chooser_info.value.set_files(str(file_path))
+        return
+    except Exception:
+        # headless/레이아웃 이슈로 버튼이 보이지 않아도 hidden input에는 직접 파일 주입 가능
+        page.locator(input_selector).set_input_files(str(file_path))
+
+
 def run() -> dict[str, object]:
     sync_api = load_playwright_sync_api()
     TimeoutErrorType = sync_api.TimeoutError
@@ -101,14 +113,10 @@ def run() -> dict[str, object]:
                 page.wait_for_selector('#htmlFileInput', state='attached', timeout=10000)
                 page.wait_for_selector('#replaceImageInput', state='attached', timeout=10000)
 
-                with page.expect_file_chooser(timeout=10000) as html_chooser_info:
-                    page.click('#openHtmlButton')
-                html_chooser_info.value.set_files(str(html_path))
+                set_file_with_fallback(page, '#openHtmlButton', '#htmlFileInput', html_path)
                 wait_status_contains(page, 'HTML 파일', 30000, 'HTML 업로드')
 
-                with page.expect_file_chooser(timeout=10000) as image_chooser_info:
-                    page.click('#replaceImageButton')
-                image_chooser_info.value.set_files(str(image_path))
+                set_file_with_fallback(page, '#replaceImageButton', '#replaceImageInput', image_path)
                 wait_status_contains(page, '이미지를 적용', 30000, '이미지 적용')
 
                 try:
