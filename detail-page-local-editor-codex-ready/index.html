@@ -81,34 +81,54 @@
       </div>
 
       <div class="topbar__right">
-        <button id="beginnerModeToggle" class="button button--secondary" type="button" aria-pressed="false">초보 모드: OFF</button>
+        <div class="topbar__group">
+          <span class="topbar__label">모드</span>
+          <button id="beginnerModeToggle" class="button" type="button" aria-pressed="false">초보 모드: OFF</button>
+          <details class="topbar__more" data-beginner-more-group="mode">
+            <summary>더보기</summary>
+            <div class="topbar__more-menu" data-beginner-more-target="mode"></div>
+          </details>
+        </div>
+
         <div class="topbar__group">
           <span class="topbar__label">열기</span>
           <button id="openHtmlButton" class="button">HTML 열기</button>
-          <button id="openFolderButton" class="button button--secondary">폴더 열기</button>
-          <label class="mini-control">
+          <button id="openFolderButton" class="button button--secondary" data-beginner-more-item="load">폴더 열기</button>
+          <label class="mini-control" data-beginner-more-item="load">
             <span>Fixture</span>
             <select id="fixtureSelect"></select>
           </label>
-          <button id="loadFixtureButton" class="button button--secondary">불러오기</button>
+          <button id="loadFixtureButton" class="button button--ghost" data-beginner-more-item="load">불러오기</button>
+          <details class="topbar__more" data-beginner-more-group="load">
+            <summary>더보기</summary>
+            <div class="topbar__more-menu" data-beginner-more-target="load"></div>
+          </details>
         </div>
 
         <div class="topbar__group">
           <span class="topbar__label">저장 / 출력</span>
           <button id="openDownloadModalButton" class="button">저장/출력 열기</button>
-          <button id="downloadEditedButton" class="button button--ghost" data-download-action="save-edited">문서 저장</button>
-          <button id="exportPngButton" class="button button--ghost" data-download-action="export-full-png">PNG</button>
-          <button id="exportJpgButton" class="button button--ghost" data-download-action="export-full-jpg">JPG</button>
+          <button id="downloadEditedButton" class="button button--secondary" data-download-action="save-edited" data-beginner-more-item="save">문서 저장</button>
+          <button id="exportPngButton" class="button button--ghost" data-download-action="export-full-png" data-beginner-more-item="save">PNG</button>
+          <button id="exportJpgButton" class="button button--ghost" data-download-action="export-full-jpg" data-beginner-more-item="save">JPG</button>
+          <details class="topbar__more" data-beginner-more-group="save">
+            <summary>더보기</summary>
+            <div class="topbar__more-menu" data-beginner-more-target="save"></div>
+          </details>
         </div>
 
         <div class="topbar__group topbar__group--workspace">
           <span class="topbar__label">작업</span>
-          <button id="undoButton" class="button button--ghost" data-beginner-advanced>되돌리기</button>
-          <button id="redoButton" class="button button--ghost" data-beginner-advanced>다시하기</button>
-          <button id="restoreAutosaveButton" class="button button--ghost" data-beginner-advanced>자동저장 복구</button>
-          <button id="toggleLeftSidebarButton" class="button button--ghost" data-beginner-advanced>왼쪽 패널</button>
-          <button id="toggleRightSidebarButton" class="button button--ghost" data-beginner-advanced>오른쪽 패널</button>
-          <button id="focusModeButton" class="button button--ghost" data-beginner-advanced>캔버스 집중</button>
+          <button id="undoButton" class="button">되돌리기</button>
+          <button id="redoButton" class="button button--secondary" data-beginner-more-item="workspace">다시하기</button>
+          <button id="restoreAutosaveButton" class="button button--ghost" data-beginner-more-item="workspace">자동저장 복구</button>
+          <button id="toggleLeftSidebarButton" class="button button--ghost" data-beginner-more-item="workspace">왼쪽 패널</button>
+          <button id="toggleRightSidebarButton" class="button button--ghost" data-beginner-more-item="workspace">오른쪽 패널</button>
+          <button id="focusModeButton" class="button button--ghost" data-beginner-more-item="workspace">캔버스 집중</button>
+          <details class="topbar__more" data-beginner-more-group="workspace">
+            <summary>더보기</summary>
+            <div class="topbar__more-menu" data-beginner-more-target="workspace"></div>
+          </details>
         </div>
       </div>
 
@@ -127,13 +147,15 @@
 
     <aside id="leftSidebar" class="sidebar sidebar--left">
       <div class="sidebar-tabs">
-        <button class="sidebar-tab is-active" data-sidebar-tab="left-upload">가져오기</button>
-        <button class="sidebar-tab" data-sidebar-tab="left-sections">섹션</button>
-        <button class="sidebar-tab" data-sidebar-tab="left-advanced">코드</button>
-        <button class="sidebar-tab" data-sidebar-tab="left-project">프로젝트</button>
+        <button class="sidebar-tab is-active" data-sidebar-tab="left-start">시작</button>
+        <button class="sidebar-tab" data-sidebar-tab="left-image">이미지</button>
+        <button class="sidebar-tab" data-sidebar-tab="left-text">텍스트</button>
+        <button class="sidebar-tab" data-sidebar-tab="left-layers">레이어</button>
+        <button class="sidebar-tab" data-sidebar-tab="left-export">내보내기</button>
       </div>
 
-      <section class="panel sidebar-panel is-active" data-sidebar-panel="left-upload">
+      <section class="panel sidebar-panel is-active" data-sidebar-panel="left-start">
+        <div class="panel-step-guide" data-left-tab-guide-for="left-start"></div>
         <div class="panel__header">
           <h2>업로드/가져오기</h2>
           <button id="applyPasteButton" class="button button--secondary button--small">붙여넣기 적용</button>
@@ -164,9 +186,57 @@
           <h3>깨진 자산</h3>
           <div id="uploadBrokenList" class="upload-slot-list"></div>
         </section>
+        <details class="left-accordion">
+          <summary><strong>고급</strong> · 코드/진단</summary>
+          <div class="left-accordion__body">
+            <details class="left-accordion" open>
+              <summary>코드 워크벤치</summary>
+              <div class="left-accordion__body">
+                <div class="panel__header panel__header--split">
+                  <h2>코드 워크벤치</h2>
+                  <div class="button-row button-row--compact">
+                    <button id="reloadCodeFromEditorButton" class="button button--ghost button--small">현재 편집본 불러오기</button>
+                    <button id="applyCodeToEditorButton" class="button button--secondary button--small">코드 적용</button>
+                  </div>
+                </div>
+                <div class="segmented segmented--small">
+                  <button class="segmented__item is-active" data-code-source="edited">편집본</button>
+                  <button class="segmented__item" data-code-source="normalized">정규화</button>
+                  <button class="segmented__item" data-code-source="original">원본</button>
+                  <button class="segmented__item" data-code-source="report">리포트</button>
+                </div>
+                <div class="code-toolbar">
+                  <input id="codeSearchInput" class="asset-filter" type="search" placeholder="코드 검색" />
+                  <button id="codeSearchNextButton" class="button button--ghost button--small">다음</button>
+                </div>
+                <textarea id="codeEditorTextarea" class="code-editor" spellcheck="false"></textarea>
+                <pre id="editedCodeView" class="code-view code-view--hidden"></pre>
+                <pre id="normalizedCodeView" class="code-view code-view--hidden"></pre>
+                <pre id="originalCodeView" class="code-view code-view--hidden"></pre>
+                <pre id="jsonReportView" class="code-view code-view--hidden"></pre>
+                <p class="hint">검색은 다음 일치 위치로 이동합니다.</p>
+              </div>
+            </details>
+            <details class="left-accordion">
+              <summary>프로젝트 상태</summary>
+              <div class="left-accordion__body">
+                <div class="panel__header">
+                  <h2>프로젝트 상태</h2>
+                </div>
+                <div id="summaryCards" class="metric-grid"></div>
+                <div class="panel-divider"></div>
+                <div class="panel__header">
+                  <h2>이슈</h2>
+                </div>
+                <ul id="issueList" class="issue-list"></ul>
+              </div>
+            </details>
+          </div>
+        </details>
       </section>
 
       <section class="panel sidebar-panel" data-sidebar-panel="left-text">
+        <div class="panel-step-guide" data-left-tab-guide-for="left-text"></div>
         <div class="panel__header">
           <h2>텍스트</h2>
         </div>
@@ -180,9 +250,10 @@
         <p class="hint">요소 추가/복제/삭제는 상단 퀵 액션 버튼을 사용하세요.</p>
       </section>
 
-      <section class="panel sidebar-panel" data-sidebar-panel="left-sections">
+      <section class="panel sidebar-panel" data-sidebar-panel="left-image">
+        <div class="panel-step-guide" data-left-tab-guide-for="left-image"></div>
         <div class="panel__header panel__header--split">
-          <h2>섹션 필름스트립</h2>
+          <h2>이미지/섹션</h2>
           <button id="sectionAddButton" class="button button--ghost button--small">섹션 추가</button>
         </div>
         <div class="button-row button-row--compact">
@@ -195,63 +266,20 @@
         <p class="hint">섹션을 클릭하면 캔버스로 이동합니다. 액션 후 자동으로 레이어/선택을 다시 동기화합니다.</p>
       </section>
 
-      <section class="panel sidebar-panel" data-sidebar-panel="left-project">
+      <section class="panel sidebar-panel" data-sidebar-panel="left-export">
+        <div class="panel-step-guide" data-left-tab-guide-for="left-export"></div>
         <div class="panel__header">
-          <h2>섹션</h2>
+          <h2>내보내기</h2>
         </div>
         <p class="hint">섹션 단위 저장은 상단의 <strong>섹션 ZIP</strong> 버튼에서 실행할 수 있습니다.</p>
       </section>
 
       <section class="panel sidebar-panel" data-sidebar-panel="left-layers">
+        <div class="panel-step-guide" data-left-tab-guide-for="left-layers"></div>
         <div class="panel__header">
           <h2>레이어</h2>
         </div>
         <p class="hint">레이어/슬롯 목록은 우측 <strong>레이어</strong> 탭에서 확인합니다.</p>
-      </section>
-
-      <section class="panel sidebar-panel" data-sidebar-panel="left-advanced">
-        <details class="left-accordion" open>
-          <summary>코드 워크벤치</summary>
-          <div class="left-accordion__body">
-            <div class="panel__header panel__header--split">
-              <h2>코드 워크벤치</h2>
-              <div class="button-row button-row--compact">
-                <button id="reloadCodeFromEditorButton" class="button button--ghost button--small">현재 편집본 불러오기</button>
-                <button id="applyCodeToEditorButton" class="button button--secondary button--small">코드 적용</button>
-              </div>
-            </div>
-            <div class="segmented segmented--small">
-              <button class="segmented__item is-active" data-code-source="edited">편집본</button>
-              <button class="segmented__item" data-code-source="normalized">정규화</button>
-              <button class="segmented__item" data-code-source="original">원본</button>
-              <button class="segmented__item" data-code-source="report">리포트</button>
-            </div>
-            <div class="code-toolbar">
-              <input id="codeSearchInput" class="asset-filter" type="search" placeholder="코드 검색" />
-              <button id="codeSearchNextButton" class="button button--ghost button--small">다음</button>
-            </div>
-            <textarea id="codeEditorTextarea" class="code-editor" spellcheck="false"></textarea>
-            <pre id="editedCodeView" class="code-view code-view--hidden"></pre>
-            <pre id="normalizedCodeView" class="code-view code-view--hidden"></pre>
-            <pre id="originalCodeView" class="code-view code-view--hidden"></pre>
-            <pre id="jsonReportView" class="code-view code-view--hidden"></pre>
-            <p class="hint">검색은 다음 일치 위치로 이동합니다.</p>
-          </div>
-        </details>
-        <details class="left-accordion">
-          <summary>프로젝트 상태</summary>
-          <div class="left-accordion__body">
-            <div class="panel__header">
-              <h2>프로젝트 상태</h2>
-            </div>
-            <div id="summaryCards" class="metric-grid"></div>
-            <div class="panel-divider"></div>
-            <div class="panel__header">
-              <h2>이슈</h2>
-            </div>
-            <ul id="issueList" class="issue-list"></ul>
-          </div>
-        </details>
       </section>
 
     </aside>
@@ -602,11 +630,22 @@
             </select>
           </label>
         </div>
-        <div class="download-modal__preset-buttons">
-          <button class="button button--ghost button--small" type="button" data-download-preset="basic">Basic preset</button>
-          <button class="button button--ghost button--small" type="button" data-download-preset="market">Market preset</button>
-          <button class="button button--ghost button--small" type="button" data-download-preset="hires">Hi-res preset</button>
-          <button class="button button--ghost button--small" type="button" data-download-preset="review">Review preset</button>
+        <div id="exportPurposeCards" class="download-purpose-grid" role="group" aria-label="내보내기 목적 선택">
+          <button class="download-purpose-card" type="button" data-download-preset="market" data-download-choice="download-export-preset-package">
+            <strong>마켓 업로드용</strong>
+            <span>예시 파일: product__market-preset.zip</span>
+            <span>배율: 1x · 용량 예상: 4~15MB</span>
+          </button>
+          <button class="download-purpose-card" type="button" data-download-preset="review" data-download-choice="download-export-preset-package">
+            <strong>검수 공유용</strong>
+            <span>예시 파일: product__review-preset.zip</span>
+            <span>배율: 1x · 용량 예상: 2~8MB</span>
+          </button>
+          <button class="download-purpose-card" type="button" data-download-preset="hires" data-download-choice="download-export-preset-package">
+            <strong>고해상도 보관용</strong>
+            <span>예시 파일: product__hires-preset.zip</span>
+            <span>배율: 2x · 용량 예상: 15~60MB</span>
+          </button>
         </div>
         <div class="download-modal__preset-buttons">
           <button id="modalDownloadEditedButton" class="button button--ghost button--small" type="button" data-download-action="save-edited">문서 저장</button>

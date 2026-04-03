@@ -7,6 +7,7 @@ import { createFrameEditor } from './editor/frame-editor.js';
 import {
   renderAssetTable,
   renderIssueList,
+  renderLeftTabStepGuide,
   renderLayerTree,
   renderLocalModeNotice,
   renderNormalizeStats,
@@ -45,6 +46,18 @@ const WORKFLOW_STEP_GUIDES = Object.freeze({
   edit: '요소를 클릭한 뒤 드래그하세요.',
   save: `결과를 확인한 뒤 [${OPEN_DOWNLOAD_MODAL_BUTTON_LABEL}] 버튼을 눌러 실행하세요.`,
 });
+const LEFT_TAB_TO_WORKFLOW_STEP = Object.freeze({
+  'left-start': 'load',
+  'left-image': 'edit',
+  'left-text': 'edit',
+  'left-layers': 'edit',
+  'left-export': 'save',
+});
+const WORKFLOW_STEP_TO_LEFT_TAB = Object.freeze({
+  load: 'left-start',
+  edit: 'left-image',
+  save: 'left-export',
+});
 const SHORTCUT_TOOLTIP_MAP = Object.freeze({});
 const BOOT_LOCAL_POLICY = Object.freeze({
   requiresStartupFetch: false,
@@ -53,6 +66,8 @@ const BOOT_LOCAL_POLICY = Object.freeze({
 });
 const BEGINNER_MODE_STORAGE_KEY = 'detail_editor_beginner_mode_v1';
 const BEGINNER_MODE_TUTORIAL_SEEN_KEY = 'detail_editor_beginner_tutorial_seen_v1';
+const IMAGE_FILE_NAME_HINT_RE = /[\s_-]+/g;
+const SUPPORTED_IMAGE_EXTENSIONS_TEXT = '.png, .jpg, .jpeg, .gif, .webp, .bmp, .svg, .avif';
 const BEGINNER_TUTORIAL_STEPS = Object.freeze([
   {
     title: '1) 선택부터 시작',
@@ -87,6 +102,13 @@ const advancedSettings = {
 };
 
 const EXPORT_SCALE_OPTIONS = Object.freeze([1, 2, 3]);
+const EXPORT_NEXT_ACTION_HINTS = Object.freeze({
+  'export-full-png': '다음: 업로드 화면에서 비율(권장 860px 기준)을 확인해 주세요.',
+  'export-full-jpg': '다음: 톤/압축 품질을 확인한 뒤 공유하세요.',
+  'export-selection-png': '다음: 선택 범위 경계가 맞는지 바로 확인해 주세요.',
+  'export-sections-zip': '다음: ZIP을 풀어 섹션 파일 순서와 누락 여부를 확인해 주세요.',
+  'download-export-preset-package': '다음: ZIP을 풀고 목적(업로드/검수/보관)에 맞게 전달해 주세요.',
+});
 
 const elements = {
   fixtureSelect: document.getElementById('fixtureSelect'),
@@ -256,7 +278,19 @@ const elements = {
   beginnerTutorialPrevButton: document.getElementById('beginnerTutorialPrevButton'),
   beginnerTutorialNextButton: document.getElementById('beginnerTutorialNextButton'),
   beginnerTutorialCloseButton: document.getElementById('beginnerTutorialCloseButton'),
+  beginnerMoreItems: Array.from(document.querySelectorAll('[data-beginner-more-item]')),
+  beginnerMoreTargets: Array.from(document.querySelectorAll('[data-beginner-more-target]')),
+  beginnerMoreMenus: Array.from(document.querySelectorAll('.topbar__more')),
 };
+
+const beginnerMoreItemAnchors = new WeakMap();
+
+elements.beginnerMoreItems.forEach((item) => {
+  beginnerMoreItemAnchors.set(item, {
+    parent: item.parentElement,
+    nextSibling: item.nextSibling,
+  });
+});
 
 function readFromLocalStorage(key, fallback = null) {
   try {
@@ -313,6 +347,36 @@ function applyBeginnerModeUi() {
   }
   if (isBeginnerMode && elements.advancedTopbarPanel) elements.advancedTopbarPanel.open = false;
   if (!isBeginnerMode && elements.beginnerTutorialTooltip) elements.beginnerTutorialTooltip.hidden = true;
+  syncBeginnerMoreMenus();
+}
+
+function syncBeginnerMoreMenus() {
+  const targetByGroup = new Map();
+  elements.beginnerMoreTargets.forEach((target) => {
+    const group = target.dataset.beginnerMoreTarget;
+    if (group) targetByGroup.set(group, target);
+  });
+  elements.beginnerMoreItems.forEach((item) => {
+    const group = item.dataset.beginnerMoreItem;
+    if (!group) return;
+    if (isBeginnerMode) {
+      const target = targetByGroup.get(group);
+      if (target && item.parentElement !== target) target.append(item);
+      return;
+    }
+    const anchor = beginnerMoreItemAnchors.get(item);
+    if (!anchor?.parent) return;
+    if (anchor.nextSibling && anchor.nextSibling.parentNode === anchor.parent) {
+      anchor.parent.insertBefore(item, anchor.nextSibling);
+    } else {
+      anchor.parent.append(item);
+    }
+  });
+  if (!isBeginnerMode) {
+    elements.beginnerMoreMenus.forEach((menu) => {
+      menu.open = false;
+    });
+  }
 }
 
 function setBeginnerMode(next, { silent = false } = {}) {
@@ -348,6 +412,15 @@ function syncWorkflowGuide(state, { announce = false } = {}) {
     const check = evaluateWorkflowStepReadiness(selectedStep, state);
     if (check.message) setStatus(check.message);
   }
+}
+
+function syncWorkflowGuideStepByLeftTab(leftTabId, { announce = false } = {}) {
+  const mappedStep = LEFT_TAB_TO_WORKFLOW_STEP[String(leftTabId || '')];
+  if (!mappedStep) return;
+  if (elements.workflowGuideSelect && elements.workflowGuideSelect.value !== mappedStep) {
+    elements.workflowGuideSelect.value = mappedStep;
+  }
+  syncWorkflowGuide(store.getState(), { announce });
 }
 
 function resolveDocumentStatus(state) {
@@ -388,6 +461,51 @@ function selectionExportBackground() {
 
 function setStatus(text, options = undefined) {
   store.setStatus(text, options);
+}
+
+function setImageApplyDiagnostic(diagnostic) {
+  store.setImageApplyDiagnostic(diagnostic);
+}
+
+function isSupportedImageFile(file) {
+  const type = String(file?.type || '');
+  const name = String(file?.name || '');
+  return /^image\//i.test(type) || /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i.test(name);
+}
+
+function normalizeNameForCompare(value) {
+  return String(value || '').toLowerCase().replace(/\.[^.]+$/, '').replace(IMAGE_FILE_NAME_HINT_RE, '');
+}
+
+function buildImageFailureDiagnostic({ files, editorMeta, statusMessage }) {
+  const safeFiles = Array.from(files || []);
+  const selected = editorMeta?.selected || null;
+  const selectedType = selected?.type || '';
+  const selectedLabel = selected?.label || selected?.uid || '';
+  const firstFile = safeFiles[0] || null;
+  const firstFileName = firstFile?.name || '';
+  const unsupportedCount = safeFiles.filter((file) => !isSupportedImageFile(file)).length;
+  const supportedCount = safeFiles.length - unsupportedCount;
+  const normalizedFileName = normalizeNameForCompare(firstFileName);
+  const normalizedSlotName = normalizeNameForCompare(selectedLabel);
+  const filenameMismatch = Boolean(firstFileName && selectedLabel && normalizedFileName && normalizedSlotName && !normalizedFileName.includes(normalizedSlotName) && !normalizedSlotName.includes(normalizedFileName));
+  const slotUnselected = selectedType !== 'slot';
+  return {
+    status: 'failed',
+    createdAt: new Date().toISOString(),
+    message: statusMessage || '이미지를 적용하지 못했습니다.',
+    files: safeFiles.map((file) => ({ name: file?.name || '', type: file?.type || '' })),
+    reasons: {
+      slotUnselected,
+      filenameMismatch,
+      unsupportedFormat: unsupportedCount > 0 || supportedCount < 1,
+    },
+    details: {
+      slotUnselected: slotUnselected ? '현재 선택이 이미지 슬롯이 아닙니다. 슬롯을 먼저 선택해 주세요.' : '',
+      filenameMismatch: filenameMismatch ? `선택 슬롯 "${selectedLabel}"과 파일 "${firstFileName}" 이름이 달라 자동 연결이 어려울 수 있습니다.` : '',
+      unsupportedFormat: unsupportedCount > 0 ? `지원하지 않는 파일 ${unsupportedCount}개가 포함되어 있습니다. (${SUPPORTED_IMAGE_EXTENSIONS_TEXT})` : '',
+    },
+  };
 }
 
 function extractErrorMessage(error) {
@@ -542,6 +660,15 @@ function formatByteSize(bytes) {
   if (safeBytes < 1024) return `${Math.round(safeBytes)} B`;
   if (safeBytes < 1024 * 1024) return `${(safeBytes / 1024).toFixed(1)} KB`;
   return `${(safeBytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function nextActionHint(kind) {
+  return EXPORT_NEXT_ACTION_HINTS[kind] || '다음: 결과물을 열어 품질과 경로를 확인해 주세요.';
+}
+
+function notifySavedWithGuide(kind, fileName, detail = '') {
+  const detailText = detail ? ` (${detail})` : '';
+  setStatus(`저장 완료: ${fileName}${detailText} · ${nextActionHint(kind)}`);
 }
 
 function estimateSavePreview(project, format) {
@@ -706,7 +833,7 @@ function resolveSidebarTab(panelId) {
   return fallback?.dataset.sidebarTab || '';
 }
 
-function setSidebarTab(panelId) {
+function setSidebarTab(panelId, { syncWorkflow = true } = {}) {
   const targetPanelId = resolveSidebarTab(panelId);
   const scope = String(targetPanelId || '').startsWith('left-')
     ? 'left'
@@ -726,6 +853,7 @@ function setSidebarTab(panelId) {
     if (panelScope !== scope) continue;
     panel.classList.toggle('is-active', panel.dataset.sidebarPanel === targetPanelId);
   }
+  if (scope === 'left' && syncWorkflow) syncWorkflowGuideStepByLeftTab(targetPanelId);
 }
 
 function getSlotRuntimeMeta(slotUid) {
@@ -882,6 +1010,9 @@ function syncExportPresetUi({ forceScale = false } = {}) {
     markAdvancedSettingsDirty(true);
   }
   if (elements.exportPresetSelect) elements.exportPresetSelect.title = preset.description || '';
+  for (const button of elements.downloadPresetButtons) {
+    button?.classList.toggle('is-active', (button?.dataset?.downloadPreset || '') === preset.id);
+  }
 }
 
 function setSelectionMode(nextMode) {
@@ -1310,7 +1441,7 @@ function renderShell(state) {
   }
   renderPreflight(elements.preflightContainer, state.editorMeta);
   if (elements.selectionInspector) {
-    renderSelectionInspector(elements.selectionInspector, state.editorMeta);
+    renderSelectionInspector(elements.selectionInspector, state.editorMeta, state.imageApplyDiagnostic);
   }
   renderSectionFilmstrip(elements.sectionList, state.editorMeta);
   renderSlotList(elements.slotList, state.editorMeta);
@@ -1718,7 +1849,7 @@ async function exportFullPng() {
   const blob = await activeEditor.exportFullPngBlob(exportScale());
   const fileName = `${projectBaseName(project)}__full.png`;
   downloadBlob(fileName, blob);
-  setStatus(`전체 PNG를 저장했습니다: ${fileName} (${exportScale()}x)${autoApplied ? ' · 변경된 고급값 자동 반영' : ''}`);
+  notifySavedWithGuide('export-full-png', fileName, `${exportScale()}x${autoApplied ? ', 고급값 자동 반영' : ''}`);
 }
 
 async function exportFullJpg() {
@@ -1731,7 +1862,7 @@ async function exportFullJpg() {
   const blob = await activeEditor.exportFullJpgBlob(exportScale(), quality);
   const fileName = `${projectBaseName(project)}__full.jpg`;
   downloadBlob(fileName, blob);
-  setStatus(`전체 JPG를 저장했습니다: ${fileName} (${exportScale()}x, 품질 ${quality.toFixed(2)})${autoApplied ? ' · 변경된 고급값 자동 반영' : ''}`);
+  notifySavedWithGuide('export-full-jpg', fileName, `${exportScale()}x, 품질 ${quality.toFixed(2)}${autoApplied ? ', 고급값 자동 반영' : ''}`);
 }
 
 async function exportSelectionPng() {
@@ -1748,9 +1879,7 @@ async function exportSelectionPng() {
   downloadBlob(fileName, blob);
   const skipped = meta?.policy?.skippedHidden + meta?.policy?.skippedLocked || 0;
   const bgLabel = options.background === 'opaque' ? '불투명(흰색)' : '투명';
-  setStatus(
-    `선택 영역 PNG를 저장했습니다: ${fileName} (${exportScale()}x, union bbox, 여백 ${options.padding}px, 배경 ${bgLabel}, 포함 ${meta?.targetCount || 0}개, 제외 ${skipped}개·숨김 제외 ${meta?.policy?.excludeHidden ? 'ON' : 'OFF'}·잠금 제외 ${meta?.policy?.excludeLocked ? 'ON' : 'OFF'})${autoApplied ? ' · 변경된 고급값 자동 반영' : ''}`,
-  );
+  notifySavedWithGuide('export-selection-png', fileName, `${exportScale()}x, 여백 ${options.padding}px, 배경 ${bgLabel}, 포함 ${meta?.targetCount || 0}개, 제외 ${skipped}개${autoApplied ? ', 고급값 자동 반영' : ''}`);
 }
 
 async function exportSectionsZip() {
@@ -1763,7 +1892,7 @@ async function exportSectionsZip() {
   const zipBlob = await buildZipBlob(entries);
   const fileName = `${projectBaseName(project)}__sections_png.zip`;
   downloadBlob(fileName, zipBlob);
-  setStatus(`섹션 PNG ZIP을 저장했습니다: ${fileName}${autoApplied ? ' · 변경된 고급값 자동 반영' : ''}`);
+  notifySavedWithGuide('export-sections-zip', fileName, `${exportScale()}x, 섹션 ${entries.length}개${autoApplied ? ', 고급값 자동 반영' : ''}`);
 }
 
 function downloadReportJson() {
@@ -1811,8 +1940,9 @@ async function downloadExportPresetPackage() {
   }
 
   const zip = await buildZipBlob(entries);
-  downloadBlob(`${baseName}__${preset.id}-preset.zip`, zip);
-  setStatus(`Export preset 패키지를 저장했습니다: ${preset.label}`);
+  const fileName = `${baseName}__${preset.id}-preset.zip`;
+  downloadBlob(fileName, zip);
+  notifySavedWithGuide('download-export-preset-package', fileName, `${preset.label}, 항목 ${entries.length}개`);
 }
 
 function restoreAutosave() {
@@ -1995,7 +2125,13 @@ function bindEvents() {
   }
 
 for (const button of elements.selectionModeButtons) button.addEventListener('click', () => setSelectionMode(button.dataset.selectionMode));
-if (elements.workflowGuideSelect) elements.workflowGuideSelect.addEventListener('change', () => syncWorkflowGuide(store.getState(), { announce: true }));
+if (elements.workflowGuideSelect) {
+  elements.workflowGuideSelect.addEventListener('change', () => {
+    const requestedTab = WORKFLOW_STEP_TO_LEFT_TAB[elements.workflowGuideSelect?.value || 'load'];
+    if (requestedTab) setSidebarTab(requestedTab, { syncWorkflow: false });
+    syncWorkflowGuide(store.getState(), { announce: true });
+  });
+}
 for (const button of elements.presetButtons) {
   button.addEventListener('click', () => {
     if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
@@ -2185,9 +2321,11 @@ elements.exportPresetPackageButton?.addEventListener('click', () => { runDownloa
 for (const button of elements.downloadPresetButtons) {
   button?.addEventListener('click', () => {
     const presetId = button.dataset.downloadPreset || 'market';
+    const recommendedChoice = button.dataset.downloadChoice || '';
     currentExportPresetId = presetId;
+    if (recommendedChoice && elements.downloadChoiceSelect) elements.downloadChoiceSelect.value = recommendedChoice;
     syncExportPresetUi({ forceScale: true });
-    setStatus(`Export preset: ${currentExportPreset().label} (배율은 고급값 적용 버튼으로 반영)`);
+    setStatus(`목적 카드 선택: ${currentExportPreset().label} · 실행할 작업은 ${elements.downloadChoiceSelect?.value || 'save-edited'}로 맞췄습니다.`);
   });
 }
 elements.saveFormatSelect?.addEventListener('change', () => {
@@ -2245,12 +2383,26 @@ elements.replaceImageInput?.addEventListener('change', async (event) => {
   const files = Array.from(event.target.files || []);
   try {
     if (!files.length) return;
-    if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+    if (!activeEditor) {
+      const message = '먼저 미리보기를 로드해 주세요.';
+      setStatus(message);
+      setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
+      return;
+    }
     const applied = await activeEditor.applyFiles(files);
-    setStatus(applied ? `${applied}개 이미지를 적용했습니다.` : '이미지를 적용하지 못했습니다.');
+    if (applied) {
+      setStatus(`${applied}개 이미지를 적용했습니다.`);
+      setImageApplyDiagnostic(null);
+    } else {
+      const message = '이미지를 적용하지 못했습니다.';
+      setStatus(message);
+      setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
+    }
     if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
   } catch (error) {
-    setStatus(`이미지 적용 중 오류: ${error?.message || error}`);
+    const message = `이미지 적용 중 오류: ${error?.message || error}`;
+    setStatus(message);
+    setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
   } finally {
     event.target.value = '';
   }
@@ -2275,6 +2427,24 @@ elements.sectionList?.addEventListener('click', (event) => {
   if (!button || !activeEditor) return;
   const ok = activeEditor.selectNodeByUid(button.dataset.sectionUid, { scroll: true });
   if (ok) setStatus('섹션으로 이동했습니다.');
+});
+elements.selectionInspector?.addEventListener('click', (event) => {
+  const actionButton = event.target.closest('[data-image-diagnostic-action]');
+  if (!actionButton) return;
+  const action = actionButton.dataset.imageDiagnosticAction || '';
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  if (action === 'select-first-slot') {
+    const firstSlotUid = store.getState().editorMeta?.slots?.[0]?.uid || '';
+    if (!firstSlotUid) return setStatus('선택할 슬롯이 없습니다.');
+    const ok = activeEditor.selectSlotByUid(firstSlotUid);
+    return setStatus(ok ? '첫 슬롯을 선택했습니다. 이제 이미지를 다시 넣어보세요.' : '첫 슬롯 선택에 실패했습니다.');
+  }
+  if (action === 'show-filename-rule') {
+    return setStatus('파일명 규칙: 슬롯 라벨(또는 uid) 일부를 파일명에 넣어 주세요. 예) hero-slot.jpg');
+  }
+  if (action === 'show-supported-extensions') {
+    return setStatus(`지원 확장자: ${SUPPORTED_IMAGE_EXTENSIONS_TEXT}`);
+  }
 });
 elements.sectionDuplicateButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
@@ -2494,7 +2664,9 @@ window.addEventListener('keydown', (event) => {
   }
   if (key === 'k') {
     event.preventDefault();
-    setSidebarTab('left-advanced');
+    setSidebarTab('left-start');
+    const advancedDetails = document.querySelector('[data-sidebar-panel="left-start"] details.left-accordion');
+    if (advancedDetails) advancedDetails.open = true;
     elements.codeSearchInput?.focus();
     return;
   }
@@ -2529,7 +2701,10 @@ elements.viewRulerToggleButton?.addEventListener('click', () => toggleViewFeatur
 
 bindEvents();
 
-setSidebarTab('left-upload');
+for (const guideContainer of document.querySelectorAll('[data-left-tab-guide-for]')) {
+  renderLeftTabStepGuide(guideContainer, guideContainer.getAttribute('data-left-tab-guide-for') || '');
+}
+setSidebarTab('left-start');
 setSidebarTab('right-inspect');
 setCodeSource('edited', { preserveDraft: false });
 syncSaveFormatUi();

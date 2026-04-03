@@ -5,6 +5,7 @@ export function createProjectStore() {
     editorMeta: null,
     statusText: '대기 중',
     lastError: '',
+    imageApplyDiagnostic: null,
     currentView: 'preview',
     selectionMode: 'smart',
   };
@@ -26,6 +27,7 @@ export function createProjectStore() {
       editorMeta: state.editorMeta,
       statusText: state.statusText,
       lastError: state.lastError,
+      imageApplyDiagnostic: state.imageApplyDiagnostic,
       currentView: state.currentView,
       selectionMode: state.selectionMode,
     };
@@ -37,6 +39,7 @@ export function createProjectStore() {
     }
     state.project = project;
     state.editorMeta = null;
+    state.imageApplyDiagnostic = null;
     notify();
   }
 
@@ -63,6 +66,11 @@ export function createProjectStore() {
     notify();
   }
 
+  function setImageApplyDiagnostic(diagnostic) {
+    state.imageApplyDiagnostic = diagnostic ? { ...diagnostic } : null;
+    notify();
+  }
+
   function setView(view) {
     state.currentView = view || 'preview';
     notify();
@@ -83,5 +91,16 @@ export function createProjectStore() {
     return () => listeners.delete(listener);
   }
 
-  return { getState, setProject, updateProject, setEditorMeta, setStatus, setLastError, setView, setSelectionMode, subscribe };
+  return {
+    getState,
+    setProject,
+    updateProject,
+    setEditorMeta,
+    setStatus,
+    setLastError,
+    setImageApplyDiagnostic,
+    setView,
+    setSelectionMode,
+    subscribe,
+  };
 }
