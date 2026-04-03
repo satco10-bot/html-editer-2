@@ -2745,6 +2745,66 @@ function createFrameEditor({
     };
   }
 
+  function groupSelected() {
+    const targets = filterTopLevelSelection(selectedElements).filter((element) => !isLockedElement(element));
+    if (targets.length < 2) return { ok: false, message: '그룹은 2개 이상 선택해야 합니다.' };
+    const parent = targets[0]?.parentElement;
+    if (!parent || parent === doc.body || ['HTML', 'BODY'].includes(parent.tagName)) {
+      return { ok: false, message: '그룹을 만들 공통 부모를 찾지 못했습니다.' };
+    }
+    if (!targets.every((element) => element.parentElement === parent)) {
+      return { ok: false, message: '같은 부모 레벨의 요소만 그룹으로 묶을 수 있습니다.' };
+    }
+    const siblingOrder = Array.from(parent.children || []);
+    const orderedTargets = targets.slice().sort((a, b) => siblingOrder.indexOf(a) - siblingOrder.indexOf(b));
+    const group = doc.createElement('div');
+    group.dataset.nodeRole = 'group';
+    group.dataset.nodeUid = nextId('node');
+    group.dataset.groupLabel = `그룹 ${orderedTargets.length}`;
+    group.setAttribute('aria-label', group.dataset.groupLabel);
+    parent.insertBefore(group, orderedTargets[0]);
+    for (const target of orderedTargets) group.appendChild(target);
+    group.dataset.editorModified = '1';
+    modifiedSlots.add(group.dataset.nodeUid);
+    redetect({ preserveSelectionUids: [group.dataset.nodeUid] });
+    emitMutation('group-selection');
+    return { ok: true, message: `선택 요소 ${orderedTargets.length}개를 그룹으로 묶었습니다.` };
+  }
+
+  function ungroupSelected() {
+    const targets = filterTopLevelSelection(selectedElements);
+    if (!targets.length) return { ok: false, message: '먼저 그룹(또는 그룹 안 요소)을 선택해 주세요.' };
+    const groups = [];
+    const seen = new Set();
+    const pushGroup = (group) => {
+      if (!isGroupElement(group) || !group.isConnected || isLockedElement(group)) return;
+      const uid = group.dataset.nodeUid || nextId('node');
+      group.dataset.nodeUid = uid;
+      if (seen.has(uid)) return;
+      seen.add(uid);
+      groups.push(group);
+    };
+    for (const target of targets) {
+      if (isGroupElement(target)) pushGroup(target);
+      else pushGroup(target.parentElement);
+    }
+    if (!groups.length) return { ok: false, message: '해제할 그룹을 찾지 못했습니다.' };
+    const keepSelectionUids = [];
+    for (const group of groups) {
+      const parent = group.parentElement;
+      if (!parent) continue;
+      const children = Array.from(group.children || []).filter((child) => isElement(child));
+      for (const child of children) {
+        parent.insertBefore(child, group);
+        if (child.dataset.nodeUid) keepSelectionUids.push(child.dataset.nodeUid);
+      }
+      group.remove();
+    }
+    redetect({ preserveSelectionUids: keepSelectionUids });
+    emitMutation('ungroup-selection');
+    return { ok: true, message: `그룹 ${groups.length}개를 해제했습니다.` };
+  }
+
   function deleteSelected() {
     return deleteSelection({
       selectedElements: () => uniqueConnectedElements(selectedElements),
@@ -3862,6 +3922,8 @@ function createFrameEditor({
   function executeCommand(command, payload = {}) {
     if (command === 'duplicate') return duplicateSelected();
     if (command === 'delete') return deleteSelected();
+    if (command === 'group-selection') return groupSelected();
+    if (command === 'ungroup-selection') return ungroupSelected();
     if (command === 'nudge-selection') return nudgeSelectedElements(payload.dx || 0, payload.dy || 0);
     if (command === 'undo' || command === 'redo' || command === 'save-edited') {
       onShortcut(command);
@@ -3892,6 +3954,11 @@ function createFrameEditor({
       if (key === 'd') {
         event.preventDefault();
         onStatus(executeCommand('duplicate').message);
+        return;
+      }
+      if (key === 'g') {
+        event.preventDefault();
+        onStatus(executeCommand(event.shiftKey ? 'ungroup-selection' : 'group-selection').message);
         return;
       }
     }
@@ -4378,6 +4445,7 @@ let geometryCoordMode = 'relative';
 let currentSaveFormat = 'linked';
 let lastSaveConversion = null;
 const zoomState = { mode: 'fit', value: 1 };
+const PANEL_LAYOUT_STORAGE_KEY = 'detail-editor:attribute-panel-layout:v1';
 const BOOT_LOCAL_POLICY = Object.freeze({
   requiresStartupFetch: false,
   requiresFileSystemAccessApi: false,
@@ -4388,6 +4456,14 @@ const historyState = {
   baseSnapshot: null,
   undoStack: [],
   redoStack: [],
+};
+
+const advancedSettings = {
+  geometryCoordMode: 'relative',
+  exportScale: 1,
+  exportJpgQuality: 0.92,
+  selectionExportPadding: 16,
+  selectionExportBackground: 'transparent',
 };
 
 const elements = {
@@ -4468,6 +4544,12 @@ const elements = {
   geometryCoordModeSelect: document.getElementById('geometryCoordModeSelect'),
   geometryRuleHint: document.getElementById('geometryRuleHint'),
   applyGeometryButton: document.getElementById('applyGeometryButton'),
+  arrangeToggleHideButton: document.getElementById('arrangeToggleHideButton'),
+  arrangeToggleLockButton: document.getElementById('arrangeToggleLockButton'),
+  basicAttributeSection: document.getElementById('basicAttributeSection'),
+  advancedAttributeSection: document.getElementById('advancedAttributeSection'),
+  applyAdvancedSettingsButton: document.getElementById('applyAdvancedSettingsButton'),
+  advancedSettingsState: document.getElementById('advancedSettingsState'),
   bringForwardButton: document.getElementById('bringForwardButton'),
   sendBackwardButton: document.getElementById('sendBackwardButton'),
   bringToFrontButton: document.getElementById('bringToFrontButton'),
@@ -4519,7 +4601,7 @@ function projectBaseName(project) {
 }
 
 function exportScale() {
-  const value = Number.parseFloat(elements.exportScaleSelect?.value || '1');
+  const value = Number.parseFloat(String(advancedSettings.exportScale || 1));
   if (!Number.isFinite(value)) return 1;
   if (value >= 2.5) return 3;
   if (value >= 1.5) return 2;
@@ -4527,19 +4609,19 @@ function exportScale() {
 }
 
 function exportJpgQuality() {
-  const raw = Number.parseFloat(elements.exportJpgQualityInput?.value || String(DEFAULT_JPG_QUALITY));
+  const raw = Number.parseFloat(String(advancedSettings.exportJpgQuality || DEFAULT_JPG_QUALITY));
   if (!Number.isFinite(raw)) return DEFAULT_JPG_QUALITY;
   return Math.min(1, Math.max(0.1, raw));
 }
 
 function selectionExportPadding() {
-  const raw = Number.parseFloat(elements.selectionExportPaddingInput?.value || '16');
+  const raw = Number.parseFloat(String(advancedSettings.selectionExportPadding || 16));
   if (!Number.isFinite(raw)) return 0;
   return Math.max(0, Math.min(240, Math.round(raw)));
 }
 
 function selectionExportBackground() {
-  const raw = String(elements.selectionExportBackgroundSelect?.value || 'transparent');
+  const raw = String(advancedSettings.selectionExportBackground || 'transparent');
   return raw === 'opaque' ? 'opaque' : 'transparent';
 }
 
@@ -4617,6 +4699,75 @@ function syncSaveFormatUi() {
     const modeLabel = currentSaveFormat === 'embedded' ? 'embedded (data URL 내장)' : 'linked (경로 유지)';
     elements.saveFormatStatus.textContent = `현재 저장 포맷: ${modeLabel}`;
   }
+}
+
+function markAdvancedSettingsDirty(isDirty) {
+  if (!elements.advancedSettingsState) return;
+  elements.advancedSettingsState.textContent = isDirty ? '고급값 변경됨 · 적용 필요' : '고급값 대기 없음';
+}
+
+function syncAdvancedFormFromState() {
+  if (elements.geometryCoordModeSelect) elements.geometryCoordModeSelect.value = advancedSettings.geometryCoordMode;
+  if (elements.exportScaleSelect) elements.exportScaleSelect.value = String(advancedSettings.exportScale);
+  if (elements.exportJpgQualityInput) elements.exportJpgQualityInput.value = String(advancedSettings.exportJpgQuality);
+  if (elements.selectionExportPaddingInput) elements.selectionExportPaddingInput.value = String(advancedSettings.selectionExportPadding);
+  if (elements.selectionExportBackgroundSelect) elements.selectionExportBackgroundSelect.value = advancedSettings.selectionExportBackground;
+  markAdvancedSettingsDirty(false);
+}
+
+function applyAdvancedSettingsFromForm() {
+  const nextCoordMode = elements.geometryCoordModeSelect?.value === 'absolute' ? 'absolute' : 'relative';
+  const nextScaleRaw = Number.parseFloat(elements.exportScaleSelect?.value || '1');
+  const nextScale = nextScaleRaw >= 2.5 ? 3 : (nextScaleRaw >= 1.5 ? 2 : 1);
+  const nextJpgRaw = Number.parseFloat(elements.exportJpgQualityInput?.value || String(DEFAULT_JPG_QUALITY));
+  const nextJpgQuality = Number.isFinite(nextJpgRaw) ? Math.min(1, Math.max(0.1, nextJpgRaw)) : DEFAULT_JPG_QUALITY;
+  const nextPaddingRaw = Number.parseFloat(elements.selectionExportPaddingInput?.value || '16');
+  const nextPadding = Number.isFinite(nextPaddingRaw) ? Math.max(0, Math.min(240, Math.round(nextPaddingRaw))) : 16;
+  const nextBackground = elements.selectionExportBackgroundSelect?.value === 'opaque' ? 'opaque' : 'transparent';
+
+  advancedSettings.geometryCoordMode = nextCoordMode;
+  advancedSettings.exportScale = nextScale;
+  advancedSettings.exportJpgQuality = nextJpgQuality;
+  advancedSettings.selectionExportPadding = nextPadding;
+  advancedSettings.selectionExportBackground = nextBackground;
+  geometryCoordMode = nextCoordMode;
+  syncGeometryControls();
+  syncAdvancedFormFromState();
+  return {
+    ok: true,
+    message: `고급값 적용 완료 (좌표 ${nextCoordMode}, 배율 ${nextScale}x, JPG ${nextJpgQuality.toFixed(2)})`,
+  };
+}
+
+function readPanelLayoutState() {
+  try {
+    const raw = window.localStorage.getItem(PANEL_LAYOUT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return {
+      basicOpen: parsed.basicOpen !== false,
+      advancedOpen: parsed.advancedOpen === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistPanelLayoutState() {
+  try {
+    window.localStorage.setItem(PANEL_LAYOUT_STORAGE_KEY, JSON.stringify({
+      basicOpen: !!elements.basicAttributeSection?.open,
+      advancedOpen: !!elements.advancedAttributeSection?.open,
+    }));
+  } catch {}
+}
+
+function restorePanelLayoutState() {
+  const saved = readPanelLayoutState();
+  if (!saved) return;
+  if (elements.basicAttributeSection) elements.basicAttributeSection.open = saved.basicOpen;
+  if (elements.advancedAttributeSection) elements.advancedAttributeSection.open = saved.advancedOpen;
 }
 
 function setSidebarTab(panelId) {
@@ -4701,12 +4852,12 @@ function syncWorkspaceButtons() {
 function syncExportPresetUi({ forceScale = false } = {}) {
   const preset = currentExportPreset();
   if (elements.exportPresetSelect.value !== preset.id) elements.exportPresetSelect.value = preset.id;
-  const shouldSyncScale = forceScale || elements.exportScaleSelect.dataset.boundPreset !== preset.id;
+  const shouldSyncScale = forceScale;
   const presetScale = Number.parseFloat(String(preset.scale));
   const normalizedScale = presetScale >= 2.5 ? '3' : presetScale >= 1.5 ? '2' : '1';
-  if (shouldSyncScale && EXPORT_SCALE_OPTIONS.includes(Number.parseFloat(normalizedScale))) {
+  if (shouldSyncScale && EXPORT_SCALE_OPTIONS.includes(Number.parseFloat(normalizedScale)) && elements.exportScaleSelect) {
     elements.exportScaleSelect.value = normalizedScale;
-    elements.exportScaleSelect.dataset.boundPreset = preset.id;
+    markAdvancedSettingsDirty(true);
   }
   if (elements.exportPresetPackageButton) elements.exportPresetPackageButton.title = preset.description || '';
 }
@@ -5029,6 +5180,8 @@ function renderShell(state) {
   elements.redetectButton.disabled = !hasEditor;
   elements.toggleHideButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
   elements.toggleLockButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
+  if (elements.arrangeToggleHideButton) elements.arrangeToggleHideButton.disabled = elements.toggleHideButton.disabled;
+  if (elements.arrangeToggleLockButton) elements.arrangeToggleLockButton.disabled = elements.toggleLockButton.disabled;
   elements.textEditButton.disabled = !hasEditor;
   elements.groupButton.disabled = !hasEditor || !state.editorMeta?.canGroupSelection;
   elements.ungroupButton.disabled = !hasEditor || !state.editorMeta?.canUngroupSelection;
@@ -5050,6 +5203,7 @@ function renderShell(state) {
   if (elements.applyCodeToEditorButton) elements.applyCodeToEditorButton.disabled = !hasProject || currentCodeSource === 'report';
   if (elements.reloadCodeFromEditorButton) elements.reloadCodeFromEditorButton.disabled = !hasProject;
   if (elements.saveFormatSelect) elements.saveFormatSelect.disabled = !hasProject;
+  if (elements.applyAdvancedSettingsButton) elements.applyAdvancedSettingsButton.disabled = !hasProject;
   syncExportPresetUi();
   syncSaveFormatUi();
   syncWorkspaceButtons();
@@ -5081,38 +5235,8 @@ function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
   const fallback = {
     duplicate: () => activeEditor.duplicateSelected(),
     delete: () => activeEditor.deleteSelected(),
-  };
-  const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
-  setStatus(result.message);
-  if (refresh && (store.getState().currentView === 'edited' || store.getState().currentView === 'report')) refreshComputedViews(store.getState());
-  return result;
-}
-
-function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
-  if (!activeEditor) {
-    setStatus('먼저 미리보기를 로드해 주세요.');
-    return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
-  }
-  const fallback = {
-    duplicate: () => activeEditor.duplicateSelected(),
-    delete: () => activeEditor.deleteSelected(),
     'group-selection': () => activeEditor.groupSelected?.() || { ok: false, message: 'group-selection 명령을 지원하지 않습니다.' },
     'ungroup-selection': () => activeEditor.ungroupSelected?.() || { ok: false, message: 'ungroup-selection 명령을 지원하지 않습니다.' },
-  };
-  const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
-  setStatus(result.message);
-  if (refresh && (store.getState().currentView === 'edited' || store.getState().currentView === 'report')) refreshComputedViews(store.getState());
-  return result;
-}
-
-function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
-  if (!activeEditor) {
-    setStatus('먼저 미리보기를 로드해 주세요.');
-    return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
-  }
-  const fallback = {
-    duplicate: () => activeEditor.duplicateSelected(),
-    delete: () => activeEditor.deleteSelected(),
   };
   const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
   setStatus(result.message);
@@ -5563,12 +5687,14 @@ elements.toggleHideButton.addEventListener('click', () => {
   setStatus(result.message);
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
+elements.arrangeToggleHideButton?.addEventListener('click', () => elements.toggleHideButton?.click());
 elements.toggleLockButton.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.toggleSelectedLocked();
   setStatus(result.message);
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
+elements.arrangeToggleLockButton?.addEventListener('click', () => elements.toggleLockButton?.click());
 elements.demoteSlotButton.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.demoteSelectedSlot();
@@ -5589,6 +5715,8 @@ elements.textEditButton.addEventListener('click', () => {
 });
 elements.duplicateButton?.addEventListener('click', () => { executeEditorCommand('duplicate'); });
 elements.deleteButton?.addEventListener('click', () => { executeEditorCommand('delete'); });
+elements.groupButton?.addEventListener('click', () => { executeEditorCommand('group-selection'); });
+elements.ungroupButton?.addEventListener('click', () => { executeEditorCommand('ungroup-selection'); });
 elements.addTextButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.addTextElement();
@@ -5609,9 +5737,8 @@ elements.applyGeometryButton?.addEventListener('click', () => {
   setStatus(result.message);
 });
 elements.geometryCoordModeSelect?.addEventListener('change', () => {
-  geometryCoordMode = elements.geometryCoordModeSelect.value === 'absolute' ? 'absolute' : 'relative';
-  syncGeometryControls();
-  setStatus(geometryCoordMode === 'absolute' ? '절대 좌표 모드로 전환했습니다.' : '상대 좌표 모드로 전환했습니다.');
+  markAdvancedSettingsDirty(true);
+  setStatus('좌표 기준 변경 대기 중입니다. "고급값 적용" 버튼을 눌러 반영하세요.');
 });
 for (const input of [elements.geometryXInput, elements.geometryYInput, elements.geometryWInput, elements.geometryHInput]) {
   input?.addEventListener('input', () => {
@@ -5671,10 +5798,17 @@ elements.downloadReportButton.addEventListener('click', downloadReportJson);
 elements.exportPresetSelect.addEventListener('change', () => {
   currentExportPresetId = elements.exportPresetSelect.value || 'default';
   syncExportPresetUi({ forceScale: true });
-  setStatus(`Export preset: ${currentExportPreset().label}`);
+  setStatus(`Export preset: ${currentExportPreset().label} (배율은 고급값 적용 버튼으로 반영)`);
 });
 elements.exportScaleSelect.addEventListener('change', () => {
-  elements.exportScaleSelect.dataset.boundPreset = '';
+  markAdvancedSettingsDirty(true);
+});
+elements.exportJpgQualityInput?.addEventListener('input', () => markAdvancedSettingsDirty(true));
+elements.selectionExportPaddingInput?.addEventListener('input', () => markAdvancedSettingsDirty(true));
+elements.selectionExportBackgroundSelect?.addEventListener('change', () => markAdvancedSettingsDirty(true));
+elements.applyAdvancedSettingsButton?.addEventListener('click', () => {
+  const result = applyAdvancedSettingsFromForm();
+  setStatus(result.message);
 });
 
 elements.htmlFileInput.addEventListener('change', async (event) => {
@@ -5765,6 +5899,8 @@ elements.zoomInButton?.addEventListener('click', () => nudgeZoom(0.1));
 elements.zoomResetButton?.addEventListener('click', () => setZoom('manual', 1));
 elements.zoomFitButton?.addEventListener('click', () => setZoom('fit'));
 window.addEventListener('resize', applyPreviewZoom);
+elements.basicAttributeSection?.addEventListener('toggle', persistPanelLayoutState);
+elements.advancedAttributeSection?.addEventListener('toggle', persistPanelLayoutState);
 
 window.addEventListener('keydown', (event) => {
   const withModifier = event.ctrlKey || event.metaKey;
@@ -5824,6 +5960,8 @@ setSidebarTab('left-import');
 setSidebarTab('right-inspect');
 setCodeSource('edited', { preserveDraft: false });
 syncSaveFormatUi();
+restorePanelLayoutState();
+syncAdvancedFormFromState();
 syncWorkspaceButtons();
 loadFixture('F05');
 

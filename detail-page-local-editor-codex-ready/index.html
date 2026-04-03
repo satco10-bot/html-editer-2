@@ -43,32 +43,9 @@
           <span>Preset</span>
           <select id="exportPresetSelect"></select>
         </label>
-        <label class="mini-control">
-          <span>배율</span>
-          <select id="exportScaleSelect">
-            <option value="1">1x</option>
-            <option value="2">2x</option>
-            <option value="3">3x</option>
-          </select>
-        </label>
-        <label class="mini-control">
-          <span>JPG 품질</span>
-          <input id="exportJpgQualityInput" type="number" min="0.1" max="1" step="0.01" value="0.92" style="width:74px" />
-        </label>
         <button id="exportPngButton" class="button button--ghost">PNG</button>
         <button id="exportJpgButton" class="button button--ghost">JPG</button>
         <button id="exportSectionsZipButton" class="button button--ghost">섹션 ZIP</button>
-        <label class="mini-control">
-          <span>선택 여백</span>
-          <input id="selectionExportPaddingInput" type="number" min="0" max="240" step="1" value="16" style="width:74px" />
-        </label>
-        <label class="mini-control">
-          <span>선택 배경</span>
-          <select id="selectionExportBackgroundSelect">
-            <option value="transparent">투명</option>
-            <option value="opaque">불투명(흰색)</option>
-          </select>
-        </label>
         <button id="exportSelectionPngButton" class="button button--ghost">선택 PNG</button>
         <button id="exportPresetPackageButton" class="button button--ghost">Preset ZIP</button>
       </div>
@@ -322,47 +299,84 @@
           <h2>정렬 / 간격</h2>
           <div id="batchSelectionSummary" class="mini-summary">1개 이하 선택</div>
         </div>
-        <div class="style-form">
+        <details id="basicAttributeSection" class="style-form" open>
+          <summary><strong>기본</strong> · 위치/크기/레이어/잠금</summary>
+          <div class="style-grid">
+            <label class="field field--mini">
+              <span title="요소의 가로 위치(px). 입력 즉시 반영됩니다.">X</span>
+              <input id="geometryXInput" type="number" step="1" title="요소의 가로 위치(px). 입력 즉시 반영됩니다." />
+            </label>
+            <label class="field field--mini">
+              <span title="요소의 세로 위치(px). 입력 즉시 반영됩니다.">Y</span>
+              <input id="geometryYInput" type="number" step="1" title="요소의 세로 위치(px). 입력 즉시 반영됩니다." />
+            </label>
+            <label class="field field--mini">
+              <span title="요소 너비(px). 최소 8px입니다.">W</span>
+              <input id="geometryWInput" type="number" min="8" step="1" title="요소 너비(px). 최소 8px입니다." />
+            </label>
+            <label class="field field--mini">
+              <span title="요소 높이(px). 최소 8px입니다.">H</span>
+              <input id="geometryHInput" type="number" min="8" step="1" title="요소 높이(px). 최소 8px입니다." />
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="applyGeometryButton" class="button button--secondary" title="기본값이 즉시 반영되지만, 버튼으로도 한 번 더 적용할 수 있습니다.">XYWH 적용</button>
+            <button id="bringForwardButton" class="button button--ghost" title="선택 요소를 한 단계 앞으로 이동합니다.">앞으로</button>
+            <button id="sendBackwardButton" class="button button--ghost" title="선택 요소를 한 단계 뒤로 이동합니다.">뒤로</button>
+            <button id="bringToFrontButton" class="button button--ghost" title="선택 요소를 가장 앞으로 이동합니다.">맨앞</button>
+            <button id="sendToBackButton" class="button button--ghost" title="선택 요소를 가장 뒤로 이동합니다.">맨뒤</button>
+          </div>
+          <div class="button-row">
+            <button id="arrangeToggleHideButton" class="button button--ghost button--small" title="선택 요소를 숨기거나 다시 보이게 전환합니다.">숨김 전환</button>
+            <button id="arrangeToggleLockButton" class="button button--ghost button--small" title="선택 요소를 잠그거나 잠금 해제합니다.">잠금 전환</button>
+          </div>
+        </details>
+        <details id="advancedAttributeSection" class="style-form">
+          <summary><strong>고급</strong> · export/변환/진단 (적용 버튼)</summary>
           <label class="field">
-            <span>좌표 기준</span>
-            <select id="geometryCoordModeSelect">
+            <span title="좌표 계산 기준입니다. 상대/절대를 먼저 설정하고 적용 버튼을 누르세요.">좌표 기준</span>
+            <select id="geometryCoordModeSelect" title="좌표 계산 기준입니다. 상대/절대를 먼저 설정하고 적용 버튼을 누르세요.">
               <option value="relative">상대 좌표 (요소 이동값)</option>
               <option value="absolute">절대 좌표 (문서 좌상단 기준)</option>
             </select>
           </label>
-          <div id="geometryRuleHint" class="mini-summary">다중 선택에서 값이 다르면 "혼합"으로 표시됩니다.</div>
+          <label class="field">
+            <span title="export 배율(1x/2x/3x). 적용 버튼을 눌러야 저장 시 반영됩니다.">export 배율</span>
+            <select id="exportScaleSelect" title="export 배율(1x/2x/3x). 적용 버튼을 눌러야 저장 시 반영됩니다.">
+              <option value="1">1x</option>
+              <option value="2">2x</option>
+              <option value="3">3x</option>
+            </select>
+          </label>
+          <label class="field">
+            <span title="JPG 화질(0.1~1). 높을수록 용량이 커집니다.">JPG 품질</span>
+            <input id="exportJpgQualityInput" type="number" min="0.1" max="1" step="0.01" value="0.92" title="JPG 화질(0.1~1). 높을수록 용량이 커집니다." />
+          </label>
           <div class="style-grid">
             <label class="field field--mini">
-              <span>X</span>
-              <input id="geometryXInput" type="number" step="1" />
+              <span title="선택 export 시 주변 여백(px)입니다.">선택 여백</span>
+              <input id="selectionExportPaddingInput" type="number" min="0" max="240" step="1" value="16" title="선택 export 시 주변 여백(px)입니다." />
             </label>
             <label class="field field--mini">
-              <span>Y</span>
-              <input id="geometryYInput" type="number" step="1" />
+              <span title="선택 export 배경 처리 방식입니다.">선택 배경</span>
+              <select id="selectionExportBackgroundSelect" title="선택 export 배경 처리 방식입니다.">
+                <option value="transparent">투명</option>
+                <option value="opaque">불투명(흰색)</option>
+              </select>
             </label>
-            <label class="field field--mini">
-              <span>W</span>
-              <input id="geometryWInput" type="number" min="8" step="1" />
-            </label>
-            <label class="field field--mini">
-              <span>H</span>
-              <input id="geometryHInput" type="number" min="8" step="1" />
-            </label>
+          </div>
+          <div id="geometryRuleHint" class="mini-summary">다중 선택에서 값이 다르면 "혼합"으로 표시됩니다.</div>
+          <div class="button-row">
+            <button id="applyAdvancedSettingsButton" class="button button--secondary" title="고급값(좌표기준/export/진단)을 한 번에 반영합니다.">고급값 적용</button>
+            <span id="advancedSettingsState" class="mini-summary">고급값 대기 없음</span>
           </div>
           <div class="button-row">
-            <button id="applyGeometryButton" class="button button--secondary">XYWH 적용</button>
-            <button id="bringForwardButton" class="button button--ghost">앞으로</button>
-            <button id="sendBackwardButton" class="button button--ghost">뒤로</button>
-            <button id="bringToFrontButton" class="button button--ghost">맨앞</button>
-            <button id="sendToBackButton" class="button button--ghost">맨뒤</button>
+            <button id="imageNudgeLeftButton" class="button button--ghost button--small" title="선택 이미지의 내부 위치를 왼쪽으로 2px 이동합니다.">이미지 ←</button>
+            <button id="imageNudgeRightButton" class="button button--ghost button--small" title="선택 이미지의 내부 위치를 오른쪽으로 2px 이동합니다.">이미지 →</button>
+            <button id="imageNudgeUpButton" class="button button--ghost button--small" title="선택 이미지의 내부 위치를 위로 2px 이동합니다.">이미지 ↑</button>
+            <button id="imageNudgeDownButton" class="button button--ghost button--small" title="선택 이미지의 내부 위치를 아래로 2px 이동합니다.">이미지 ↓</button>
           </div>
-          <div class="button-row">
-            <button id="imageNudgeLeftButton" class="button button--ghost button--small">이미지 ←</button>
-            <button id="imageNudgeRightButton" class="button button--ghost button--small">이미지 →</button>
-            <button id="imageNudgeUpButton" class="button button--ghost button--small">이미지 ↑</button>
-            <button id="imageNudgeDownButton" class="button button--ghost button--small">이미지 ↓</button>
-          </div>
-        </div>
+        </details>
         <div class="panel-divider"></div>
         <div class="action-grid">
           <button class="button button--ghost button--small" data-batch-action="same-width">같은 너비</button>
