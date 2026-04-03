@@ -137,7 +137,6 @@ const historyState = {
 };
 const HISTORY_MERGE_WINDOW_MS = 700;
 const LIVE_HISTORY_LABELS = new Set(['geometry-patch', 'apply-text-style', 'clear-text-style']);
-const DEFAULT_JPG_QUALITY = 0.92;
 
 const advancedSettings = {
   geometryCoordMode: 'relative',
