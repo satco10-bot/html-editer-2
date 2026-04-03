@@ -33,8 +33,23 @@ def _find_chromium_path() -> str | None:
 
 
 def _load_fixture(page: Any, fixture_id: str) -> None:
-    page.locator('#fixtureSelect').select_option(fixture_id, force=True)
-    page.locator('#loadFixtureButton').click(force=True)
+    page.evaluate(
+        """([selectId, fixtureValue]) => {
+            const select = document.querySelector(selectId);
+            if (select) {
+              select.value = fixtureValue;
+              select.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          }""",
+        ['#fixtureSelect', fixture_id],
+    )
+    page.evaluate(
+        """(buttonId) => {
+            const button = document.querySelector(buttonId);
+            if (button) button.click();
+          }""",
+        '#loadFixtureButton',
+    )
     page.wait_for_timeout(900)
 
 

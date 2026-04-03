@@ -679,6 +679,60 @@ function createAssetResolver(fileIndex, htmlEntryRelativePath = '') {
 }
 
 
+/* ===== src/core/node-uid.js ===== */
+
+function normalizeUid(value) {
+  return String(value || '').trim();
+}
+function ensureUniqueNodeUids(doc, { selector = '*', attribute = 'data-node-uid' } = {}) {
+  if (!doc?.querySelectorAll) {
+    return {
+      scanned: 0,
+      assigned: 0,
+      deduped: 0,
+      unchanged: 0,
+      duplicateGroups: 0,
+    };
+  }
+
+  const elements = Array.from(doc.querySelectorAll(selector));
+  const used = new Set();
+  const duplicateCounter = new Map();
+  let assigned = 0;
+  let deduped = 0;
+  let unchanged = 0;
+
+  for (const element of elements) {
+    const rawUid = normalizeUid(element.getAttribute(attribute));
+    if (!rawUid) {
+      const nextUid = nextId('node');
+      element.setAttribute(attribute, nextUid);
+      used.add(nextUid);
+      assigned += 1;
+      continue;
+    }
+    if (!used.has(rawUid)) {
+      used.add(rawUid);
+      unchanged += 1;
+      continue;
+    }
+    duplicateCounter.set(rawUid, (duplicateCounter.get(rawUid) || 0) + 1);
+    const nextUid = nextId('node');
+    element.setAttribute(attribute, nextUid);
+    used.add(nextUid);
+    deduped += 1;
+  }
+
+  return {
+    scanned: elements.length,
+    assigned,
+    deduped,
+    unchanged,
+    duplicateGroups: duplicateCounter.size,
+  };
+}
+
+
 /* ===== src/core/slot-detector.js ===== */
 
 function directTextContent(element) {
@@ -1022,9 +1076,13 @@ function normalizeProject({
   const scriptsRemoved = removeScripts(doc, issues);
   ensureHead(doc);
 
-  Array.from(doc.querySelectorAll('*')).forEach((element) => {
-    if (!element.dataset.nodeUid) element.dataset.nodeUid = nextId('node');
-  });
+  const uidRepair = ensureUniqueNodeUids(doc);
+  if (uidRepair.assigned > 0) {
+    issues.push(createIssue('warning', 'UID_MISSING_REPAIRED', `data-node-uid 누락 ${uidRepair.assigned}건을 자동 보정했습니다.`));
+  }
+  if (uidRepair.deduped > 0) {
+    issues.push(createIssue('warning', 'UID_DUPLICATE_REPAIRED', `data-node-uid 중복 ${uidRepair.deduped}건(${uidRepair.duplicateGroups}개 그룹)을 자동 보정했습니다.`));
+  }
 
   const imgElements = Array.from(doc.querySelectorAll('img'));
   for (const img of imgElements) {
@@ -1215,6 +1273,10 @@ function normalizeProject({
     remoteStylesheetCount: remoteStylesheets.length,
     unresolvedReferenceCount: unresolvedRefs.size,
     linkedSlotCount: doc.querySelectorAll(EXPLICIT_SLOT_SELECTOR).length,
+    uidScanned: uidRepair.scanned,
+    uidAssigned: uidRepair.assigned,
+    uidDeduped: uidRepair.deduped,
+    uidDuplicateGroups: uidRepair.duplicateGroups,
   };
 
   const normalizedHtml = `<!DOCTYPE html>\n${doc.documentElement.outerHTML}`;
@@ -1227,6 +1289,7 @@ function normalizeProject({
     originalHtml: String(html || ''),
     normalizedHtml,
     summary,
+    uidRepair,
     issues,
     assets,
     slotDetection,
@@ -1402,6 +1465,7 @@ function readNodeState(element) {
   };
 }
 function createEditorModel(doc) {
+  ensureUniqueNodeUids(doc, { selector: '[data-node-uid]' });
   const nodes = new Map();
   for (const element of Array.from(doc.querySelectorAll('[data-node-uid]'))) {
     const state = readNodeState(element);
@@ -5195,6 +5259,7 @@ const viewFeatureFlags = {
   ruler: false,
 };
 const OPEN_DOWNLOAD_MODAL_BUTTON_LABEL = '저장/출력 열기';
+const DEFAULT_JPG_QUALITY = 0.92;
 const WORKFLOW_STEP_GUIDES = Object.freeze({
   load: 'HTML 파일이나 폴더를 먼저 불러오세요.',
   edit: '요소를 클릭한 뒤 드래그하세요.',
@@ -5218,10 +5283,13 @@ const BOOT_LOCAL_POLICY = Object.freeze({
   requiresFileSystemAccessApi: false,
   requiresServerEndpoint: false,
 });
+const SUPPORTED_IMAGE_EXTENSIONS = Object.freeze(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.avif']);
+const SUPPORTED_IMAGE_EXTENSIONS_TEXT = SUPPORTED_IMAGE_EXTENSIONS.join(', ');
 const APP_STATES = Object.freeze({
   launch: 'launch',
   editor: 'editor',
 });
+let currentAppState = APP_STATES.launch;
 const BEGINNER_MODE_STORAGE_KEY = 'detail_editor_beginner_mode_v1';
 const ONBOARDING_COMPLETED_STORAGE_KEY = 'detail_editor_onboarding_completed_v1';
 const ONBOARDING_SAMPLE_CHECKED_STORAGE_KEY = 'detail_editor_onboarding_sample_checked_v1';
@@ -5498,6 +5566,7 @@ const elements = {
   onboardingChecklist: document.getElementById('onboardingChecklist'),
   onboardingChecklistItem: document.getElementById('onboardingChecklistItem'),
   onboardingChecklistDoneButton: document.getElementById('onboardingChecklistDoneButton'),
+  beginnerMoreItems: Array.from(document.querySelectorAll('[data-beginner-more-item]')),
 };
 
 const beginnerMoreItemAnchors = new WeakMap();
@@ -5703,6 +5772,36 @@ function selectionExportBackground() {
 
 function setStatus(text, options = undefined) {
   store.setStatus(text, options);
+}
+
+function setImageApplyDiagnostic(diagnostic) {
+  store.setImageApplyDiagnostic(diagnostic || null);
+}
+
+function buildImageFailureDiagnostic({ files = [], editorMeta = null, statusMessage = '' } = {}) {
+  const firstFile = files[0] || null;
+  const fileName = firstFile?.name || '';
+  const selected = editorMeta?.selected || null;
+  const selectedSlotLabel = selected?.label || selected?.uid || '';
+  const extension = fileName.includes('.') ? fileName.slice(fileName.lastIndexOf('.')).toLowerCase() : '';
+  const unsupportedFormat = !!extension && !SUPPORTED_IMAGE_EXTENSIONS.includes(extension);
+  const filenameMismatch = !!fileName && !!selectedSlotLabel && !fileName.toLowerCase().includes(String(selectedSlotLabel).toLowerCase());
+  const slotUnselected = !selected || selected.type !== 'slot';
+
+  return {
+    status: 'failed',
+    message: statusMessage || '이미지 적용 실패 원인을 확인해 주세요.',
+    reasons: {
+      slotUnselected,
+      filenameMismatch,
+      unsupportedFormat,
+    },
+    details: {
+      slotUnselected: slotUnselected ? '슬롯을 먼저 선택한 뒤 이미지를 넣어 주세요.' : '',
+      filenameMismatch: filenameMismatch ? `선택 슬롯(${selectedSlotLabel})과 파일명(${fileName})이 다릅니다.` : '',
+      unsupportedFormat: unsupportedFormat ? `지원하지 않는 확장자입니다: ${extension}` : '',
+    },
+  };
 }
 
 function setAppState(nextState) {
