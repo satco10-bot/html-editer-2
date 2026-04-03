@@ -118,6 +118,19 @@ def run() -> dict[str, object]:
                     suggested_name = download.suggested_filename
                     saved_path = tmp_dir / suggested_name
                     download.save_as(str(saved_path))
+                    wait_status_contains(page, '저장 완료:', 10000, 'PNG 저장 토스트')
+
+                    page.click('#openDownloadModalButton')
+                    page.select_option('#exportPresetSelect', 'default')
+                    page.select_option('#downloadChoiceSelect', 'download-export-preset-package')
+
+                    with page.expect_download(timeout=15000) as preset_download_info:
+                        page.click('#runDownloadChoiceButton')
+                    preset_download = preset_download_info.value
+                    preset_name = preset_download.suggested_filename
+                    preset_path = tmp_dir / preset_name
+                    preset_download.save_as(str(preset_path))
+                    wait_status_contains(page, '저장 완료:', 10000, '기본 프리셋 ZIP 저장 토스트')
 
                     final_status = page.locator('#statusText').inner_text()
                     browser.close()
@@ -127,6 +140,9 @@ def run() -> dict[str, object]:
                         'downloaded_file': suggested_name,
                         'download_exists': saved_path.exists(),
                         'download_size': saved_path.stat().st_size if saved_path.exists() else 0,
+                        'preset_downloaded_file': preset_name,
+                        'preset_download_exists': preset_path.exists(),
+                        'preset_download_size': preset_path.stat().st_size if preset_path.exists() else 0,
                         'final_status': final_status,
                     }
                 except TimeoutErrorType as error:
