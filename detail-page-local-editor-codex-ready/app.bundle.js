@@ -2803,6 +2803,8 @@ function createFrameEditor({
     } else {
       img.removeAttribute('style');
     }
+    if (state.initialExportStyle) img.dataset.exportStyle = state.initialExportStyle;
+    else img.removeAttribute('data-export-style');
     slot.removeAttribute('data-editor-crop-active');
     slot.removeAttribute('data-editor-crop-zoom');
     slot.removeAttribute('data-editor-crop-offset-x');
@@ -2832,6 +2834,7 @@ function createFrameEditor({
       offsetX: 0,
       offsetY: 0,
       initialStyle: img.getAttribute('style') || '',
+      initialExportStyle: img.dataset.exportStyle || '',
     };
     selectElements([slot], { silent: true });
     updateImageCropRuntimeStyles(imageCropRuntime);
@@ -3413,10 +3416,10 @@ function createFrameEditor({
     }
 
     if (emptySlots.length) {
-      addCheck('error', 'EMPTY_SLOT', '빈 슬롯', `플레이스홀더만 남아 있거나 실제 이미지가 없는 슬롯이 ${emptySlots.length}개 있습니다.`, emptySlots.length);
+      addCheck('warning', 'EMPTY_SLOT', '빈 슬롯', `플레이스홀더만 남아 있거나 실제 이미지가 없는 슬롯이 ${emptySlots.length}개 있습니다. 필요하면 [빈 슬롯만 보기]에서 빠르게 채울 수 있습니다.`, emptySlots.length);
     }
     if (project?.summary?.assetsUnresolved) {
-      addCheck('error', 'UNRESOLVED_ASSET', '미해결 자산', `정규화 단계에서 연결하지 못한 자산이 ${project.summary.assetsUnresolved}개 있습니다. 폴더 import로 다시 연결하는 편이 안전합니다.`, project.summary.assetsUnresolved);
+      addCheck('warning', 'UNRESOLVED_ASSET', '미해결 자산', `정규화 단계에서 연결하지 못한 자산이 ${project.summary.assetsUnresolved}개 있습니다. 폴더 import로 다시 연결하면 자동 복구됩니다.`, project.summary.assetsUnresolved);
     }
     if (project?.remoteStylesheets?.length) {
       addCheck('warning', 'REMOTE_STYLESHEET', '원격 폰트/스타일', `원격 stylesheet ${project.remoteStylesheets.length}개가 포함되어 있어 PNG export에서 폰트가 달라질 수 있습니다.`, project.remoteStylesheets.length);
@@ -5005,7 +5008,6 @@ let currentCodeSource = 'edited';
 let codeEditorDirty = false;
 let geometryCoordMode = 'relative';
 let currentSaveFormat = 'linked';
-let currentWorkflowStep = 'load';
 let lastSaveConversion = null;
 let advancedSettingsDirty = false;
 let lastFocusedBeforeShortcutHelp = null;
@@ -5140,6 +5142,7 @@ const elements = {
   originalCodeView: document.getElementById('originalCodeView'),
   jsonReportView: document.getElementById('jsonReportView'),
   projectMeta: document.getElementById('projectMeta'),
+  documentStatusChip: document.getElementById('documentStatusChip'),
   statusText: document.getElementById('statusText'),
   localModeNotice: document.getElementById('localModeNotice'),
   textStyleSummary: document.getElementById('textStyleSummary'),
@@ -5175,9 +5178,8 @@ const elements = {
   toggleLeftSidebarButton: document.getElementById('toggleLeftSidebarButton'),
   toggleRightSidebarButton: document.getElementById('toggleRightSidebarButton'),
   focusModeButton: document.getElementById('focusModeButton'),
+  workflowGuideSelect: document.getElementById('workflowGuideSelect'),
   workflowGuideLine: document.getElementById('workflowGuideLine'),
-  workflowStepButtons: Array.from(document.querySelectorAll('[data-workflow-step]')),
-  workflowPanels: Array.from(document.querySelectorAll('[data-workflow-panel]')),
   zoomOutButton: document.getElementById('zoomOutButton'),
   zoomInButton: document.getElementById('zoomInButton'),
   zoomResetButton: document.getElementById('zoomResetButton'),
@@ -5306,31 +5308,22 @@ function evaluateWorkflowStepReadiness(step, state) {
   return { ok: true, message: '' };
 }
 
-function syncWorkflowUi(state, { announce = false } = {}) {
-  for (const button of elements.workflowStepButtons) {
-    const active = button.dataset.workflowStep === currentWorkflowStep;
-    button.classList.toggle('is-active', active);
-    button.setAttribute('aria-selected', active ? 'true' : 'false');
-  }
-  for (const panel of elements.workflowPanels) {
-    const scope = String(panel.dataset.workflowPanel || '').trim();
-    const steps = scope.split(/\s+/).filter(Boolean);
-    const visible = steps.length < 1 || steps.includes(currentWorkflowStep);
-    panel.classList.toggle('is-hidden', !visible);
-  }
+function syncWorkflowGuide(state, { announce = false } = {}) {
+  const selectedStep = elements.workflowGuideSelect?.value || 'load';
   if (elements.workflowGuideLine) {
-    elements.workflowGuideLine.textContent = WORKFLOW_STEP_GUIDES[currentWorkflowStep] || WORKFLOW_STEP_GUIDES.load;
+    elements.workflowGuideLine.textContent = WORKFLOW_STEP_GUIDES[selectedStep] || WORKFLOW_STEP_GUIDES.load;
   }
   if (announce) {
-    const check = evaluateWorkflowStepReadiness(currentWorkflowStep, state);
+    const check = evaluateWorkflowStepReadiness(selectedStep, state);
     if (check.message) setStatus(check.message);
   }
 }
 
-function setWorkflowStep(step) {
-  const normalized = step === 'edit' || step === 'save' ? step : 'load';
-  currentWorkflowStep = normalized;
-  syncWorkflowUi(store.getState(), { announce: true });
+function resolveDocumentStatus(state) {
+  if (!state?.project || !activeEditor) return { status: 'idle', text: '문서 없음' };
+  if (state.lastError) return { status: 'error', text: '오류 있음' };
+  if (codeEditorDirty || advancedSettingsDirty || historyState.undoStack.length > 0) return { status: 'dirty', text: '편집 중' };
+  return { status: 'ready', text: '저장 가능' };
 }
 
 function projectBaseName(project) {
@@ -6257,6 +6250,11 @@ function renderShell(state) {
   syncCanvasDirectUi(state.editorMeta);
   const errorSuffix = state.lastError ? ` · 최근 오류: ${state.lastError}` : '';
   elements.statusText.textContent = `${state.statusText}${errorSuffix}`;
+  if (elements.documentStatusChip) {
+    const docStatus = resolveDocumentStatus(state);
+    elements.documentStatusChip.dataset.status = docStatus.status;
+    elements.documentStatusChip.textContent = docStatus.text;
+  }
   refreshComputedViews(state);
 
   const hasProject = !!state.project;
@@ -6299,7 +6297,7 @@ function renderShell(state) {
   syncExportPresetUi();
   syncSaveFormatUi();
   syncWorkspaceButtons();
-  syncWorkflowUi(state);
+  syncWorkflowGuide(state);
   applyPreviewZoom();
   refreshHistoryButtons();
 }
@@ -6770,7 +6768,7 @@ function safeBoot() {
       setStatus(`환경 점검: 오류 ${bootEnvironmentReport.errorCount}개 · 경고 ${bootEnvironmentReport.warningCount}개`);
     }
     renderEmptyPreview();
-    syncWorkflowUi(store.getState());
+    syncWorkflowGuide(store.getState());
     loadFixture('F05');
   } catch (error) {
     console.error('[BOOT_ERROR]', error);
@@ -6781,9 +6779,7 @@ function safeBoot() {
 safeBoot();
 
 for (const button of elements.selectionModeButtons) button.addEventListener('click', () => setSelectionMode(button.dataset.selectionMode));
-for (const button of elements.workflowStepButtons) {
-  button.addEventListener('click', () => setWorkflowStep(button.dataset.workflowStep));
-}
+if (elements.workflowGuideSelect) elements.workflowGuideSelect.addEventListener('change', () => syncWorkflowGuide(store.getState(), { announce: true }));
 for (const button of elements.presetButtons) {
   button.addEventListener('click', () => {
     if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
