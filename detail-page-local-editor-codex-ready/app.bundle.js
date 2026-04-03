@@ -5365,6 +5365,15 @@ function getSlotRuntimeMeta(slotUid) {
   };
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function renderUploadBucket(container, items, selectedUidSet = new Set(), emptyMessage = '항목이 없습니다.') {
   if (!container) return;
   if (!items.length) {
@@ -5372,9 +5381,9 @@ function renderUploadBucket(container, items, selectedUidSet = new Set(), emptyM
     return;
   }
   container.innerHTML = items.map((item) => `
-    <button class="upload-slot-item ${selectedUidSet.has(item.uid) ? 'is-active' : ''}" data-upload-slot-uid="${item.uid}">
-      <div class="upload-slot-item__title">${item.label || item.uid}</div>
-      <div class="upload-slot-item__meta">${item.meta || '슬롯'}</div>
+    <button class="upload-slot-item ${selectedUidSet.has(item.uid) ? 'is-active' : ''}" data-upload-slot-uid="${escapeHtml(item.uid)}">
+      <div class="upload-slot-item__title">${escapeHtml(item.label || item.uid)}</div>
+      <div class="upload-slot-item__meta">${escapeHtml(item.meta || '슬롯')}</div>
     </button>
   `).join('');
 }
