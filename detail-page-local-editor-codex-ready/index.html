@@ -127,13 +127,15 @@
 
     <aside id="leftSidebar" class="sidebar sidebar--left">
       <div class="sidebar-tabs">
-        <button class="sidebar-tab is-active" data-sidebar-tab="left-upload">가져오기</button>
-        <button class="sidebar-tab" data-sidebar-tab="left-sections">섹션</button>
-        <button class="sidebar-tab" data-sidebar-tab="left-advanced">코드</button>
-        <button class="sidebar-tab" data-sidebar-tab="left-project">프로젝트</button>
+        <button class="sidebar-tab is-active" data-sidebar-tab="left-start">시작</button>
+        <button class="sidebar-tab" data-sidebar-tab="left-image">이미지</button>
+        <button class="sidebar-tab" data-sidebar-tab="left-text">텍스트</button>
+        <button class="sidebar-tab" data-sidebar-tab="left-layers">레이어</button>
+        <button class="sidebar-tab" data-sidebar-tab="left-export">내보내기</button>
       </div>
 
-      <section class="panel sidebar-panel is-active" data-sidebar-panel="left-upload">
+      <section class="panel sidebar-panel is-active" data-sidebar-panel="left-start">
+        <div class="panel-step-guide" data-left-tab-guide-for="left-start"></div>
         <div class="panel__header">
           <h2>업로드/가져오기</h2>
           <button id="applyPasteButton" class="button button--secondary button--small">붙여넣기 적용</button>
@@ -164,9 +166,57 @@
           <h3>깨진 자산</h3>
           <div id="uploadBrokenList" class="upload-slot-list"></div>
         </section>
+        <details class="left-accordion">
+          <summary><strong>고급</strong> · 코드/진단</summary>
+          <div class="left-accordion__body">
+            <details class="left-accordion" open>
+              <summary>코드 워크벤치</summary>
+              <div class="left-accordion__body">
+                <div class="panel__header panel__header--split">
+                  <h2>코드 워크벤치</h2>
+                  <div class="button-row button-row--compact">
+                    <button id="reloadCodeFromEditorButton" class="button button--ghost button--small">현재 편집본 불러오기</button>
+                    <button id="applyCodeToEditorButton" class="button button--secondary button--small">코드 적용</button>
+                  </div>
+                </div>
+                <div class="segmented segmented--small">
+                  <button class="segmented__item is-active" data-code-source="edited">편집본</button>
+                  <button class="segmented__item" data-code-source="normalized">정규화</button>
+                  <button class="segmented__item" data-code-source="original">원본</button>
+                  <button class="segmented__item" data-code-source="report">리포트</button>
+                </div>
+                <div class="code-toolbar">
+                  <input id="codeSearchInput" class="asset-filter" type="search" placeholder="코드 검색" />
+                  <button id="codeSearchNextButton" class="button button--ghost button--small">다음</button>
+                </div>
+                <textarea id="codeEditorTextarea" class="code-editor" spellcheck="false"></textarea>
+                <pre id="editedCodeView" class="code-view code-view--hidden"></pre>
+                <pre id="normalizedCodeView" class="code-view code-view--hidden"></pre>
+                <pre id="originalCodeView" class="code-view code-view--hidden"></pre>
+                <pre id="jsonReportView" class="code-view code-view--hidden"></pre>
+                <p class="hint">검색은 다음 일치 위치로 이동합니다.</p>
+              </div>
+            </details>
+            <details class="left-accordion">
+              <summary>프로젝트 상태</summary>
+              <div class="left-accordion__body">
+                <div class="panel__header">
+                  <h2>프로젝트 상태</h2>
+                </div>
+                <div id="summaryCards" class="metric-grid"></div>
+                <div class="panel-divider"></div>
+                <div class="panel__header">
+                  <h2>이슈</h2>
+                </div>
+                <ul id="issueList" class="issue-list"></ul>
+              </div>
+            </details>
+          </div>
+        </details>
       </section>
 
       <section class="panel sidebar-panel" data-sidebar-panel="left-text">
+        <div class="panel-step-guide" data-left-tab-guide-for="left-text"></div>
         <div class="panel__header">
           <h2>텍스트</h2>
         </div>
@@ -180,9 +230,10 @@
         <p class="hint">요소 추가/복제/삭제는 상단 퀵 액션 버튼을 사용하세요.</p>
       </section>
 
-      <section class="panel sidebar-panel" data-sidebar-panel="left-sections">
+      <section class="panel sidebar-panel" data-sidebar-panel="left-image">
+        <div class="panel-step-guide" data-left-tab-guide-for="left-image"></div>
         <div class="panel__header panel__header--split">
-          <h2>섹션 필름스트립</h2>
+          <h2>이미지/섹션</h2>
           <button id="sectionAddButton" class="button button--ghost button--small">섹션 추가</button>
         </div>
         <div class="button-row button-row--compact">
@@ -195,63 +246,20 @@
         <p class="hint">섹션을 클릭하면 캔버스로 이동합니다. 액션 후 자동으로 레이어/선택을 다시 동기화합니다.</p>
       </section>
 
-      <section class="panel sidebar-panel" data-sidebar-panel="left-project">
+      <section class="panel sidebar-panel" data-sidebar-panel="left-export">
+        <div class="panel-step-guide" data-left-tab-guide-for="left-export"></div>
         <div class="panel__header">
-          <h2>섹션</h2>
+          <h2>내보내기</h2>
         </div>
         <p class="hint">섹션 단위 저장은 상단의 <strong>섹션 ZIP</strong> 버튼에서 실행할 수 있습니다.</p>
       </section>
 
       <section class="panel sidebar-panel" data-sidebar-panel="left-layers">
+        <div class="panel-step-guide" data-left-tab-guide-for="left-layers"></div>
         <div class="panel__header">
           <h2>레이어</h2>
         </div>
         <p class="hint">레이어/슬롯 목록은 우측 <strong>레이어</strong> 탭에서 확인합니다.</p>
-      </section>
-
-      <section class="panel sidebar-panel" data-sidebar-panel="left-advanced">
-        <details class="left-accordion" open>
-          <summary>코드 워크벤치</summary>
-          <div class="left-accordion__body">
-            <div class="panel__header panel__header--split">
-              <h2>코드 워크벤치</h2>
-              <div class="button-row button-row--compact">
-                <button id="reloadCodeFromEditorButton" class="button button--ghost button--small">현재 편집본 불러오기</button>
-                <button id="applyCodeToEditorButton" class="button button--secondary button--small">코드 적용</button>
-              </div>
-            </div>
-            <div class="segmented segmented--small">
-              <button class="segmented__item is-active" data-code-source="edited">편집본</button>
-              <button class="segmented__item" data-code-source="normalized">정규화</button>
-              <button class="segmented__item" data-code-source="original">원본</button>
-              <button class="segmented__item" data-code-source="report">리포트</button>
-            </div>
-            <div class="code-toolbar">
-              <input id="codeSearchInput" class="asset-filter" type="search" placeholder="코드 검색" />
-              <button id="codeSearchNextButton" class="button button--ghost button--small">다음</button>
-            </div>
-            <textarea id="codeEditorTextarea" class="code-editor" spellcheck="false"></textarea>
-            <pre id="editedCodeView" class="code-view code-view--hidden"></pre>
-            <pre id="normalizedCodeView" class="code-view code-view--hidden"></pre>
-            <pre id="originalCodeView" class="code-view code-view--hidden"></pre>
-            <pre id="jsonReportView" class="code-view code-view--hidden"></pre>
-            <p class="hint">검색은 다음 일치 위치로 이동합니다.</p>
-          </div>
-        </details>
-        <details class="left-accordion">
-          <summary>프로젝트 상태</summary>
-          <div class="left-accordion__body">
-            <div class="panel__header">
-              <h2>프로젝트 상태</h2>
-            </div>
-            <div id="summaryCards" class="metric-grid"></div>
-            <div class="panel-divider"></div>
-            <div class="panel__header">
-              <h2>이슈</h2>
-            </div>
-            <ul id="issueList" class="issue-list"></ul>
-          </div>
-        </details>
       </section>
 
     </aside>

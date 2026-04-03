@@ -830,7 +830,7 @@ body.layout--focus-stage #rightSidebar {
   flex-wrap: wrap;
 }
 .sidebar-tab {
-  flex: 1 1 calc(33.333% - 6px);
+  flex: 1 1 calc(20% - 6px);
   min-width: 92px;
   border: 1px solid transparent;
   background: transparent;
@@ -847,6 +847,27 @@ body.layout--focus-stage #rightSidebar {
 }
 .sidebar-panel { display: none; overflow: auto; }
 .sidebar-panel.is-active { display: block; }
+.panel-step-guide { margin-bottom: 12px; }
+.workflow-step-card {
+  border: 1px solid #dbeafe;
+  background: #eff6ff;
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: #1e3a8a;
+}
+.workflow-step-card strong {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.workflow-step-card ol {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+}
 .form-grid--spaced { margin-top: 10px; }
 .panel-divider {
   height: 1px;

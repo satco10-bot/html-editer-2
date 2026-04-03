@@ -1,5 +1,60 @@
 import { escapeHtml, formatDateTime, formatNumber, truncate } from '../utils.js';
 
+const LEFT_TAB_STEP_GUIDES = Object.freeze({
+  'left-start': Object.freeze({
+    title: '이번 단계에서 할 일',
+    todos: Object.freeze([
+      'HTML 파일/폴더를 불러와 편집할 문서를 준비하세요.',
+      '불러온 뒤 깨진 자산이 있는지 빠르게 확인하세요.',
+    ]),
+  }),
+  'left-image': Object.freeze({
+    title: '이번 단계에서 할 일',
+    todos: Object.freeze([
+      '이미지 슬롯/섹션을 선택하고 필요한 컷을 채우세요.',
+      '순서가 어색하면 섹션을 위/아래로 이동하세요.',
+    ]),
+  }),
+  'left-text': Object.freeze({
+    title: '이번 단계에서 할 일',
+    todos: Object.freeze([
+      '캔버스에서 텍스트를 선택한 뒤 내용을 수정하세요.',
+      '오른쪽 텍스트 탭에서 글꼴/크기를 맞춰 통일감을 만드세요.',
+    ]),
+  }),
+  'left-layers': Object.freeze({
+    title: '이번 단계에서 할 일',
+    todos: Object.freeze([
+      '레이어 겹침 순서(앞/뒤)를 확인하세요.',
+      '실수 방지를 위해 필요한 레이어만 잠그거나 숨기세요.',
+    ]),
+  }),
+  'left-export': Object.freeze({
+    title: '이번 단계에서 할 일',
+    todos: Object.freeze([
+      '저장 형식(HTML/PNG/JPG/ZIP)을 먼저 고르세요.',
+      '내보내기 전에 최종 미리보기와 검수 상태를 확인하세요.',
+    ]),
+  }),
+});
+
+export function renderLeftTabStepGuide(container, tabId) {
+  if (!container) return;
+  const guide = LEFT_TAB_STEP_GUIDES[String(tabId || '')];
+  if (!guide) {
+    container.innerHTML = '';
+    return;
+  }
+  container.innerHTML = `
+    <article class="workflow-step-card">
+      <strong>${escapeHtml(guide.title)}</strong>
+      <ol>
+        ${guide.todos.map((todo) => `<li>${escapeHtml(todo)}</li>`).join('')}
+      </ol>
+    </article>
+  `;
+}
+
 export function renderSummaryCards(container, project, editorMeta = null) {
   if (!container) return;
   if (!project) {
