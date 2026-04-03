@@ -544,6 +544,36 @@ body.beginner-mode [data-beginner-advanced] {
   background: #fbfcff;
   padding: 10px 12px;
 }
+.number-stepper {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 6px;
+}
+.number-stepper input[type="number"] {
+  min-width: 0;
+}
+.number-stepper__buttons {
+  display: grid;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+.number-stepper__btn {
+  min-width: 28px;
+  min-height: 18px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 800;
+  line-height: 1;
+  padding: 0;
+}
+.number-stepper__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 .field--color input[type="color"] {
   min-height: 42px;
   padding: 4px;
@@ -814,6 +844,24 @@ body.layout--focus-stage #rightSidebar {
 }
 .sidebar-panel { display: none; overflow: auto; }
 .sidebar-panel.is-active { display: block; }
+.selection-empty-state {
+  margin: 0 2px;
+  padding: 18px 14px;
+  border-radius: 16px;
+  border: 1px dashed #b8c5df;
+  background: linear-gradient(180deg, #f7faff 0%, #eef3ff 100%);
+  color: #3154aa;
+}
+.selection-empty-state strong {
+  display: block;
+  font-size: 20px;
+  line-height: 1.35;
+}
+.selection-empty-state p {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
 .form-grid--spaced { margin-top: 10px; }
 .panel-divider {
   height: 1px;

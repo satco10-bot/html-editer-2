@@ -5053,6 +5053,8 @@ const historyState = {
   undoStack: [],
   redoStack: [],
 };
+const HISTORY_MERGE_WINDOW_MS = 700;
+const LIVE_HISTORY_LABELS = new Set(['geometry-patch', 'apply-text-style', 'clear-text-style']);
 
 const advancedSettings = {
   geometryCoordMode: 'relative',
@@ -5136,6 +5138,7 @@ const elements = {
   sectionMoveDownButton: document.getElementById('sectionMoveDownButton'),
   sectionDeleteButton: document.getElementById('sectionDeleteButton'),
   sectionAddButton: document.getElementById('sectionAddButton'),
+  selectionEmptyState: document.getElementById('selectionEmptyState'),
   layerTree: document.getElementById('layerTree'),
   layerFilterInput: document.getElementById('layerFilterInput'),
   preflightContainer: document.getElementById('preflightContainer'),
@@ -5942,9 +5945,26 @@ function latestHistorySnapshot() {
   return historyState.undoStack.at(-1)?.after || historyState.baseSnapshot;
 }
 
+function shouldMergeHistoryCommand(previous, next) {
+  if (!previous || !next) return false;
+  if (previous.label !== next.label) return false;
+  if (!LIVE_HISTORY_LABELS.has(next.label)) return false;
+  const prevAt = new Date(previous.at || 0).getTime();
+  const nextAt = new Date(next.at || 0).getTime();
+  if (!Number.isFinite(prevAt) || !Number.isFinite(nextAt)) return false;
+  return Math.max(0, nextAt - prevAt) <= HISTORY_MERGE_WINDOW_MS;
+}
+
 function recordHistoryCommand(command, { clearRedo = true } = {}) {
   if (!command?.after?.html || !command?.before?.html) return;
   const last = historyState.undoStack.at(-1);
+  if (shouldMergeHistoryCommand(last, command)) {
+    last.after = command.after;
+    last.at = command.at;
+    persistAutosave(command.after);
+    refreshHistoryButtons();
+    return;
+  }
   if (last?.after?.html === command.after.html) {
     persistAutosave(command.after);
     refreshHistoryButtons();
@@ -6079,6 +6099,39 @@ function syncTextStyleControls(editorMeta) {
 function syncBatchSummary(editorMeta) {
   const count = Number(editorMeta?.selectionCount || 0);
   elements.batchSelectionSummary.textContent = count > 1 ? `${count}개 동시 선택` : '1개 이하 선택';
+}
+
+function resolvePrimarySelectionType(editorMeta) {
+  const count = Number(editorMeta?.selectionCount || 0);
+  if (count !== 1) return '';
+  const selectedType = editorMeta?.selectedItems?.[0]?.type || editorMeta?.selected?.type || '';
+  if (selectedType === 'slot') return 'image';
+  if (selectedType === 'text') return 'text';
+  if (selectedType === 'box') return 'box';
+  return '';
+}
+
+function syncRightPanelBySelection(editorMeta) {
+  const count = Number(editorMeta?.selectionCount || 0);
+  const hasSelection = count > 0;
+  if (elements.selectionEmptyState) elements.selectionEmptyState.hidden = hasSelection;
+  if (!hasSelection) {
+    if (elements.basicAttributeSection) elements.basicAttributeSection.open = false;
+    if (elements.advancedAttributeSection) elements.advancedAttributeSection.open = false;
+    return;
+  }
+  const type = resolvePrimarySelectionType(editorMeta);
+  if (type === 'text') {
+    setSidebarTab('right-text');
+    if (elements.basicAttributeSection) elements.basicAttributeSection.open = false;
+    if (elements.advancedAttributeSection) elements.advancedAttributeSection.open = false;
+    return;
+  }
+  setSidebarTab('right-arrange');
+  if (elements.basicAttributeSection) elements.basicAttributeSection.open = true;
+  if (elements.advancedAttributeSection) {
+    elements.advancedAttributeSection.open = type === 'image';
+  }
 }
 
 function syncGeometryControls() {
@@ -6258,6 +6311,7 @@ function renderShell(state) {
   }
   syncTextStyleControls(state.editorMeta);
   syncBatchSummary(state.editorMeta);
+  syncRightPanelBySelection(state.editorMeta);
   syncGeometryControls();
   syncCanvasDirectUi(state.editorMeta);
   const errorSuffix = state.lastError ? ` · 최근 오류: ${state.lastError}` : '';
@@ -6328,6 +6382,67 @@ function renderEmptyPreview() {
         HTML 파일, 프로젝트 폴더, 붙여넣기, fixture 중 하나를 불러와 주세요.
       </div>
     </div>`;
+}
+
+function applyNumberStep(input, direction) {
+  if (!input || input.disabled) return;
+  try {
+    if (direction > 0) input.stepUp();
+    else input.stepDown();
+  } catch {
+    const stepRaw = Number.parseFloat(input.step);
+    const step = Number.isFinite(stepRaw) && stepRaw > 0 ? stepRaw : 1;
+    const current = Number.parseFloat(input.value);
+    const base = Number.isFinite(current) ? current : 0;
+    input.value = String(base + (direction > 0 ? step : -step));
+  }
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function attachNumberStepper(input) {
+  if (!input || input.dataset.stepperReady === '1') return;
+  const wrapper = document.createElement('div');
+  wrapper.className = 'number-stepper';
+  input.parentNode?.insertBefore(wrapper, input);
+  wrapper.appendChild(input);
+
+  const buttonWrap = document.createElement('div');
+  buttonWrap.className = 'number-stepper__buttons';
+  const plusButton = document.createElement('button');
+  plusButton.type = 'button';
+  plusButton.className = 'number-stepper__btn';
+  plusButton.textContent = '+';
+  plusButton.title = '값 증가';
+  const minusButton = document.createElement('button');
+  minusButton.type = 'button';
+  minusButton.className = 'number-stepper__btn';
+  minusButton.textContent = '−';
+  minusButton.title = '값 감소';
+
+  plusButton.addEventListener('click', () => applyNumberStep(input, 1));
+  minusButton.addEventListener('click', () => applyNumberStep(input, -1));
+  buttonWrap.append(plusButton, minusButton);
+  wrapper.append(buttonWrap);
+
+  input.dataset.stepperReady = '1';
+}
+
+function initNumericSteppers() {
+  const targets = [
+    elements.textFontSizeInput,
+    elements.textLineHeightInput,
+    elements.textLetterSpacingInput,
+    elements.geometryXInput,
+    elements.geometryYInput,
+    elements.geometryWInput,
+    elements.geometryHInput,
+    elements.canvasGeometryXInput,
+    elements.canvasGeometryYInput,
+    elements.canvasGeometryWInput,
+    elements.canvasGeometryHInput,
+  ];
+  for (const input of targets) attachNumberStepper(input);
 }
 
 function handleEditorShortcut(action) {
@@ -6718,6 +6833,19 @@ function applyTextStyleFromControls({ clear = false } = {}) {
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 }
 
+function applyTextStyleLive() {
+  if (!activeEditor) return;
+  const result = activeEditor.applyTextStyle({
+    fontSize: elements.textFontSizeInput?.value?.trim() || '',
+    lineHeight: elements.textLineHeightInput?.value?.trim() || '',
+    letterSpacing: elements.textLetterSpacingInput?.value?.trim() || '',
+    fontWeight: elements.textWeightSelect?.value || '',
+    color: elements.textColorInput?.value || '',
+  });
+  if (result?.ok) setStatus('텍스트 스타일을 실시간 반영했습니다.');
+  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+}
+
 function applyBatchAction(action) {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.applyBatchLayout(action);
@@ -6797,6 +6925,7 @@ function safeBoot() {
 safeBoot();
 
 function bindEvents() {
+  initNumericSteppers();
   const logMissingElement = (elementName, context) => {
     console.warn(`[${context}] 필수 요소 누락: #${elementName}`);
   };
@@ -6876,6 +7005,16 @@ for (const button of elements.textAlignButtons) {
     setStatus(result.message);
     if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
   });
+}
+for (const control of [
+  elements.textFontSizeInput,
+  elements.textLineHeightInput,
+  elements.textLetterSpacingInput,
+  elements.textWeightSelect,
+  elements.textColorInput,
+]) {
+  const eventName = control?.tagName === 'SELECT' ? 'change' : 'input';
+  control?.addEventListener(eventName, applyTextStyleLive);
 }
 elements.applyCanvasGeometryButton?.addEventListener('click', () => {
   if (elements.geometryXInput) elements.geometryXInput.value = elements.canvasGeometryXInput?.value || '';
