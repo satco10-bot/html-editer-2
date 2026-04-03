@@ -1253,6 +1253,7 @@ function createProjectStore() {
     editorMeta: null,
     statusText: '대기 중',
     lastError: '',
+    imageApplyDiagnostic: null,
     currentView: 'preview',
     selectionMode: 'smart',
   };
@@ -1274,6 +1275,7 @@ function createProjectStore() {
       editorMeta: state.editorMeta,
       statusText: state.statusText,
       lastError: state.lastError,
+      imageApplyDiagnostic: state.imageApplyDiagnostic,
       currentView: state.currentView,
       selectionMode: state.selectionMode,
     };
@@ -1285,6 +1287,7 @@ function createProjectStore() {
     }
     state.project = project;
     state.editorMeta = null;
+    state.imageApplyDiagnostic = null;
     notify();
   }
 
@@ -1311,6 +1314,11 @@ function createProjectStore() {
     notify();
   }
 
+  function setImageApplyDiagnostic(diagnostic) {
+    state.imageApplyDiagnostic = diagnostic ? { ...diagnostic } : null;
+    notify();
+  }
+
   function setView(view) {
     state.currentView = view || 'preview';
     notify();
@@ -1331,7 +1339,18 @@ function createProjectStore() {
     return () => listeners.delete(listener);
   }
 
-  return { getState, setProject, updateProject, setEditorMeta, setStatus, setLastError, setView, setSelectionMode, subscribe };
+  return {
+    getState,
+    setProject,
+    updateProject,
+    setEditorMeta,
+    setStatus,
+    setLastError,
+    setImageApplyDiagnostic,
+    setView,
+    setSelectionMode,
+    subscribe,
+  };
 }
 
 
@@ -4745,7 +4764,7 @@ function renderNormalizeStats(container, project) {
     <div class="stat-row"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(value)}</span></div>
   `).join('');
 }
-function renderSelectionInspector(container, editorMeta) {
+function renderSelectionInspector(container, editorMeta, imageDiagnostic = null) {
   if (!container) return;
   if (!editorMeta) {
     container.innerHTML = '<div class="asset-empty">미리보기를 로드하면 선택/슬롯 진단이 표시됩니다.</div>';
@@ -4772,6 +4791,47 @@ function renderSelectionInspector(container, editorMeta) {
         ${selectedItemsHtml}
         <div class="inspector-reasons">${(selected.reasons || []).length ? selected.reasons.map((item) => `<div>${escapeHtml(item)}</div>`).join('') : '감지 이유가 없습니다.'}</div>
       </div>`;
+  const failure = imageDiagnostic?.status === 'failed' ? imageDiagnostic : null;
+  const hasFailure = !!failure;
+  const diagnosticItems = [
+    {
+      key: 'slotUnselected',
+      label: '슬롯 미선택',
+      action: 'select-first-slot',
+      actionLabel: '첫 슬롯 선택',
+      active: !!failure?.reasons?.slotUnselected,
+      detail: failure?.details?.slotUnselected || '이미지를 넣으려면 슬롯을 먼저 선택해야 합니다.',
+    },
+    {
+      key: 'filenameMismatch',
+      label: '파일명 미매칭',
+      action: 'show-filename-rule',
+      actionLabel: '파일명 규칙 보기',
+      active: !!failure?.reasons?.filenameMismatch,
+      detail: failure?.details?.filenameMismatch || '파일명에 슬롯 이름(또는 uid) 일부를 포함하면 자동 매칭이 쉬워집니다.',
+    },
+    {
+      key: 'unsupportedFormat',
+      label: '지원 형식 아님',
+      action: 'show-supported-extensions',
+      actionLabel: '지원 확장자 보기',
+      active: !!failure?.reasons?.unsupportedFormat,
+      detail: failure?.details?.unsupportedFormat || '이미지 파일만 업로드할 수 있습니다.',
+    },
+  ];
+  const diagnosticListHtml = diagnosticItems.map((item) => `
+    <li class="${item.active ? 'is-active' : ''}">
+      <div><strong>${escapeHtml(item.label)}</strong><div class="asset-ref">${escapeHtml(item.detail)}</div></div>
+      <button type="button" data-image-diagnostic-action="${escapeHtml(item.action)}">${escapeHtml(item.actionLabel)}</button>
+    </li>
+  `).join('');
+  const diagnosticHtml = `
+    <article class="slot-card">
+      <h3>이미지 진단</h3>
+      ${hasFailure ? `<div class="asset-ref" style="margin-bottom:8px;">${escapeHtml(failure.message || '이미지 적용 실패 원인을 확인해 주세요.')}</div>` : '<div class="asset-empty">최근 이미지 적용 실패가 없습니다.</div>'}
+      <ul class="upload-list">${diagnosticListHtml}</ul>
+    </article>
+  `;
   container.innerHTML = `
     <article class="slot-card">
       <h3>현재 선택</h3>
@@ -4787,6 +4847,7 @@ function renderSelectionInspector(container, editorMeta) {
         <li>selection mode ${escapeHtml(editorMeta.selectionMode || 'smart')}</li>
       </ul>
     </article>
+    ${diagnosticHtml}
   `;
 }
 function renderSlotList(container, editorMeta) {
@@ -5031,6 +5092,8 @@ const BOOT_LOCAL_POLICY = Object.freeze({
 });
 const BEGINNER_MODE_STORAGE_KEY = 'detail_editor_beginner_mode_v1';
 const BEGINNER_MODE_TUTORIAL_SEEN_KEY = 'detail_editor_beginner_tutorial_seen_v1';
+const IMAGE_FILE_NAME_HINT_RE = /[\s_-]+/g;
+const SUPPORTED_IMAGE_EXTENSIONS_TEXT = '.png, .jpg, .jpeg, .gif, .webp, .bmp, .svg, .avif';
 const BEGINNER_TUTORIAL_STEPS = Object.freeze([
   {
     title: '1) 선택부터 시작',
@@ -5363,6 +5426,51 @@ function selectionExportBackground() {
 
 function setStatus(text, options = undefined) {
   store.setStatus(text, options);
+}
+
+function setImageApplyDiagnostic(diagnostic) {
+  store.setImageApplyDiagnostic(diagnostic);
+}
+
+function isSupportedImageFile(file) {
+  const type = String(file?.type || '');
+  const name = String(file?.name || '');
+  return /^image\//i.test(type) || /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i.test(name);
+}
+
+function normalizeNameForCompare(value) {
+  return String(value || '').toLowerCase().replace(/\.[^.]+$/, '').replace(IMAGE_FILE_NAME_HINT_RE, '');
+}
+
+function buildImageFailureDiagnostic({ files, editorMeta, statusMessage }) {
+  const safeFiles = Array.from(files || []);
+  const selected = editorMeta?.selected || null;
+  const selectedType = selected?.type || '';
+  const selectedLabel = selected?.label || selected?.uid || '';
+  const firstFile = safeFiles[0] || null;
+  const firstFileName = firstFile?.name || '';
+  const unsupportedCount = safeFiles.filter((file) => !isSupportedImageFile(file)).length;
+  const supportedCount = safeFiles.length - unsupportedCount;
+  const normalizedFileName = normalizeNameForCompare(firstFileName);
+  const normalizedSlotName = normalizeNameForCompare(selectedLabel);
+  const filenameMismatch = Boolean(firstFileName && selectedLabel && normalizedFileName && normalizedSlotName && !normalizedFileName.includes(normalizedSlotName) && !normalizedSlotName.includes(normalizedFileName));
+  const slotUnselected = selectedType !== 'slot';
+  return {
+    status: 'failed',
+    createdAt: new Date().toISOString(),
+    message: statusMessage || '이미지를 적용하지 못했습니다.',
+    files: safeFiles.map((file) => ({ name: file?.name || '', type: file?.type || '' })),
+    reasons: {
+      slotUnselected,
+      filenameMismatch,
+      unsupportedFormat: unsupportedCount > 0 || supportedCount < 1,
+    },
+    details: {
+      slotUnselected: slotUnselected ? '현재 선택이 이미지 슬롯이 아닙니다. 슬롯을 먼저 선택해 주세요.' : '',
+      filenameMismatch: filenameMismatch ? `선택 슬롯 "${selectedLabel}"과 파일 "${firstFileName}" 이름이 달라 자동 연결이 어려울 수 있습니다.` : '',
+      unsupportedFormat: unsupportedCount > 0 ? `지원하지 않는 파일 ${unsupportedCount}개가 포함되어 있습니다. (${SUPPORTED_IMAGE_EXTENSIONS_TEXT})` : '',
+    },
+  };
 }
 
 function extractErrorMessage(error) {
@@ -6235,7 +6343,7 @@ function renderShell(state) {
   }
   renderPreflight(elements.preflightContainer, state.editorMeta);
   if (elements.selectionInspector) {
-    renderSelectionInspector(elements.selectionInspector, state.editorMeta);
+    renderSelectionInspector(elements.selectionInspector, state.editorMeta, state.imageApplyDiagnostic);
   }
   renderSectionFilmstrip(elements.sectionList, state.editorMeta);
   renderSlotList(elements.slotList, state.editorMeta);
@@ -7082,12 +7190,26 @@ elements.replaceImageInput?.addEventListener('change', async (event) => {
   const files = Array.from(event.target.files || []);
   try {
     if (!files.length) return;
-    if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+    if (!activeEditor) {
+      const message = '먼저 미리보기를 로드해 주세요.';
+      setStatus(message);
+      setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
+      return;
+    }
     const applied = await activeEditor.applyFiles(files);
-    setStatus(applied ? `${applied}개 이미지를 적용했습니다.` : '이미지를 적용하지 못했습니다.');
+    if (applied) {
+      setStatus(`${applied}개 이미지를 적용했습니다.`);
+      setImageApplyDiagnostic(null);
+    } else {
+      const message = '이미지를 적용하지 못했습니다.';
+      setStatus(message);
+      setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
+    }
     if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
   } catch (error) {
-    setStatus(`이미지 적용 중 오류: ${error?.message || error}`);
+    const message = `이미지 적용 중 오류: ${error?.message || error}`;
+    setStatus(message);
+    setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
   } finally {
     event.target.value = '';
   }
@@ -7112,6 +7234,24 @@ elements.sectionList?.addEventListener('click', (event) => {
   if (!button || !activeEditor) return;
   const ok = activeEditor.selectNodeByUid(button.dataset.sectionUid, { scroll: true });
   if (ok) setStatus('섹션으로 이동했습니다.');
+});
+elements.selectionInspector?.addEventListener('click', (event) => {
+  const actionButton = event.target.closest('[data-image-diagnostic-action]');
+  if (!actionButton) return;
+  const action = actionButton.dataset.imageDiagnosticAction || '';
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  if (action === 'select-first-slot') {
+    const firstSlotUid = store.getState().editorMeta?.slots?.[0]?.uid || '';
+    if (!firstSlotUid) return setStatus('선택할 슬롯이 없습니다.');
+    const ok = activeEditor.selectSlotByUid(firstSlotUid);
+    return setStatus(ok ? '첫 슬롯을 선택했습니다. 이제 이미지를 다시 넣어보세요.' : '첫 슬롯 선택에 실패했습니다.');
+  }
+  if (action === 'show-filename-rule') {
+    return setStatus('파일명 규칙: 슬롯 라벨(또는 uid) 일부를 파일명에 넣어 주세요. 예) hero-slot.jpg');
+  }
+  if (action === 'show-supported-extensions') {
+    return setStatus(`지원 확장자: ${SUPPORTED_IMAGE_EXTENSIONS_TEXT}`);
+  }
 });
 elements.sectionDuplicateButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
