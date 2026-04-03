@@ -216,14 +216,15 @@ def main() -> None:
         'replaceImageButton', 'manualSlotButton', 'demoteSlotButton', 'toggleHideButton', 'toggleLockButton', 'redetectButton', 'textEditButton',
         'undoButton', 'redoButton', 'restoreAutosaveButton',
         'downloadEditedButton', 'downloadNormalizedButton', 'downloadLinkedZipButton',
-        'exportPresetSelect', 'exportScaleSelect', 'exportPngButton', 'exportJpgButton', 'exportSectionsZipButton', 'exportSelectionPngButton', 'exportPresetPackageButton', 'downloadReportButton',
+        'exportPresetSelect', 'exportScaleSelect', 'exportJpgQualityInput', 'exportPngButton', 'exportJpgButton', 'exportSectionsZipButton', 'exportSelectionPngButton', 'exportPresetPackageButton', 'downloadReportButton',
         'replaceImageInput', 'previewFrame', 'slotList', 'selectionInspector', 'assetFilterInput',
         'preflightContainer', 'preflightRefreshButton', 'layerTree', 'layerFilterInput',
         'textFontSizeInput', 'textLineHeightInput', 'textLetterSpacingInput', 'textWeightSelect', 'textColorInput',
         'applyTextStyleButton', 'clearTextStyleButton', 'batchSelectionSummary',
         'duplicateButton', 'deleteButton', 'addTextButton', 'addBoxButton', 'addSlotButton',
         'geometryXInput', 'geometryYInput', 'geometryWInput', 'geometryHInput', 'applyGeometryButton',
-        'bringForwardButton', 'sendBackwardButton', 'imageNudgeLeftButton', 'imageNudgeRightButton', 'imageNudgeUpButton', 'imageNudgeDownButton'
+        'bringForwardButton', 'sendBackwardButton', 'bringToFrontButton', 'sendToBackButton',
+        'imageNudgeLeftButton', 'imageNudgeRightButton', 'imageNudgeUpButton', 'imageNudgeDownButton'
     ]
     for element_id in required_ids:
         add_check(checks, f'index_has_{element_id}', f'id="{element_id}"' in index_html, element_id)
@@ -239,7 +240,7 @@ def main() -> None:
         'applyTextStyle', 'applyBatchLayout', 'getPreflightReport', 'selectNodeByUid', 'refreshDerivedMeta',
         'toggleSelectedHidden', 'toggleSelectedLocked', 'toggleLayerHiddenByUid', 'toggleLayerLockedByUid',
         'duplicateSelected', 'deleteSelected', 'addTextElement', 'addBoxElement', 'addSlotElement',
-        'applyGeometryPatch', 'bringSelectedForward', 'sendSelectedBackward', 'nudgeSelectedImage',
+        'applyGeometryPatch', 'bringSelectedForward', 'sendSelectedBackward', 'bringSelectedToFront', 'sendSelectedToBack', 'nudgeSelectedImage',
         'exportFullJpgBlob', 'exportSelectionPngBlob'
     ]
     for method in required_editor_methods:
@@ -252,15 +253,22 @@ def main() -> None:
     add_check(checks, 'index_has_stage_hint', 'Shift+드래그' in index_html and '스냅 가이드' in index_html, 'canvas interaction hint should exist')
     add_check(checks, 'index_has_export_preset_label', ('Export preset' in index_html or '<span>Preset</span>' in index_html), 'export preset selector should be visible')
     add_check(checks, 'index_has_3x_scale_option', '<option value="3">3x</option>' in index_html, '3x export scale option should exist')
+    add_check(checks, 'index_has_jpg_quality_input', 'id="exportJpgQualityInput"' in index_html, 'JPG quality input should exist')
     add_check(checks, 'frame_has_marquee_runtime', '__phase6_marquee_box' in frame_js and 'handlePointerDown' in frame_js and 'updateMarqueeSelection' in frame_js, 'marquee drag selection runtime should exist')
     add_check(checks, 'frame_has_snap_runtime', '__phase6_snap_line_x' in frame_js and 'computeSnapAdjustment' in frame_js, 'snap guide runtime should exist')
     add_check(checks, 'frame_has_lock_hide_runtime', 'data-editor-hidden' in frame_js and 'data-editor-locked' in frame_js, 'hide/lock data attributes should exist')
     add_check(checks, 'slot_detector_skips_runtime_nodes', 'editorRuntime' in slot_detector_js or 'data-editor-runtime' in slot_detector_js, 'slot detector should skip overlay runtime nodes')
     add_check(checks, 'renderers_have_layer_actions', 'data-layer-action="hide"' in renderers_js and 'data-layer-action="lock"' in renderers_js, 'layer action buttons should exist')
+    add_check(checks, 'frame_layer_index_command_unified', 'applyLayerIndexCommand' in frame_js and all(token in frame_js for token in ['layer-index-forward', 'layer-index-backward', 'layer-index-front', 'layer-index-back']), 'z-order should use layer-index command family')
+    add_check(checks, 'main_layer_and_canvas_sync_hook', 'selectNodeByUid' in main_js and 'renderLayerTree(elements.layerTree' in main_js and 'renderSelectionInspector(elements.selectionInspector' in main_js, 'layer panel/canvas sync rendering hooks should exist together')
 
     add_check(checks, 'index_has_batch_buttons', index_html.count('data-batch-action=') >= 8, 'expect batch layout actions in UI')
     add_check(checks, 'index_has_text_align_buttons', index_html.count('data-text-align=') == 3, 'left / center / right buttons')
     add_check(checks, 'frame_has_pointer_listeners', all(token in frame_js for token in ['pointerdown', 'pointermove', 'pointerup', 'pointercancel']), 'drag interactions should use pointer events')
+    add_check(checks, 'frame_has_shared_export_renderer', 'renderExportBlob({' in frame_js and 'normalizeExportScale' in frame_js, 'export pipeline should use shared renderer and normalized scales')
+    add_check(checks, 'frame_selection_uses_bbox_crop', 'computeSelectionBoundingCrop' in frame_js and 'unionRect(rects)' in frame_js, 'selection PNG should crop by bounding box')
+    add_check(checks, 'main_uses_jpg_quality_option', 'exportJpgQualityInput' in main_js and 'exportJpgQuality()' in main_js, 'JPG quality option should be wired in main export flow')
+    add_check(checks, 'main_has_fixture_integrity_gate', 'ensureFixtureIntegrityBeforeExport' in main_js and 'getExportFixtureIntegrityReport' in frame_js, 'fixture-based export integrity check should guard exports')
 
     add_check(checks, 'fixture_count_is_5', len(manifest.get('fixtures', [])) == 5, f"fixtures={len(manifest.get('fixtures', []))}")
     for fixture in manifest.get('fixtures', []):
