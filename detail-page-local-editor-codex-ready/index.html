@@ -149,6 +149,7 @@
     <aside id="leftSidebar" class="sidebar sidebar--left">
       <div class="sidebar-tabs">
         <button class="sidebar-tab is-active" data-sidebar-tab="left-import">가져오기</button>
+        <button class="sidebar-tab" data-sidebar-tab="left-sections">섹션</button>
         <button class="sidebar-tab" data-sidebar-tab="left-code">코드</button>
         <button class="sidebar-tab" data-sidebar-tab="left-project">프로젝트</button>
       </div>
@@ -192,6 +193,21 @@
         <pre id="originalCodeView" class="code-view code-view--hidden"></pre>
         <pre id="jsonReportView" class="code-view code-view--hidden"></pre>
         <p class="hint">현재 리부트 셸에서는 코드 편집과 적용을 다시 붙였습니다. 검색은 다음 일치 위치로 이동합니다.</p>
+      </section>
+
+      <section class="panel sidebar-panel" data-sidebar-panel="left-sections">
+        <div class="panel__header panel__header--split">
+          <h2>섹션 필름스트립</h2>
+          <button id="sectionAddButton" class="button button--ghost button--small">섹션 추가</button>
+        </div>
+        <div class="button-row button-row--compact">
+          <button id="sectionDuplicateButton" class="button button--ghost button--small">복제</button>
+          <button id="sectionMoveUpButton" class="button button--ghost button--small">위로</button>
+          <button id="sectionMoveDownButton" class="button button--ghost button--small">아래로</button>
+          <button id="sectionDeleteButton" class="button button--warn button--small">삭제</button>
+        </div>
+        <div id="sectionList" class="slot-list section-filmstrip"></div>
+        <p class="hint">섹션을 클릭하면 캔버스로 이동합니다. 액션 후 자동으로 레이어/선택을 다시 동기화합니다.</p>
       </section>
 
       <section class="panel sidebar-panel" data-sidebar-panel="left-project">

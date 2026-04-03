@@ -12,6 +12,7 @@ import {
   renderNormalizeStats,
   renderPreflight,
   renderProjectMeta,
+  renderSectionFilmstrip,
   renderSelectionInspector,
   renderSlotList,
   renderSummaryCards,
@@ -130,6 +131,12 @@ const elements = {
   normalizeStats: document.getElementById('normalizeStats'),
   selectionInspector: document.getElementById('selectionInspector'),
   slotList: document.getElementById('slotList'),
+  sectionList: document.getElementById('sectionList'),
+  sectionDuplicateButton: document.getElementById('sectionDuplicateButton'),
+  sectionMoveUpButton: document.getElementById('sectionMoveUpButton'),
+  sectionMoveDownButton: document.getElementById('sectionMoveDownButton'),
+  sectionDeleteButton: document.getElementById('sectionDeleteButton'),
+  sectionAddButton: document.getElementById('sectionAddButton'),
   layerTree: document.getElementById('layerTree'),
   layerFilterInput: document.getElementById('layerFilterInput'),
   preflightContainer: document.getElementById('preflightContainer'),
@@ -885,6 +892,8 @@ function getEditorReport(project) {
     sourceType: project.sourceType,
     slotSummary: project.slotDetection?.summary || project.summary,
     slots: project.slotDetection?.candidates || [],
+    sections: [],
+    selectedSectionUid: '',
     nearMisses: project.slotDetection?.nearMisses || [],
     modifiedSlotCount: 0,
     layerTree: [],
@@ -1098,6 +1107,7 @@ function renderShell(state) {
   renderNormalizeStats(elements.normalizeStats, state.project);
   renderPreflight(elements.preflightContainer, state.editorMeta);
   renderSelectionInspector(elements.selectionInspector, state.editorMeta);
+  renderSectionFilmstrip(elements.sectionList, state.editorMeta);
   renderSlotList(elements.slotList, state.editorMeta);
   renderLayerTree(elements.layerTree, state.editorMeta, elements.layerFilterInput.value);
   renderProjectMeta(elements.projectMeta, state.project, {
@@ -1148,6 +1158,11 @@ function renderShell(state) {
   elements.exportSectionsZipButton.disabled = !hasEditor;
   elements.exportSelectionPngButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
   elements.exportPresetPackageButton.disabled = !hasEditor;
+  if (elements.sectionDuplicateButton) elements.sectionDuplicateButton.disabled = !hasEditor || !state.editorMeta?.selectedSectionUid;
+  if (elements.sectionMoveUpButton) elements.sectionMoveUpButton.disabled = !hasEditor || !state.editorMeta?.selectedSectionUid;
+  if (elements.sectionMoveDownButton) elements.sectionMoveDownButton.disabled = !hasEditor || !state.editorMeta?.selectedSectionUid;
+  if (elements.sectionDeleteButton) elements.sectionDeleteButton.disabled = !hasEditor || !state.editorMeta?.selectedSectionUid;
+  if (elements.sectionAddButton) elements.sectionAddButton.disabled = !hasEditor;
   elements.downloadReportButton.disabled = !hasProject;
   if (elements.applyCodeToEditorButton) elements.applyCodeToEditorButton.disabled = !hasProject || currentCodeSource === 'report';
   if (elements.reloadCodeFromEditorButton) elements.reloadCodeFromEditorButton.disabled = !hasProject;
@@ -1860,6 +1875,42 @@ elements.slotList.addEventListener('click', (event) => {
   if (!button || !activeEditor) return;
   const ok = activeEditor.selectNodeByUid(button.dataset.slotUid, { additive: event.ctrlKey || event.metaKey || event.shiftKey, toggle: event.ctrlKey || event.metaKey, scroll: true });
   if (ok) setStatus('슬롯을 선택했습니다.');
+});
+elements.sectionList?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-section-uid]');
+  if (!button || !activeEditor) return;
+  const ok = activeEditor.selectNodeByUid(button.dataset.sectionUid, { scroll: true });
+  if (ok) setStatus('섹션으로 이동했습니다.');
+});
+elements.sectionDuplicateButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const uid = store.getState().editorMeta?.selectedSectionUid || '';
+  const result = activeEditor.duplicateSectionByUid(uid);
+  setStatus(result.message);
+});
+elements.sectionMoveUpButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const uid = store.getState().editorMeta?.selectedSectionUid || '';
+  const result = activeEditor.moveSectionByUid(uid, 'up');
+  setStatus(result.message);
+});
+elements.sectionMoveDownButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const uid = store.getState().editorMeta?.selectedSectionUid || '';
+  const result = activeEditor.moveSectionByUid(uid, 'down');
+  setStatus(result.message);
+});
+elements.sectionDeleteButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const uid = store.getState().editorMeta?.selectedSectionUid || '';
+  const result = activeEditor.deleteSectionByUid(uid);
+  setStatus(result.message);
+});
+elements.sectionAddButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const uid = store.getState().editorMeta?.selectedSectionUid || '';
+  const result = activeEditor.addSectionAfterUid(uid);
+  setStatus(result.message);
 });
 elements.layerTree.addEventListener('click', (event) => {
   const actionButton = event.target.closest('[data-layer-action][data-layer-uid]');

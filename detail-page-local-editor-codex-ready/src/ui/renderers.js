@@ -123,6 +123,24 @@ export function renderSlotList(container, editorMeta) {
   `).join('');
 }
 
+export function renderSectionFilmstrip(container, editorMeta) {
+  if (!container) return;
+  if (!editorMeta?.sections?.length) {
+    container.innerHTML = '<div class="asset-empty">감지된 섹션이 없습니다.</div>';
+    return;
+  }
+  const selectedUids = new Set((editorMeta.selectedItems || []).map((item) => item.uid));
+  container.innerHTML = editorMeta.sections.map((section, index) => `
+    <button class="slot-list-item section-film-item ${(selectedUids.has(section.uid) || editorMeta.selected?.uid === section.uid) ? 'is-active' : ''}" data-section-uid="${escapeHtml(section.uid)}">
+      <div class="slot-list-item__top">
+        <strong>#${index + 1} ${escapeHtml(truncate(section.name || section.uid, 42))}</strong>
+        <span class="slot-badge" data-kind="section">section</span>
+      </div>
+      <div class="slot-list-item__meta">uid ${escapeHtml(section.uid)}</div>
+    </button>
+  `).join('');
+}
+
 export function renderLayerTree(container, editorMeta, filterText = '') {
   if (!container) return;
   if (!editorMeta?.layerTree?.length) {

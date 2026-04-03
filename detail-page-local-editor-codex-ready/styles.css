@@ -417,6 +417,8 @@ body.beginner-mode [data-beginner-advanced] {
 }
 .slot-list-item__top { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 .slot-list-item__meta { margin-top: 8px; color: var(--muted); font-size: 12px; }
+.section-filmstrip { max-height: calc(100vh - 280px); }
+.section-film-item strong { display: block; }
 .slot-badge {
   display: inline-flex;
   padding: 4px 8px;
