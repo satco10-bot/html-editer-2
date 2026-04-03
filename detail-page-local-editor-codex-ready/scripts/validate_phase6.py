@@ -190,8 +190,13 @@ def main() -> None:
 
     checks: list[dict[str, Any]] = []
 
-    node_check = subprocess.run(['node', '--check', str(BUNDLE)], capture_output=True, text=True)
-    add_check(checks, 'bundle_node_syntax_check', node_check.returncode == 0, (node_check.stderr or '').strip())
+    try:
+        node_check = subprocess.run(['node', '--check', str(BUNDLE)], capture_output=True, text=True)
+        add_check(checks, 'bundle_node_syntax_check', node_check.returncode == 0, (node_check.stderr or '').strip())
+        node_missing = False
+    except FileNotFoundError as error:
+        add_check(checks, 'bundle_node_syntax_check', False, f'node dependency missing: {error}')
+        node_missing = True
 
     add_check(checks, 'index_has_bundle_script', 'app.bundle.js' in index_html, 'index.html should load app.bundle.js')
     add_check(checks, 'index_no_module_script', 'type="module"' not in index_html and "type='module'" not in index_html, 'local mode avoids ESM requirement')
@@ -304,6 +309,17 @@ def main() -> None:
     add_check(checks, 'playwright_smoke_uses_file_protocol', INDEX.resolve().as_uri().startswith('file://'), INDEX.resolve().as_uri())
     add_check(checks, 'file_protocol_smoke_gate', browser_smoke.get('status') == 'ok', json.dumps(browser_smoke, ensure_ascii=False))
 
+    dependency_missing_checks = [item for item in checks if (not item['ok']) and ('dependency missing' in item.get('detail', '') or 'No module named' in item.get('detail', ''))]
+    if node_missing:
+        dependency_missing_checks.append({'name': 'bundle_node_syntax_check'})
+    browser_status = browser_smoke.get('status', 'unknown')
+    if browser_status == 'unavailable':
+        dependency_missing_checks.append({'name': 'file_protocol_smoke_gate'})
+
+    failure_type = 'none'
+    if any(not item['ok'] for item in checks):
+        failure_type = 'dependency_missing' if dependency_missing_checks else 'scenario_failed'
+
     summary = {
         'ok': all(item['ok'] for item in checks),
         'check_count': len(checks),
@@ -311,7 +327,8 @@ def main() -> None:
         'failed': sum(1 for item in checks if not item['ok']),
         'bundle_bytes': BUNDLE.stat().st_size,
         'bundle_sha256': sha256(BUNDLE),
-        'browser_smoke_status': browser_smoke.get('status', 'unknown'),
+        'browser_smoke_status': browser_status,
+        'failure_type': failure_type,
     }
     payload = {
         'summary': summary,
@@ -320,6 +337,10 @@ def main() -> None:
     }
     REPORT.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding='utf-8')
     print(json.dumps(payload, indent=2, ensure_ascii=False))
+    if failure_type == 'dependency_missing':
+        raise SystemExit(2)
+    if failure_type == 'scenario_failed':
+        raise SystemExit(3)
 
 
 if __name__ == '__main__':
