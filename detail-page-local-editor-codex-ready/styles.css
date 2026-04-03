@@ -975,3 +975,21 @@ body.layout--focus-stage #rightSidebar {
     transform: none !important;
   }
 }
+
+@media (max-width: 980px) {
+  body {
+    overflow: auto;
+  }
+  .button--small,
+  .layer-item__action {
+    min-height: 44px;
+  }
+  .statusbar {
+    position: static;
+    margin: 0 14px 14px;
+  }
+  .sidebar-panel,
+  .preview-viewport {
+    padding-bottom: 56px;
+  }
+}
