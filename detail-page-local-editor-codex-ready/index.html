@@ -39,10 +39,13 @@
           <span>배율</span>
           <select id="exportScaleSelect">
             <option value="1">1x</option>
-            <option value="1.5" selected>1.5x</option>
             <option value="2">2x</option>
             <option value="3">3x</option>
           </select>
+        </label>
+        <label class="mini-control">
+          <span>JPG 품질</span>
+          <input id="exportJpgQualityInput" type="number" min="0.1" max="1" step="0.01" value="0.92" style="width:74px" />
         </label>
         <button id="exportPngButton" class="button button--ghost">PNG</button>
         <button id="exportJpgButton" class="button button--ghost">JPG</button>
@@ -141,8 +144,6 @@
             <button id="manualSlotButton" class="button button--ghost">슬롯 지정</button>
             <button id="demoteSlotButton" class="button button--warn">슬롯 해제</button>
             <button id="textEditButton" class="button button--ghost">텍스트 편집</button>
-            <button id="duplicateButton" class="button button--ghost">복제</button>
-            <button id="deleteButton" class="button button--warn">삭제</button>
             <button id="addTextButton" class="button button--ghost">텍스트 추가</button>
             <button id="addBoxButton" class="button button--ghost">박스 추가</button>
             <button id="addSlotButton" class="button button--ghost">슬롯 추가</button>
@@ -176,6 +177,44 @@
 
       <section class="stage-panel stage-panel--preview">
         <div id="previewViewport" class="preview-viewport">
+          <div id="canvasContextBar" class="canvas-context-bar" hidden>
+            <div class="canvas-context-bar__actions">
+              <button class="button button--ghost button--small" data-canvas-action="duplicate">복제</button>
+              <button class="button button--warn button--small" data-canvas-action="delete">삭제</button>
+              <button class="button button--ghost button--small" data-canvas-action="bring-forward">앞으로</button>
+              <button class="button button--ghost button--small" data-canvas-action="send-backward">뒤로</button>
+              <button class="button button--ghost button--small" data-canvas-action="same-width">너비 맞춤</button>
+              <button class="button button--ghost button--small" data-canvas-action="same-height">높이 맞춤</button>
+              <button class="button button--ghost button--small" data-canvas-action="same-size">크기 맞춤</button>
+              <button class="button button--ghost button--small" data-canvas-action="align-left">좌정렬</button>
+              <button class="button button--ghost button--small" data-canvas-action="align-center">가운데</button>
+              <button class="button button--ghost button--small" data-canvas-action="align-right">우정렬</button>
+            </div>
+            <div class="canvas-context-bar__fine">
+              <label class="field field--mini">
+                <span>X</span>
+                <input id="canvasGeometryXInput" type="number" step="1" />
+              </label>
+              <label class="field field--mini">
+                <span>Y</span>
+                <input id="canvasGeometryYInput" type="number" step="1" />
+              </label>
+              <label class="field field--mini">
+                <span>W</span>
+                <input id="canvasGeometryWInput" type="number" min="8" step="1" />
+              </label>
+              <label class="field field--mini">
+                <span>H</span>
+                <input id="canvasGeometryHInput" type="number" min="8" step="1" />
+              </label>
+              <button id="applyCanvasGeometryButton" class="button button--secondary button--small">숫자 적용</button>
+            </div>
+          </div>
+          <div id="miniHud" class="mini-hud" hidden>
+            <span id="miniHudPos">X 0 / Y 0</span>
+            <span id="miniHudSize">W 0 / H 0</span>
+            <span id="miniHudLayer">레이어 -/-</span>
+          </div>
           <div id="previewScaler" class="preview-scaler">
             <iframe id="previewFrame" sandbox="allow-same-origin"></iframe>
           </div>
@@ -187,7 +226,6 @@
       <div class="sidebar-tabs">
         <button class="sidebar-tab is-active" data-sidebar-tab="right-inspect">선택/검사</button>
         <button class="sidebar-tab" data-sidebar-tab="right-text">텍스트</button>
-        <button class="sidebar-tab" data-sidebar-tab="right-arrange">정렬</button>
         <button class="sidebar-tab" data-sidebar-tab="right-layers">레이어</button>
         <button class="sidebar-tab" data-sidebar-tab="right-assets">자산/출력</button>
       </div>
