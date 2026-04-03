@@ -96,9 +96,9 @@
         <div class="topbar__group">
           <span class="topbar__label">저장 / 출력</span>
           <button id="openDownloadModalButton" class="button">저장/출력 열기</button>
-          <button id="downloadEditedButton" class="button button--ghost" type="button" hidden aria-hidden="true" tabindex="-1">문서 저장</button>
-          <button id="exportPngButton" class="button button--ghost" type="button" hidden aria-hidden="true" tabindex="-1">PNG</button>
-          <button id="exportJpgButton" class="button button--ghost" type="button" hidden aria-hidden="true" tabindex="-1">JPG</button>
+          <button id="downloadEditedButton" class="button button--ghost" data-download-action="save-edited">문서 저장</button>
+          <button id="exportPngButton" class="button button--ghost" data-download-action="export-full-png">PNG</button>
+          <button id="exportJpgButton" class="button button--ghost" data-download-action="export-full-jpg">JPG</button>
         </div>
 
         <div class="topbar__group topbar__group--workspace">
