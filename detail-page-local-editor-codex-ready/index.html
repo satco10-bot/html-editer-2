@@ -94,8 +94,11 @@
         </div>
 
         <div class="topbar__group">
-          <span class="topbar__label">저장 / 출력</span>
-          <button id="openDownloadModalButton" class="button button--ghost" type="button">저장/출력 열기</button>
+          <span class="topbar__label">저장 / 출력 (기본)</span>
+          <button id="openDownloadModalButton" class="button">저장/출력 열기</button>
+          <button id="downloadEditedButton" class="button button--ghost">문서 저장</button>
+          <button id="exportPngButton" class="button button--ghost">PNG</button>
+          <button id="exportJpgButton" class="button button--ghost">JPG</button>
         </div>
 
         <div class="topbar__group topbar__group--workspace">
@@ -295,6 +298,11 @@
             <button id="zoomResetButton" class="button button--ghost button--small">100%</button>
             <button id="zoomFitButton" class="button button--ghost button--small">폭 맞춤</button>
           </div>
+          <div class="canvas-controls button-row">
+            <button id="viewSnapToggleButton" class="button button--ghost button--small">스냅</button>
+            <button id="viewGuideToggleButton" class="button button--ghost button--small">가이드</button>
+            <button id="viewRulerToggleButton" class="button button--ghost button--small">눈금자</button>
+          </div>
         </div>
         <div class="stage-toolbar__row stage-toolbar__row--meta">
           <div class="stage-hint">가능: 선택·이동·리사이즈·복제/삭제·요소추가·XYWH·z-order·그룹 묶기/해제·JPG/선택 PNG/3x 출력.<br />불가: 선택 모음/컴포넌트 템플릿화, 다중선택 bbox PNG, Figma급 고급 단축키 세트.<br />주의: 그룹은 잠기지 않은 요소 2개 이상을 선택해야 하며, 공통 조상 자체나 이미 그룹 내부 범위에서는 바로 그룹화할 수 없습니다.<span data-beginner-advanced><br />초보 순서: ① 요소 클릭 ② 드래그/핸들로 배치 조정(Shift+드래그 다중선택, 스냅 가이드 지원) ③ 저장(문서) 또는 출력(PNG/JPG).</span></div>
@@ -369,6 +377,16 @@
           <button id="preflightRefreshButton" class="button button--ghost button--small">다시 검사</button>
         </div>
         <div id="preflightContainer"></div>
+        <div class="panel-divider"></div>
+        <div class="panel__header">
+          <h2>선택 검사</h2>
+        </div>
+        <div id="selectionInspector"></div>
+        <div class="panel-divider"></div>
+        <div class="panel__header">
+          <h2>정규화 통계</h2>
+        </div>
+        <div id="normalizeStats"></div>
       </section>
 
       <section class="panel sidebar-panel" data-sidebar-panel="right-text">
@@ -506,6 +524,12 @@
           <h2>슬롯 목록</h2>
         </div>
         <div id="slotList" class="slot-list"></div>
+        <div class="panel-divider"></div>
+        <div class="panel__header panel__header--split">
+          <h2>자산 표</h2>
+          <input id="assetFilterInput" class="asset-filter" type="search" placeholder="자산 검색" />
+        </div>
+        <div id="assetTableWrap"></div>
       </section>
 
     </aside>
@@ -598,6 +622,7 @@
         </div>
       </div>
       <footer class="download-modal__footer">
+        <button id="downloadReportButton" class="button button--ghost" type="button">리포트 JSON</button>
         <button id="runDownloadChoiceButton" class="button" type="button">실행</button>
       </footer>
     </section>
