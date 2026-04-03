@@ -7,6 +7,7 @@ import { createFrameEditor } from './editor/frame-editor.js';
 import {
   renderAssetTable,
   renderIssueList,
+  renderInspectorControls,
   renderLayerTree,
   renderLocalModeNotice,
   renderNormalizeStats,
@@ -134,6 +135,7 @@ const elements = {
   layerFilterInput: document.getElementById('layerFilterInput'),
   preflightContainer: document.getElementById('preflightContainer'),
   preflightRefreshButton: document.getElementById('preflightRefreshButton'),
+  inspectorControls: document.getElementById('inspectorControls'),
   assetTableWrap: document.getElementById('assetTableWrap'),
   assetFilterInput: document.getElementById('assetFilterInput'),
   previewFrame: document.getElementById('previewFrame'),
@@ -1090,6 +1092,18 @@ function applyGeometryFromInputs() {
   return activeEditor.applyGeometryPatch(patch, { coordinateSpace: geometryCoordMode });
 }
 
+function resolveInspectorControlType(editorMeta) {
+  const selectionCount = Number(editorMeta?.selectionCount || 0);
+  if (selectionCount > 1) return 'multi';
+  if (selectionCount < 1) return '';
+  const selectedType = String(editorMeta?.selected?.type || '').toLowerCase();
+  if (selectedType.includes('image') || selectedType.includes('slot')) return 'image';
+  if (selectedType.includes('text')) return 'text';
+  if (selectedType.includes('box') || selectedType.includes('shape')) return 'box';
+  if (selectedType.includes('section') || selectedType.includes('group') || selectedType.includes('container')) return 'section';
+  return 'section';
+}
+
 function renderShell(state) {
   renderViewButtons(state.currentView);
   renderSelectionModeButtons(state.selectionMode);
@@ -1098,6 +1112,7 @@ function renderShell(state) {
   renderNormalizeStats(elements.normalizeStats, state.project);
   renderPreflight(elements.preflightContainer, state.editorMeta);
   renderSelectionInspector(elements.selectionInspector, state.editorMeta);
+  renderInspectorControls(elements.inspectorControls, state.editorMeta, resolveInspectorControlType(state.editorMeta));
   renderSlotList(elements.slotList, state.editorMeta);
   renderLayerTree(elements.layerTree, state.editorMeta, elements.layerFilterInput.value);
   renderProjectMeta(elements.projectMeta, state.project, {
@@ -2068,7 +2083,7 @@ elements.beginnerTutorialNextButton?.addEventListener('click', () => {
 elements.beginnerTutorialCloseButton?.addEventListener('click', closeBeginnerTutorial);
 
 setSidebarTab('left-import');
-setSidebarTab('right-inspect');
+setSidebarTab('right-inspector');
 setCodeSource('edited', { preserveDraft: false });
 syncSaveFormatUi();
 restorePanelLayoutState();
