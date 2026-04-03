@@ -2863,6 +2863,14 @@ export function createFrameEditor({
       }
       return await applyFilesStartingAtSlot(slot, files);
     },
+    async applyFilesStartingAtSlotByUid(uid, files) {
+      const slot = getElementByUid(uid);
+      if (!slot) {
+        onStatus('대상 슬롯을 찾지 못했습니다.');
+        return 0;
+      }
+      return await applyFilesStartingAtSlot(slot, files);
+    },
     applyImagePreset,
     removeImageFromSelected,
     markSelectedAsSlot,

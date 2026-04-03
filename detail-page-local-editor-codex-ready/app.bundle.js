@@ -1300,8 +1300,9 @@ function createProjectStore() {
     notify();
   }
 
-  function setStatus(text) {
+  function setStatus(text, { preserveLastError = false } = {}) {
     state.statusText = String(text || '대기 중');
+    if (!preserveLastError) state.lastError = '';
     notify();
   }
 
@@ -4314,6 +4315,14 @@ function createFrameEditor({
       }
       return await applyFilesStartingAtSlot(slot, files);
     },
+    async applyFilesStartingAtSlotByUid(uid, files) {
+      const slot = getElementByUid(uid);
+      if (!slot) {
+        onStatus('대상 슬롯을 찾지 못했습니다.');
+        return 0;
+      }
+      return await applyFilesStartingAtSlot(slot, files);
+    },
     applyImagePreset,
     removeImageFromSelected,
     markSelectedAsSlot,
@@ -4806,6 +4815,10 @@ const elements = {
   htmlPasteInput: document.getElementById('htmlPasteInput'),
   summaryCards: document.getElementById('summaryCards'),
   issueList: document.getElementById('issueList'),
+  uploadRecentList: document.getElementById('uploadRecentList'),
+  uploadDocumentList: document.getElementById('uploadDocumentList'),
+  uploadUnassignedList: document.getElementById('uploadUnassignedList'),
+  uploadBrokenList: document.getElementById('uploadBrokenList'),
   normalizeStats: document.getElementById('normalizeStats'),
   selectionInspector: document.getElementById('selectionInspector'),
   slotList: document.getElementById('slotList'),
@@ -5042,8 +5055,8 @@ function selectionExportBackground() {
   return raw === 'opaque' ? 'opaque' : 'transparent';
 }
 
-function setStatus(text) {
-  store.setStatus(text);
+function setStatus(text, options = undefined) {
+  store.setStatus(text, options);
 }
 
 function extractErrorMessage(error) {
@@ -5057,7 +5070,7 @@ function setStatusWithError(prefix, error, { logTag = 'APP_ERROR' } = {}) {
   const detail = extractErrorMessage(error);
   if (logTag) console.error(`[${logTag}]`, error);
   store.setLastError(detail);
-  setStatus(detail ? `${prefix} (${detail})` : prefix);
+  setStatus(prefix, { preserveLastError: true });
 }
 
 function isTypingInputTarget(target) {
@@ -5333,6 +5346,70 @@ function setSidebarTab(panelId) {
     if (panelScope !== scope) continue;
     panel.classList.toggle('is-active', panel.dataset.sidebarPanel === panelId);
   }
+}
+
+function getSlotRuntimeMeta(slotUid) {
+  const doc = elements.previewFrame?.contentDocument;
+  const slot = doc?.querySelector?.(`[data-node-uid="${slotUid}"]`);
+  if (!slot) return { lastAppliedFileName: '', hasMedia: false };
+  const img = slot.querySelector('img');
+  const src = String(img?.getAttribute('src') || '').trim();
+  const backgroundImage = String(slot.style?.backgroundImage || '').trim();
+  const hasMedia = Boolean(
+    (src && !src.startsWith('data:image/svg+xml') && !/placeholder/i.test(src))
+    || (backgroundImage && backgroundImage !== 'none'),
+  );
+  return {
+    lastAppliedFileName: String(slot.dataset.lastAppliedFileName || ''),
+    hasMedia,
+  };
+}
+
+function renderUploadBucket(container, items, selectedUidSet = new Set(), emptyMessage = '항목이 없습니다.') {
+  if (!container) return;
+  if (!items.length) {
+    container.innerHTML = `<div class="upload-slot-empty">${emptyMessage}</div>`;
+    return;
+  }
+  container.innerHTML = items.map((item) => `
+    <button class="upload-slot-item ${selectedUidSet.has(item.uid) ? 'is-active' : ''}" data-upload-slot-uid="${item.uid}">
+      <div class="upload-slot-item__title">${item.label || item.uid}</div>
+      <div class="upload-slot-item__meta">${item.meta || '슬롯'}</div>
+    </button>
+  `).join('');
+}
+
+function renderUploadLists(state) {
+  const editorMeta = state?.editorMeta || {};
+  const slots = Array.isArray(editorMeta.slots) ? editorMeta.slots : [];
+  const selectedUidSet = new Set((editorMeta.selectedItems || []).map((item) => item.uid));
+  const emptySlotUidSet = new Set((editorMeta.preflight?.emptySlots || []).map((slot) => slot.uid));
+  const brokenSlotUidSet = new Set((state?.project?.assets || [])
+    .filter((asset) => asset.status === 'unresolved' && asset.ownerUid)
+    .map((asset) => asset.ownerUid));
+
+  const recent = [];
+  const documentUse = [];
+  const unassigned = [];
+  const broken = [];
+
+  for (const slot of slots) {
+    const runtime = getSlotRuntimeMeta(slot.uid);
+    const baseItem = {
+      uid: slot.uid,
+      label: slot.label || slot.uid,
+      meta: runtime.lastAppliedFileName || `score ${slot.score ?? '-'}`,
+    };
+    if (runtime.lastAppliedFileName) recent.push(baseItem);
+    if (runtime.hasMedia && !runtime.lastAppliedFileName) documentUse.push(baseItem);
+    if (emptySlotUidSet.has(slot.uid)) unassigned.push({ ...baseItem, meta: '빈 슬롯' });
+    if (brokenSlotUidSet.has(slot.uid)) broken.push({ ...baseItem, meta: '미해결 자산 연결' });
+  }
+
+  renderUploadBucket(elements.uploadRecentList, recent, selectedUidSet, '최근 업로드가 없습니다.');
+  renderUploadBucket(elements.uploadDocumentList, documentUse, selectedUidSet, '문서 기본 이미지만 사용 중입니다.');
+  renderUploadBucket(elements.uploadUnassignedList, unassigned, selectedUidSet, '미할당 슬롯이 없습니다.');
+  renderUploadBucket(elements.uploadBrokenList, broken, selectedUidSet, '깨진 자산 슬롯이 없습니다.');
 }
 
 function setCodeSource(nextSource, { preserveDraft = true } = {}) {
@@ -5778,6 +5855,7 @@ function renderShell(state) {
   renderPreflight(elements.preflightContainer, state.editorMeta);
   renderSelectionInspector(elements.selectionInspector, state.editorMeta);
   renderSlotList(elements.slotList, state.editorMeta);
+  renderUploadLists(state);
   renderLayerTree(elements.layerTree, state.editorMeta, elements.layerFilterInput.value);
   renderProjectMeta(elements.projectMeta, state.project, {
     selectionMode: state.selectionMode,
@@ -5933,11 +6011,14 @@ function loadFixture(fixtureId) {
 
 async function openHtmlFile(file) {
   if (!file) return;
+  const requestId = importRequestSequence += 1;
   try {
     const html = await file.text();
+    if (requestId !== importRequestSequence) return;
     const fileIndex = createImportFileIndex([file], 'html-file');
     pendingMountOptions = { snapshot: null, preserveHistory: false };
     const project = normalizeProject({ html, sourceName: file.name, sourceType: 'html-file', fileIndex, htmlEntryPath: file.name });
+    if (requestId !== importRequestSequence) return;
     store.setProject(project);
     setStatus(`HTML 파일 ${file.name}을 불러왔습니다. 미해결 자산 ${project.summary.assetsUnresolved}개입니다.`);
   } catch (error) {
@@ -6498,8 +6579,11 @@ elements.applyAdvancedSettingsButton?.addEventListener('click', () => {
 
 elements.htmlFileInput.addEventListener('change', async (event) => {
   const [file] = event.target.files || [];
-  await openHtmlFile(file);
-  event.target.value = '';
+  try {
+    await openHtmlFile(file);
+  } finally {
+    event.target.value = '';
+  }
 });
 
 elements.folderInput.addEventListener('change', async (event) => {
@@ -6534,6 +6618,44 @@ elements.slotList.addEventListener('click', (event) => {
   const ok = activeEditor.selectNodeByUid(button.dataset.slotUid, { additive: event.ctrlKey || event.metaKey || event.shiftKey, toggle: event.ctrlKey || event.metaKey, scroll: true });
   if (ok) setStatus('슬롯을 선택했습니다.');
 });
+const uploadListContainers = [
+  elements.uploadRecentList,
+  elements.uploadDocumentList,
+  elements.uploadUnassignedList,
+  elements.uploadBrokenList,
+].filter(Boolean);
+for (const container of uploadListContainers) {
+  container.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-upload-slot-uid]');
+    if (!button || !activeEditor) return;
+    const ok = activeEditor.selectNodeByUid(button.dataset.uploadSlotUid, {
+      additive: event.ctrlKey || event.metaKey || event.shiftKey,
+      toggle: event.ctrlKey || event.metaKey,
+      scroll: true,
+    });
+    if (ok) setStatus('업로드 대상 슬롯을 선택했습니다.');
+  });
+  container.addEventListener('dragover', (event) => {
+    if (!activeEditor) return;
+    if (!event.dataTransfer?.types || !Array.from(event.dataTransfer.types).includes('Files')) return;
+    const button = event.target.closest('[data-upload-slot-uid]');
+    if (!button) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  });
+  container.addEventListener('drop', async (event) => {
+    if (!activeEditor) return;
+    const button = event.target.closest('[data-upload-slot-uid]');
+    if (!button || !event.dataTransfer?.files?.length) return;
+    event.preventDefault();
+    try {
+      const applied = await activeEditor.applyFilesStartingAtSlotByUid(button.dataset.uploadSlotUid, Array.from(event.dataTransfer.files));
+      setStatus(applied ? `${applied}개 이미지를 슬롯부터 순차 적용했습니다.` : '적용 가능한 이미지 파일이 없습니다.');
+    } catch (error) {
+      setStatus(`업로드 리스트 드롭 오류: ${error?.message || error}`);
+    }
+  });
+}
 elements.layerTree.addEventListener('click', (event) => {
   const actionButton = event.target.closest('[data-layer-action][data-layer-uid]');
   if (actionButton && activeEditor) {
@@ -6714,7 +6836,7 @@ window.addEventListener('keydown', (event) => {
   }
   if (key === 'k') {
     event.preventDefault();
-    setSidebarTab('left-code');
+    setSidebarTab('left-advanced');
     elements.codeSearchInput?.focus();
     return;
   }
@@ -6740,7 +6862,7 @@ elements.beginnerTutorialNextButton?.addEventListener('click', () => {
 });
 elements.beginnerTutorialCloseButton?.addEventListener('click', closeBeginnerTutorial);
 
-setSidebarTab('left-import');
+setSidebarTab('left-upload');
 setSidebarTab('right-inspect');
 setCodeSource('edited', { preserveDraft: false });
 syncSaveFormatUi();
