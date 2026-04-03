@@ -7,6 +7,7 @@ import { createFrameEditor } from './editor/frame-editor.js';
 import {
   renderAssetTable,
   renderIssueList,
+  renderLeftTabStepGuide,
   renderLayerTree,
   renderLocalModeNotice,
   renderNormalizeStats,
@@ -44,6 +45,18 @@ const WORKFLOW_STEP_GUIDES = Object.freeze({
   load: 'HTML 파일이나 폴더를 먼저 불러오세요.',
   edit: '요소를 클릭한 뒤 드래그하세요.',
   save: `결과를 확인한 뒤 [${OPEN_DOWNLOAD_MODAL_BUTTON_LABEL}] 버튼을 눌러 실행하세요.`,
+});
+const LEFT_TAB_TO_WORKFLOW_STEP = Object.freeze({
+  'left-start': 'load',
+  'left-image': 'edit',
+  'left-text': 'edit',
+  'left-layers': 'edit',
+  'left-export': 'save',
+});
+const WORKFLOW_STEP_TO_LEFT_TAB = Object.freeze({
+  load: 'left-start',
+  edit: 'left-image',
+  save: 'left-export',
 });
 const SHORTCUT_TOOLTIP_MAP = Object.freeze({});
 const BOOT_LOCAL_POLICY = Object.freeze({
@@ -345,6 +358,15 @@ function syncWorkflowGuide(state, { announce = false } = {}) {
     const check = evaluateWorkflowStepReadiness(selectedStep, state);
     if (check.message) setStatus(check.message);
   }
+}
+
+function syncWorkflowGuideStepByLeftTab(leftTabId, { announce = false } = {}) {
+  const mappedStep = LEFT_TAB_TO_WORKFLOW_STEP[String(leftTabId || '')];
+  if (!mappedStep) return;
+  if (elements.workflowGuideSelect && elements.workflowGuideSelect.value !== mappedStep) {
+    elements.workflowGuideSelect.value = mappedStep;
+  }
+  syncWorkflowGuide(store.getState(), { announce });
 }
 
 function resolveDocumentStatus(state) {
@@ -703,7 +725,7 @@ function resolveSidebarTab(panelId) {
   return fallback?.dataset.sidebarTab || '';
 }
 
-function setSidebarTab(panelId) {
+function setSidebarTab(panelId, { syncWorkflow = true } = {}) {
   const targetPanelId = resolveSidebarTab(panelId);
   const scope = String(targetPanelId || '').startsWith('left-')
     ? 'left'
@@ -723,6 +745,7 @@ function setSidebarTab(panelId) {
     if (panelScope !== scope) continue;
     panel.classList.toggle('is-active', panel.dataset.sidebarPanel === targetPanelId);
   }
+  if (scope === 'left' && syncWorkflow) syncWorkflowGuideStepByLeftTab(targetPanelId);
 }
 
 function getSlotRuntimeMeta(slotUid) {
@@ -1864,7 +1887,13 @@ function bindEvents() {
   }
 
 for (const button of elements.selectionModeButtons) button.addEventListener('click', () => setSelectionMode(button.dataset.selectionMode));
-if (elements.workflowGuideSelect) elements.workflowGuideSelect.addEventListener('change', () => syncWorkflowGuide(store.getState(), { announce: true }));
+if (elements.workflowGuideSelect) {
+  elements.workflowGuideSelect.addEventListener('change', () => {
+    const requestedTab = WORKFLOW_STEP_TO_LEFT_TAB[elements.workflowGuideSelect?.value || 'load'];
+    if (requestedTab) setSidebarTab(requestedTab, { syncWorkflow: false });
+    syncWorkflowGuide(store.getState(), { announce: true });
+  });
+}
 for (const button of elements.presetButtons) {
   button.addEventListener('click', () => {
     if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
@@ -2353,7 +2382,9 @@ window.addEventListener('keydown', (event) => {
   }
   if (key === 'k') {
     event.preventDefault();
-    setSidebarTab('left-advanced');
+    setSidebarTab('left-start');
+    const advancedDetails = document.querySelector('[data-sidebar-panel="left-start"] details.left-accordion');
+    if (advancedDetails) advancedDetails.open = true;
     elements.codeSearchInput?.focus();
     return;
   }
@@ -2388,7 +2419,10 @@ elements.viewRulerToggleButton?.addEventListener('click', () => toggleViewFeatur
 
 bindEvents();
 
-setSidebarTab('left-upload');
+for (const guideContainer of document.querySelectorAll('[data-left-tab-guide-for]')) {
+  renderLeftTabStepGuide(guideContainer, guideContainer.getAttribute('data-left-tab-guide-for') || '');
+}
+setSidebarTab('left-start');
 setSidebarTab('right-inspect');
 setCodeSource('edited', { preserveDraft: false });
 syncSaveFormatUi();

@@ -4688,6 +4688,59 @@ function createFrameEditor({
 
 /* ===== src/ui/renderers.js ===== */
 
+const LEFT_TAB_STEP_GUIDES = Object.freeze({
+  'left-start': Object.freeze({
+    title: '이번 단계에서 할 일',
+    todos: Object.freeze([
+      'HTML 파일/폴더를 불러와 편집할 문서를 준비하세요.',
+      '불러온 뒤 깨진 자산이 있는지 빠르게 확인하세요.',
+    ]),
+  }),
+  'left-image': Object.freeze({
+    title: '이번 단계에서 할 일',
+    todos: Object.freeze([
+      '이미지 슬롯/섹션을 선택하고 필요한 컷을 채우세요.',
+      '순서가 어색하면 섹션을 위/아래로 이동하세요.',
+    ]),
+  }),
+  'left-text': Object.freeze({
+    title: '이번 단계에서 할 일',
+    todos: Object.freeze([
+      '캔버스에서 텍스트를 선택한 뒤 내용을 수정하세요.',
+      '오른쪽 텍스트 탭에서 글꼴/크기를 맞춰 통일감을 만드세요.',
+    ]),
+  }),
+  'left-layers': Object.freeze({
+    title: '이번 단계에서 할 일',
+    todos: Object.freeze([
+      '레이어 겹침 순서(앞/뒤)를 확인하세요.',
+      '실수 방지를 위해 필요한 레이어만 잠그거나 숨기세요.',
+    ]),
+  }),
+  'left-export': Object.freeze({
+    title: '이번 단계에서 할 일',
+    todos: Object.freeze([
+      '저장 형식(HTML/PNG/JPG/ZIP)을 먼저 고르세요.',
+      '내보내기 전에 최종 미리보기와 검수 상태를 확인하세요.',
+    ]),
+  }),
+});
+function renderLeftTabStepGuide(container, tabId) {
+  if (!container) return;
+  const guide = LEFT_TAB_STEP_GUIDES[String(tabId || '')];
+  if (!guide) {
+    container.innerHTML = '';
+    return;
+  }
+  container.innerHTML = `
+    <article class="workflow-step-card">
+      <strong>${escapeHtml(guide.title)}</strong>
+      <ol>
+        ${guide.todos.map((todo) => `<li>${escapeHtml(todo)}</li>`).join('')}
+      </ol>
+    </article>
+  `;
+}
 function renderSummaryCards(container, project, editorMeta = null) {
   if (!container) return;
   if (!project) {
@@ -5023,6 +5076,18 @@ const WORKFLOW_STEP_GUIDES = Object.freeze({
   edit: '요소를 클릭한 뒤 드래그하세요.',
   save: `결과를 확인한 뒤 [${OPEN_DOWNLOAD_MODAL_BUTTON_LABEL}] 버튼을 눌러 실행하세요.`,
 });
+const LEFT_TAB_TO_WORKFLOW_STEP = Object.freeze({
+  'left-start': 'load',
+  'left-image': 'edit',
+  'left-text': 'edit',
+  'left-layers': 'edit',
+  'left-export': 'save',
+});
+const WORKFLOW_STEP_TO_LEFT_TAB = Object.freeze({
+  load: 'left-start',
+  edit: 'left-image',
+  save: 'left-export',
+});
 const SHORTCUT_TOOLTIP_MAP = Object.freeze({});
 const BOOT_LOCAL_POLICY = Object.freeze({
   requiresStartupFetch: false,
@@ -5323,6 +5388,15 @@ function syncWorkflowGuide(state, { announce = false } = {}) {
     const check = evaluateWorkflowStepReadiness(selectedStep, state);
     if (check.message) setStatus(check.message);
   }
+}
+
+function syncWorkflowGuideStepByLeftTab(leftTabId, { announce = false } = {}) {
+  const mappedStep = LEFT_TAB_TO_WORKFLOW_STEP[String(leftTabId || '')];
+  if (!mappedStep) return;
+  if (elements.workflowGuideSelect && elements.workflowGuideSelect.value !== mappedStep) {
+    elements.workflowGuideSelect.value = mappedStep;
+  }
+  syncWorkflowGuide(store.getState(), { announce });
 }
 
 function resolveDocumentStatus(state) {
@@ -5681,7 +5755,7 @@ function resolveSidebarTab(panelId) {
   return fallback?.dataset.sidebarTab || '';
 }
 
-function setSidebarTab(panelId) {
+function setSidebarTab(panelId, { syncWorkflow = true } = {}) {
   const targetPanelId = resolveSidebarTab(panelId);
   const scope = String(targetPanelId || '').startsWith('left-')
     ? 'left'
@@ -5701,6 +5775,7 @@ function setSidebarTab(panelId) {
     if (panelScope !== scope) continue;
     panel.classList.toggle('is-active', panel.dataset.sidebarPanel === targetPanelId);
   }
+  if (scope === 'left' && syncWorkflow) syncWorkflowGuideStepByLeftTab(targetPanelId);
 }
 
 function getSlotRuntimeMeta(slotUid) {
@@ -6842,7 +6917,13 @@ function bindEvents() {
   }
 
 for (const button of elements.selectionModeButtons) button.addEventListener('click', () => setSelectionMode(button.dataset.selectionMode));
-if (elements.workflowGuideSelect) elements.workflowGuideSelect.addEventListener('change', () => syncWorkflowGuide(store.getState(), { announce: true }));
+if (elements.workflowGuideSelect) {
+  elements.workflowGuideSelect.addEventListener('change', () => {
+    const requestedTab = WORKFLOW_STEP_TO_LEFT_TAB[elements.workflowGuideSelect?.value || 'load'];
+    if (requestedTab) setSidebarTab(requestedTab, { syncWorkflow: false });
+    syncWorkflowGuide(store.getState(), { announce: true });
+  });
+}
 for (const button of elements.presetButtons) {
   button.addEventListener('click', () => {
     if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
@@ -7331,7 +7412,9 @@ window.addEventListener('keydown', (event) => {
   }
   if (key === 'k') {
     event.preventDefault();
-    setSidebarTab('left-advanced');
+    setSidebarTab('left-start');
+    const advancedDetails = document.querySelector('[data-sidebar-panel="left-start"] details.left-accordion');
+    if (advancedDetails) advancedDetails.open = true;
     elements.codeSearchInput?.focus();
     return;
   }
@@ -7366,7 +7449,10 @@ elements.viewRulerToggleButton?.addEventListener('click', () => toggleViewFeatur
 
 bindEvents();
 
-setSidebarTab('left-upload');
+for (const guideContainer of document.querySelectorAll('[data-left-tab-guide-for]')) {
+  renderLeftTabStepGuide(guideContainer, guideContainer.getAttribute('data-left-tab-guide-for') || '');
+}
+setSidebarTab('left-start');
 setSidebarTab('right-inspect');
 setCodeSource('edited', { preserveDraft: false });
 syncSaveFormatUi();
