@@ -27,8 +27,11 @@ let currentCodeSource = 'edited';
 let codeEditorDirty = false;
 let geometryCoordMode = 'relative';
 const zoomState = { mode: 'fit', value: 1 };
+const EXPORT_SCALE_OPTIONS = [1, 2, 3];
+const DEFAULT_JPG_QUALITY = 0.92;
 
 const historyState = {
+  baseSnapshot: null,
   undoStack: [],
   redoStack: [],
 };
@@ -63,6 +66,7 @@ const elements = {
   exportSelectionPngButton: document.getElementById('exportSelectionPngButton'),
   exportPresetSelect: document.getElementById('exportPresetSelect'),
   exportScaleSelect: document.getElementById('exportScaleSelect'),
+  exportJpgQualityInput: document.getElementById('exportJpgQualityInput'),
   exportPresetPackageButton: document.getElementById('exportPresetPackageButton'),
   downloadReportButton: document.getElementById('downloadReportButton'),
   htmlFileInput: document.getElementById('htmlFileInput'),
@@ -106,6 +110,8 @@ const elements = {
   applyGeometryButton: document.getElementById('applyGeometryButton'),
   bringForwardButton: document.getElementById('bringForwardButton'),
   sendBackwardButton: document.getElementById('sendBackwardButton'),
+  bringToFrontButton: document.getElementById('bringToFrontButton'),
+  sendToBackButton: document.getElementById('sendToBackButton'),
   imageNudgeLeftButton: document.getElementById('imageNudgeLeftButton'),
   imageNudgeRightButton: document.getElementById('imageNudgeRightButton'),
   imageNudgeUpButton: document.getElementById('imageNudgeUpButton'),
@@ -120,6 +126,16 @@ const elements = {
   zoomLabel: document.getElementById('zoomLabel'),
   previewViewport: document.getElementById('previewViewport'),
   previewScaler: document.getElementById('previewScaler'),
+  canvasContextBar: document.getElementById('canvasContextBar'),
+  miniHud: document.getElementById('miniHud'),
+  miniHudPos: document.getElementById('miniHudPos'),
+  miniHudSize: document.getElementById('miniHudSize'),
+  miniHudLayer: document.getElementById('miniHudLayer'),
+  canvasGeometryXInput: document.getElementById('canvasGeometryXInput'),
+  canvasGeometryYInput: document.getElementById('canvasGeometryYInput'),
+  canvasGeometryWInput: document.getElementById('canvasGeometryWInput'),
+  canvasGeometryHInput: document.getElementById('canvasGeometryHInput'),
+  applyCanvasGeometryButton: document.getElementById('applyCanvasGeometryButton'),
   codeEditorTextarea: document.getElementById('codeEditorTextarea'),
   codeSearchInput: document.getElementById('codeSearchInput'),
   codeSearchNextButton: document.getElementById('codeSearchNextButton'),
@@ -135,6 +151,7 @@ const elements = {
   actionButtons: Array.from(document.querySelectorAll('[data-action]')),
   batchActionButtons: Array.from(document.querySelectorAll('[data-batch-action]')),
   textAlignButtons: Array.from(document.querySelectorAll('[data-text-align]')),
+  canvasActionButtons: Array.from(document.querySelectorAll('[data-canvas-action]')),
 };
 
 function projectBaseName(project) {
@@ -142,8 +159,17 @@ function projectBaseName(project) {
 }
 
 function exportScale() {
-  const value = Number.parseFloat(elements.exportScaleSelect?.value || '1.5');
-  return Number.isFinite(value) && value > 0 ? value : 1.5;
+  const value = Number.parseFloat(elements.exportScaleSelect?.value || '1');
+  if (!Number.isFinite(value)) return 1;
+  if (value >= 2.5) return 3;
+  if (value >= 1.5) return 2;
+  return 1;
+}
+
+function exportJpgQuality() {
+  const raw = Number.parseFloat(elements.exportJpgQualityInput?.value || String(DEFAULT_JPG_QUALITY));
+  if (!Number.isFinite(raw)) return DEFAULT_JPG_QUALITY;
+  return Math.min(1, Math.max(0.1, raw));
 }
 
 function setStatus(text) {
@@ -254,10 +280,11 @@ function syncWorkspaceButtons() {
 function syncExportPresetUi({ forceScale = false } = {}) {
   const preset = currentExportPreset();
   if (elements.exportPresetSelect.value !== preset.id) elements.exportPresetSelect.value = preset.id;
-  const scaleValue = String(preset.scale);
   const shouldSyncScale = forceScale || elements.exportScaleSelect.dataset.boundPreset !== preset.id;
-  if (shouldSyncScale && Array.from(elements.exportScaleSelect.options).some((option) => option.value === scaleValue)) {
-    elements.exportScaleSelect.value = scaleValue;
+  const presetScale = Number.parseFloat(String(preset.scale));
+  const normalizedScale = presetScale >= 2.5 ? '3' : presetScale >= 1.5 ? '2' : '1';
+  if (shouldSyncScale && EXPORT_SCALE_OPTIONS.includes(Number.parseFloat(normalizedScale))) {
+    elements.exportScaleSelect.value = normalizedScale;
     elements.exportScaleSelect.dataset.boundPreset = preset.id;
   }
   if (elements.exportPresetPackageButton) elements.exportPresetPackageButton.title = preset.description || '';
@@ -317,29 +344,34 @@ function persistAutosave(snapshot) {
 
 function refreshHistoryButtons() {
   const hasProject = !!store.getState().project;
-  if (elements.undoButton) elements.undoButton.disabled = !hasProject || historyState.undoStack.length <= 1;
+  if (elements.undoButton) elements.undoButton.disabled = !hasProject || historyState.undoStack.length === 0;
   if (elements.redoButton) elements.redoButton.disabled = !hasProject || historyState.redoStack.length === 0;
   if (elements.restoreAutosaveButton) elements.restoreAutosaveButton.disabled = !readAutosavePayload();
 }
 
-function resetHistory() {
+function resetHistory(baseSnapshot = null) {
+  historyState.baseSnapshot = baseSnapshot?.html ? baseSnapshot : null;
   historyState.undoStack = [];
   historyState.redoStack = [];
   refreshHistoryButtons();
 }
 
-function recordHistorySnapshot(snapshot, { clearRedo = true } = {}) {
-  if (!snapshot?.html) return;
+function latestHistorySnapshot() {
+  return historyState.undoStack.at(-1)?.after || historyState.baseSnapshot;
+}
+
+function recordHistoryCommand(command, { clearRedo = true } = {}) {
+  if (!command?.after?.html || !command?.before?.html) return;
   const last = historyState.undoStack.at(-1);
-  if (last && last.html === snapshot.html && last.selectedUid === snapshot.selectedUid && last.selectionMode === snapshot.selectionMode) {
-    persistAutosave(snapshot);
+  if (last?.after?.html === command.after.html) {
+    persistAutosave(command.after);
     refreshHistoryButtons();
     return;
   }
-  historyState.undoStack.push(snapshot);
+  historyState.undoStack.push(command);
   if (historyState.undoStack.length > HISTORY_LIMIT) historyState.undoStack.shift();
   if (clearRedo) historyState.redoStack = [];
-  persistAutosave(snapshot);
+  persistAutosave(command.after);
   refreshHistoryButtons();
 }
 
@@ -351,15 +383,14 @@ function restoreHistorySnapshot(snapshot, label) {
 }
 
 function undoHistory() {
-  if (historyState.undoStack.length <= 1) {
+  if (!historyState.undoStack.length) {
     setStatus('되돌릴 작업이 없습니다.');
     return;
   }
   const current = historyState.undoStack.pop();
   historyState.redoStack.push(current);
-  const previous = historyState.undoStack.at(-1);
   refreshHistoryButtons();
-  restoreHistorySnapshot(previous, '이전 작업으로 되돌렸습니다.');
+  restoreHistorySnapshot(current.before, '이전 작업으로 되돌렸습니다.');
 }
 
 function redoHistory() {
@@ -370,7 +401,7 @@ function redoHistory() {
   const next = historyState.redoStack.pop();
   historyState.undoStack.push(next);
   refreshHistoryButtons();
-  restoreHistorySnapshot(next, '되돌린 작업을 다시 적용했습니다.');
+  restoreHistorySnapshot(next.after, '되돌린 작업을 다시 적용했습니다.');
 }
 
 function buildReportPayload(project, report) {
@@ -474,6 +505,8 @@ function syncGeometryControls() {
     elements.applyGeometryButton,
     elements.bringForwardButton,
     elements.sendBackwardButton,
+    elements.bringToFrontButton,
+    elements.sendToBackButton,
     elements.imageNudgeLeftButton,
     elements.imageNudgeRightButton,
     elements.imageNudgeUpButton,
@@ -559,6 +592,7 @@ function renderShell(state) {
   syncTextStyleControls(state.editorMeta);
   syncBatchSummary(state.editorMeta);
   syncGeometryControls();
+  syncCanvasDirectUi(state.editorMeta);
   elements.statusText.textContent = state.statusText;
   refreshComputedViews(state);
 
@@ -610,6 +644,21 @@ function handleEditorShortcut(action) {
   if (action === 'save-edited') return downloadEditedHtml();
 }
 
+function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
+  if (!activeEditor) {
+    setStatus('먼저 미리보기를 로드해 주세요.');
+    return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
+  }
+  const fallback = {
+    duplicate: () => activeEditor.duplicateSelected(),
+    delete: () => activeEditor.deleteSelected(),
+  };
+  const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
+  setStatus(result.message);
+  if (refresh && (store.getState().currentView === 'edited' || store.getState().currentView === 'report')) refreshComputedViews(store.getState());
+  return result;
+}
+
 function mountProject(project, { snapshot = null, preserveHistory = false, force = false } = {}) {
   if (activeEditor) {
     try { activeEditor.destroy(); } catch {}
@@ -634,8 +683,8 @@ function mountProject(project, { snapshot = null, preserveHistory = false, force
       initialSnapshot: snapshot,
       onStateChange: (meta) => store.setEditorMeta(meta),
       onStatus: setStatus,
-      onMutation: (nextSnapshot) => {
-        recordHistorySnapshot(nextSnapshot);
+      onMutation: (command) => {
+        recordHistoryCommand(command);
         if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
       },
       onShortcut: handleEditorShortcut,
@@ -644,10 +693,11 @@ function mountProject(project, { snapshot = null, preserveHistory = false, force
     store.setEditorMeta(activeEditor.getMeta());
     applyPreviewZoom();
     if (!preserveHistory) {
-      resetHistory();
-      recordHistorySnapshot(activeEditor.captureSnapshot('initial'));
+      resetHistory(activeEditor.captureSnapshot('initial'));
+      persistAutosave(historyState.baseSnapshot);
+      refreshHistoryButtons();
     } else {
-      persistAutosave(historyState.undoStack.at(-1) || activeEditor.captureSnapshot('restore'));
+      persistAutosave(latestHistorySnapshot() || activeEditor.captureSnapshot('restore'));
       refreshHistoryButtons();
     }
     if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
@@ -747,6 +797,19 @@ function ensurePreflightBeforeExport(kind) {
   return true;
 }
 
+async function ensureFixtureIntegrityBeforeExport(kind) {
+  if (!activeEditor) return false;
+  const report = await activeEditor.getExportFixtureIntegrityReport?.();
+  if (!report || report.ok) return true;
+  const preview = (report.issues || []).slice(0, 3).join('\n- ');
+  const proceed = window.confirm(`Fixture 기준 export 검증에서 문제를 찾았습니다.\n- ${preview}\n그래도 ${kind}을(를) 계속하시겠습니까?`);
+  if (!proceed) {
+    setStatus(`Fixture 기준 export 검증 문제 때문에 ${kind}을(를) 중단했습니다.`);
+    return false;
+  }
+  return true;
+}
+
 async function downloadLinkedZip() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
@@ -762,35 +825,40 @@ async function exportFullPng() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
   if (!ensurePreflightBeforeExport('전체 PNG 저장')) return;
+  if (!(await ensureFixtureIntegrityBeforeExport('전체 PNG 저장'))) return;
   const blob = await activeEditor.exportFullPngBlob(exportScale());
   const fileName = `${projectBaseName(project)}__full.png`;
   downloadBlob(fileName, blob);
-  setStatus(`전체 PNG를 저장했습니다: ${fileName}`);
+  setStatus(`전체 PNG를 저장했습니다: ${fileName} (${exportScale()}x)`);
 }
 
 async function exportFullJpg() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
   if (!ensurePreflightBeforeExport('전체 JPG 저장')) return;
-  const blob = await activeEditor.exportFullJpgBlob(exportScale(), 0.92);
+  if (!(await ensureFixtureIntegrityBeforeExport('전체 JPG 저장'))) return;
+  const quality = exportJpgQuality();
+  const blob = await activeEditor.exportFullJpgBlob(exportScale(), quality);
   const fileName = `${projectBaseName(project)}__full.jpg`;
   downloadBlob(fileName, blob);
-  setStatus(`전체 JPG를 저장했습니다: ${fileName}`);
+  setStatus(`전체 JPG를 저장했습니다: ${fileName} (${exportScale()}x, 품질 ${quality.toFixed(2)})`);
 }
 
 async function exportSelectionPng() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
+  if (!(await ensureFixtureIntegrityBeforeExport('선택 영역 PNG 저장'))) return;
   const blob = await activeEditor.exportSelectionPngBlob(exportScale());
   const fileName = `${projectBaseName(project)}__selection.png`;
   downloadBlob(fileName, blob);
-  setStatus(`선택 영역 PNG를 저장했습니다: ${fileName}`);
+  setStatus(`선택 영역 PNG를 저장했습니다: ${fileName} (${exportScale()}x, 선택 bbox)`);
 }
 
 async function exportSectionsZip() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
   if (!ensurePreflightBeforeExport('섹션 PNG ZIP 저장')) return;
+  if (!(await ensureFixtureIntegrityBeforeExport('섹션 PNG ZIP 저장'))) return;
   const entries = await activeEditor.exportSectionPngEntries(exportScale());
   const zipBlob = await buildZipBlob(entries);
   const fileName = `${projectBaseName(project)}__sections_png.zip`;
@@ -1020,18 +1088,8 @@ elements.textEditButton.addEventListener('click', () => {
   setStatus(result.message);
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
-elements.duplicateButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const result = activeEditor.duplicateSelected();
-  setStatus(result.message);
-  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
-});
-elements.deleteButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const result = activeEditor.deleteSelected();
-  setStatus(result.message);
-  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
-});
+elements.duplicateButton?.addEventListener('click', () => { executeEditorCommand('duplicate'); });
+elements.deleteButton?.addEventListener('click', () => { executeEditorCommand('delete'); });
 elements.addTextButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.addTextElement();
@@ -1071,6 +1129,16 @@ elements.bringForwardButton?.addEventListener('click', () => {
 elements.sendBackwardButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.sendSelectedBackward();
+  setStatus(result.message);
+});
+elements.bringToFrontButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.bringSelectedToFront();
+  setStatus(result.message);
+});
+elements.sendToBackButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.sendSelectedToBack();
   setStatus(result.message);
 });
 elements.imageNudgeLeftButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: -2, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
