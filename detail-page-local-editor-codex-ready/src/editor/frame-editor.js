@@ -1341,6 +1341,8 @@ export function createFrameEditor({
     } else {
       img.removeAttribute('style');
     }
+    if (state.initialExportStyle) img.dataset.exportStyle = state.initialExportStyle;
+    else img.removeAttribute('data-export-style');
     slot.removeAttribute('data-editor-crop-active');
     slot.removeAttribute('data-editor-crop-zoom');
     slot.removeAttribute('data-editor-crop-offset-x');
@@ -1370,6 +1372,7 @@ export function createFrameEditor({
       offsetX: 0,
       offsetY: 0,
       initialStyle: img.getAttribute('style') || '',
+      initialExportStyle: img.dataset.exportStyle || '',
     };
     selectElements([slot], { silent: true });
     updateImageCropRuntimeStyles(imageCropRuntime);
