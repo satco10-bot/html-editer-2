@@ -1,0 +1,45 @@
+# 상세페이지 로컬 웹앱 · Codex 준비본
+
+이 폴더는 **GitHub에 그대로 올려서 Codex에게 맡기기 쉽게** 정리한 버전입니다.
+
+## 제일 쉬운 사용법
+1. 이 폴더를 압축 해제합니다.
+2. GitHub에서 **새 비공개 저장소**를 만듭니다.
+3. 저장소 화면에서 **Add file → Upload files** 를 누릅니다.
+4. **이 폴더 안의 파일과 폴더를 전부 드래그해서 업로드**합니다.
+   - `zip 파일 하나`만 올리면 안 됩니다.
+   - **압축을 푼 상태의 파일들**을 올려야 Codex가 코드를 읽고 수정할 수 있습니다.
+5. ChatGPT의 **Codex** 탭으로 가서 이 저장소를 연결합니다.
+6. `PROMPTS/` 폴더 안의 문장을 **복사해서 Ask 또는 Code**로 넣습니다.
+
+## 이 프로젝트의 핵심 제약
+- 서버 배포용이 아니라 **로컬 전용 정적 웹앱**입니다.
+- `index.html`을 `file://`로 직접 열어 쓰는 흐름을 유지해야 합니다.
+- 서버/도메인/HTTPS 전제 기능을 필수 경로로 넣으면 안 됩니다.
+- `uploaded:` 이미지, 상대경로 이미지, placeholder 슬롯 감지를 깨뜨리면 안 됩니다.
+- 고정 fixture, 특히 `fixture_05_user_melting_cheese_compact.html` 회귀가 나면 안 됩니다.
+
+## 중요한 파일
+- `index.html` : 시작 파일
+- `styles.css` : 앱 화면 스타일
+- `app.bundle.js` : 지금 실행되는 로컬 번들
+- `src/` : 실제 수정해야 할 소스 코드
+- `data/fixtures/` : 회귀 체크용 샘플 HTML
+- `scripts/` : 번들/검증 스크립트
+- `AGENTS.md` : Codex 작업 규칙
+- `PROMPTS/` : Codex에 붙여넣을 명령문
+
+## 로컬 실행
+압축을 푼 뒤 `index.html`을 브라우저에서 직접 열면 됩니다.
+
+## 개발/검증 명령
+```bash
+python3 scripts/build_local_bundle.py
+node --check app.bundle.js
+python3 scripts/validate_phase6.py
+```
+
+## 왜 zip 하나만 올리면 안 되나요?
+Codex는 저장소 안의 **실제 파일들**을 읽고 바꾸는 방식입니다.
+그래서 `프로젝트.zip` 하나만 올리면, HTML/JS/CSS를 바로 고치기 어렵습니다.
+반드시 **압축 해제된 파일 상태**로 올리셔야 합니다.
