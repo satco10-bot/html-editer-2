@@ -60,84 +60,62 @@
 <body>
   <div class="app-shell">
     <header class="topbar">
-      <div class="topbar__brand">
-        <div class="brand__eyebrow">LOCAL DETAIL PAGE EDITOR · UX REBOOT</div>
-        <h1>상세페이지 로컬 웹앱</h1>
-        <div class="topbar__sub">버튼 나열형 인터페이스를 줄이고, 캔버스·코드·속성 패널 중심으로 다시 묶은 리부트 셸입니다.</div>
+      <div class="topbar__left">
+        <div class="topbar__brand">
+          <div class="brand__eyebrow">LOCAL DETAIL PAGE EDITOR · UX REBOOT</div>
+          <h1>상세페이지 로컬 웹앱</h1>
+          <div class="topbar__sub">버튼 나열형 인터페이스를 줄이고, 캔버스·코드·속성 패널 중심으로 다시 묶은 리부트 셸입니다.</div>
+        </div>
       </div>
 
-      <div class="workflow-tabs" role="tablist" aria-label="작업 단계">
-        <button class="workflow-tab is-active" data-workflow-step="load" role="tab" aria-selected="true">1) 불러오기</button>
-        <button class="workflow-tab" data-workflow-step="edit" role="tab" aria-selected="false">2) 편집</button>
-        <button class="workflow-tab" data-workflow-step="save" role="tab" aria-selected="false">3) 저장/출력</button>
-      </div>
-      <p id="workflowGuideLine" class="workflow-guide">HTML 파일이나 폴더를 먼저 불러오세요.</p>
-      <button id="beginnerModeToggle" class="button button--secondary" type="button" aria-pressed="false">초보 모드: OFF</button>
-
-      <div class="topbar__group" data-workflow-panel="load">
-        <span class="topbar__label">열기</span>
-        <button id="openHtmlButton" class="button">HTML 열기</button>
-        <button id="openFolderButton" class="button button--secondary">폴더 열기</button>
-        <label class="mini-control">
-          <span>Fixture</span>
-          <select id="fixtureSelect"></select>
+      <div class="topbar__center">
+        <label class="workflow-guide-picker" for="workflowGuideSelect">
+          <span>진행 안내</span>
+          <select id="workflowGuideSelect">
+            <option value="load">1) 불러오기</option>
+            <option value="edit">2) 편집</option>
+            <option value="save">3) 저장/출력</option>
+          </select>
         </label>
-        <button id="loadFixtureButton" class="button button--secondary">불러오기</button>
+        <p id="workflowGuideLine" class="workflow-guide">HTML 파일이나 폴더를 먼저 불러오세요.</p>
       </div>
 
-      <div class="topbar__group" data-workflow-panel="save">
-        <span class="topbar__label">저장 / 출력 (기본)</span>
-        <button id="downloadEditedButton" class="button button--ghost">문서 저장</button>
-        <button id="exportPngButton" class="button button--ghost">PNG</button>
-        <button id="exportJpgButton" class="button button--ghost">JPG</button>
+      <div class="topbar__right">
+        <button id="beginnerModeToggle" class="button button--secondary" type="button" aria-pressed="false">초보 모드: OFF</button>
+        <div class="topbar__group">
+          <span class="topbar__label">열기</span>
+          <button id="openHtmlButton" class="button">HTML 열기</button>
+          <button id="openFolderButton" class="button button--secondary">폴더 열기</button>
+          <label class="mini-control">
+            <span>Fixture</span>
+            <select id="fixtureSelect"></select>
+          </label>
+          <button id="loadFixtureButton" class="button button--secondary">불러오기</button>
+        </div>
+
+        <div class="topbar__group">
+          <span class="topbar__label">저장 / 출력 (기본)</span>
+          <button id="downloadEditedButton" class="button button--ghost">문서 저장</button>
+          <button id="exportPngButton" class="button button--ghost">PNG</button>
+          <button id="exportJpgButton" class="button button--ghost">JPG</button>
+        </div>
+
+        <div class="topbar__group topbar__group--workspace">
+          <span class="topbar__label">작업</span>
+          <button id="undoButton" class="button button--ghost" data-beginner-advanced>되돌리기</button>
+          <button id="redoButton" class="button button--ghost" data-beginner-advanced>다시하기</button>
+          <button id="restoreAutosaveButton" class="button button--ghost" data-beginner-advanced>자동저장 복구</button>
+          <button id="toggleLeftSidebarButton" class="button button--ghost" data-beginner-advanced>왼쪽 패널</button>
+          <button id="toggleRightSidebarButton" class="button button--ghost" data-beginner-advanced>오른쪽 패널</button>
+          <button id="focusModeButton" class="button button--ghost" data-beginner-advanced>캔버스 집중</button>
+        </div>
       </div>
 
-      <div class="topbar__group topbar__group--workspace" data-workflow-panel="edit">
-        <span class="topbar__label">작업</span>
-        <button id="undoButton" class="button button--ghost" data-beginner-advanced>되돌리기</button>
-        <button id="redoButton" class="button button--ghost" data-beginner-advanced>다시하기</button>
-        <button id="restoreAutosaveButton" class="button button--ghost" data-beginner-advanced>자동저장 복구</button>
-        <button id="toggleLeftSidebarButton" class="button button--ghost" data-beginner-advanced>왼쪽 패널</button>
-        <button id="toggleRightSidebarButton" class="button button--ghost" data-beginner-advanced>오른쪽 패널</button>
-        <button id="focusModeButton" class="button button--ghost" data-beginner-advanced>캔버스 집중</button>
-      </div>
-
-      <details id="advancedTopbarPanel" class="topbar-advanced" data-workflow-panel="edit save" data-beginner-advanced>
+      <details id="advancedTopbarPanel" class="topbar-advanced" data-beginner-advanced>
         <summary>고급 펼치기</summary>
         <div class="topbar__group">
           <span class="topbar__label">고급 저장 / 출력</span>
-        <label class="mini-control">
-          <span>저장 포맷</span>
-          <select id="saveFormatSelect">
-            <option value="linked">linked (경로 유지)</option>
-            <option value="embedded">embedded (data URL 내장)</option>
-          </select>
-        </label>
-        <span id="saveFormatStatus" class="topbar__sub">현재 저장 포맷: linked</span>
-        <span id="saveFormatGuide" class="topbar__sub topbar__sub--hint">추천: 내 PC에서 다시 편집할 땐 linked, 1파일 전달용은 embedded</span>
-        <span id="saveFormatPreview" class="topbar__sub topbar__sub--hint"></span>
-        <span id="saveMetaSummary" class="topbar__sub topbar__sub--hint"></span>
-        <button id="downloadNormalizedButton" class="button button--ghost">정규화 HTML</button>
-        <button id="downloadLinkedZipButton" class="button button--ghost">링크 ZIP</button>
-        <label class="mini-control">
-          <span>Preset</span>
-          <select id="exportPresetSelect"></select>
-        </label>
-        <label class="mini-control">
-          <span>배율</span>
-          <select id="exportScaleSelectMain" data-export-scale-control>
-            <option value="1">1x</option>
-            <option value="2">2x</option>
-            <option value="3">3x</option>
-          </select>
-        </label>
-        <label class="mini-control">
-          <span>JPG 품질</span>
-          <input id="exportJpgQualityInputMain" data-export-jpg-quality-control type="number" min="0.1" max="1" step="0.01" value="0.92" style="width:74px" />
-        </label>
-        <button id="exportSectionsZipButton" class="button button--ghost">섹션 ZIP</button>
-        <button id="exportSelectionPngButton" class="button button--ghost">선택 PNG</button>
-        <button id="exportPresetPackageButton" class="button button--ghost">Preset ZIP</button>
+          <span class="topbar__sub topbar__sub--hint">저장/출력 버튼은 "저장/출력 열기" 모달로 이동했습니다.</span>
         </div>
       </details>
 
@@ -154,9 +132,9 @@
         <button class="sidebar-tab" data-sidebar-tab="left-project">프로젝트</button>
       </div>
 
-      <section class="panel sidebar-panel is-active" data-sidebar-panel="left-import">
+      <section class="panel sidebar-panel is-active" data-sidebar-panel="left-upload">
         <div class="panel__header">
-          <h2>가져오기</h2>
+          <h2>업로드/가져오기</h2>
           <button id="applyPasteButton" class="button button--secondary button--small">붙여넣기 적용</button>
         </div>
         <div id="localModeNotice"></div>
@@ -167,32 +145,38 @@
           </label>
         </div>
         <p class="hint">실사용 기준에선 폴더 import가 가장 안정적입니다. 상대경로와 <code>uploaded:</code> 매핑을 함께 잡습니다.</p>
+        <div class="panel-divider"></div>
+
+        <section class="upload-bucket">
+          <h3>최근 업로드</h3>
+          <div id="uploadRecentList" class="upload-slot-list"></div>
+        </section>
+        <section class="upload-bucket">
+          <h3>문서 사용</h3>
+          <div id="uploadDocumentList" class="upload-slot-list"></div>
+        </section>
+        <section class="upload-bucket">
+          <h3>미할당</h3>
+          <div id="uploadUnassignedList" class="upload-slot-list"></div>
+        </section>
+        <section class="upload-bucket">
+          <h3>깨진 자산</h3>
+          <div id="uploadBrokenList" class="upload-slot-list"></div>
+        </section>
       </section>
 
-      <section class="panel sidebar-panel" data-sidebar-panel="left-code">
-        <div class="panel__header panel__header--split">
-          <h2>코드 워크벤치</h2>
-          <div class="button-row button-row--compact">
-            <button id="reloadCodeFromEditorButton" class="button button--ghost button--small">현재 편집본 불러오기</button>
-            <button id="applyCodeToEditorButton" class="button button--secondary button--small">코드 적용</button>
-          </div>
+      <section class="panel sidebar-panel" data-sidebar-panel="left-text">
+        <div class="panel__header">
+          <h2>텍스트</h2>
         </div>
-        <div class="segmented segmented--small">
-          <button class="segmented__item is-active" data-code-source="edited">편집본</button>
-          <button class="segmented__item" data-code-source="normalized">정규화</button>
-          <button class="segmented__item" data-code-source="original">원본</button>
-          <button class="segmented__item" data-code-source="report">리포트</button>
+        <p class="hint">텍스트 속성은 우측 <strong>텍스트</strong> 탭에서 바로 편집할 수 있습니다.</p>
+      </section>
+
+      <section class="panel sidebar-panel" data-sidebar-panel="left-elements">
+        <div class="panel__header">
+          <h2>요소</h2>
         </div>
-        <div class="code-toolbar">
-          <input id="codeSearchInput" class="asset-filter" type="search" placeholder="코드 검색" />
-          <button id="codeSearchNextButton" class="button button--ghost button--small">다음</button>
-        </div>
-        <textarea id="codeEditorTextarea" class="code-editor" spellcheck="false"></textarea>
-        <pre id="editedCodeView" class="code-view code-view--hidden"></pre>
-        <pre id="normalizedCodeView" class="code-view code-view--hidden"></pre>
-        <pre id="originalCodeView" class="code-view code-view--hidden"></pre>
-        <pre id="jsonReportView" class="code-view code-view--hidden"></pre>
-        <p class="hint">현재 리부트 셸에서는 코드 편집과 적용을 다시 붙였습니다. 검색은 다음 일치 위치로 이동합니다.</p>
+        <p class="hint">요소 추가/복제/삭제는 상단 퀵 액션 버튼을 사용하세요.</p>
       </section>
 
       <section class="panel sidebar-panel" data-sidebar-panel="left-sections">
@@ -212,15 +196,63 @@
 
       <section class="panel sidebar-panel" data-sidebar-panel="left-project">
         <div class="panel__header">
-          <h2>프로젝트 상태</h2>
+          <h2>섹션</h2>
         </div>
-        <div id="summaryCards" class="metric-grid"></div>
-        <div class="panel-divider"></div>
-        <div class="panel__header">
-          <h2>이슈</h2>
-        </div>
-        <ul id="issueList" class="issue-list"></ul>
+        <p class="hint">섹션 단위 저장은 상단의 <strong>섹션 ZIP</strong> 버튼에서 실행할 수 있습니다.</p>
       </section>
+
+      <section class="panel sidebar-panel" data-sidebar-panel="left-layers">
+        <div class="panel__header">
+          <h2>레이어</h2>
+        </div>
+        <p class="hint">레이어/슬롯 목록은 우측 <strong>레이어</strong> 탭에서 확인합니다.</p>
+      </section>
+
+      <section class="panel sidebar-panel" data-sidebar-panel="left-advanced">
+        <details class="left-accordion" open>
+          <summary>코드 워크벤치</summary>
+          <div class="left-accordion__body">
+            <div class="panel__header panel__header--split">
+              <h2>코드 워크벤치</h2>
+              <div class="button-row button-row--compact">
+                <button id="reloadCodeFromEditorButton" class="button button--ghost button--small">현재 편집본 불러오기</button>
+                <button id="applyCodeToEditorButton" class="button button--secondary button--small">코드 적용</button>
+              </div>
+            </div>
+            <div class="segmented segmented--small">
+              <button class="segmented__item is-active" data-code-source="edited">편집본</button>
+              <button class="segmented__item" data-code-source="normalized">정규화</button>
+              <button class="segmented__item" data-code-source="original">원본</button>
+              <button class="segmented__item" data-code-source="report">리포트</button>
+            </div>
+            <div class="code-toolbar">
+              <input id="codeSearchInput" class="asset-filter" type="search" placeholder="코드 검색" />
+              <button id="codeSearchNextButton" class="button button--ghost button--small">다음</button>
+            </div>
+            <textarea id="codeEditorTextarea" class="code-editor" spellcheck="false"></textarea>
+            <pre id="editedCodeView" class="code-view code-view--hidden"></pre>
+            <pre id="normalizedCodeView" class="code-view code-view--hidden"></pre>
+            <pre id="originalCodeView" class="code-view code-view--hidden"></pre>
+            <pre id="jsonReportView" class="code-view code-view--hidden"></pre>
+            <p class="hint">검색은 다음 일치 위치로 이동합니다.</p>
+          </div>
+        </details>
+        <details class="left-accordion">
+          <summary>프로젝트 상태</summary>
+          <div class="left-accordion__body">
+            <div class="panel__header">
+              <h2>프로젝트 상태</h2>
+            </div>
+            <div id="summaryCards" class="metric-grid"></div>
+            <div class="panel-divider"></div>
+            <div class="panel__header">
+              <h2>이슈</h2>
+            </div>
+            <ul id="issueList" class="issue-list"></ul>
+          </div>
+        </details>
+      </section>
+
     </aside>
 
     <main class="main-stage">
@@ -349,20 +381,9 @@
         <button class="sidebar-tab" data-sidebar-tab="right-text">텍스트</button>
         <button class="sidebar-tab" data-sidebar-tab="right-arrange">정렬/간격</button>
         <button class="sidebar-tab" data-sidebar-tab="right-layers">레이어</button>
-        <button class="sidebar-tab" data-sidebar-tab="right-assets">자산/출력</button>
       </div>
 
       <section class="panel sidebar-panel is-active" data-sidebar-panel="right-inspect">
-        <div class="panel__header">
-          <h2>선택 / 슬롯 진단</h2>
-        </div>
-        <div id="selectionInspector"></div>
-        <div class="panel-divider"></div>
-        <div class="panel__header">
-          <h2>정규화 진단</h2>
-        </div>
-        <div id="normalizeStats" class="stat-stack"></div>
-        <div class="panel-divider"></div>
         <div class="panel__header panel__header--split">
           <h2>출력 전 검수</h2>
           <button id="preflightRefreshButton" class="button button--ghost button--small">다시 검사</button>
@@ -456,7 +477,7 @@
           </div>
         </details>
         <details id="advancedAttributeSection" class="style-form">
-          <summary><strong>고급</strong> · export/변환/진단 (적용 버튼)</summary>
+          <summary><strong>고급</strong> · 변환/진단 (적용 버튼)</summary>
           <label class="field">
             <span title="좌표 계산 기준입니다. 상대/절대를 먼저 설정하고 적용 버튼을 누르세요.">좌표 기준</span>
             <select id="geometryCoordModeSelect" title="좌표 계산 기준입니다. 상대/절대를 먼저 설정하고 적용 버튼을 누르세요.">
@@ -464,31 +485,6 @@
               <option value="absolute">절대 좌표 (문서 좌상단 기준)</option>
             </select>
           </label>
-          <label class="field">
-            <span title="export 배율(1x/2x/3x). 적용 버튼을 눌러야 저장 시 반영됩니다.">export 배율</span>
-            <select id="exportScaleSelectSelection" data-export-scale-control title="export 배율(1x/2x/3x). 적용 버튼을 눌러야 저장 시 반영됩니다.">
-              <option value="1">1x</option>
-              <option value="2">2x</option>
-              <option value="3">3x</option>
-            </select>
-          </label>
-          <label class="field">
-            <span title="JPG 화질(0.1~1). 높을수록 용량이 커집니다.">JPG 품질</span>
-            <input id="exportJpgQualityInputSelection" data-export-jpg-quality-control type="number" min="0.1" max="1" step="0.01" value="0.92" title="JPG 화질(0.1~1). 높을수록 용량이 커집니다." />
-          </label>
-          <div class="style-grid">
-            <label class="field field--mini">
-              <span title="선택 export 시 주변 여백(px)입니다.">선택 여백</span>
-              <input id="selectionExportPaddingInput" type="number" min="0" max="240" step="1" value="16" title="선택 export 시 주변 여백(px)입니다." />
-            </label>
-            <label class="field field--mini">
-              <span title="선택 export 배경 처리 방식입니다.">선택 배경</span>
-              <select id="selectionExportBackgroundSelect" title="선택 export 배경 처리 방식입니다.">
-                <option value="transparent">투명</option>
-                <option value="opaque">불투명(흰색)</option>
-              </select>
-            </label>
-          </div>
           <div id="geometryRuleHint" class="mini-summary">다중 선택에서 값이 다르면 "혼합"으로 표시됩니다.</div>
           <div class="button-row">
             <button id="applyAdvancedSettingsButton" class="button button--secondary" title="고급값(좌표기준/export/진단)을 한 번에 반영합니다.">고급값 적용</button>
@@ -532,26 +528,100 @@
         <div id="slotList" class="slot-list"></div>
       </section>
 
-      <section class="panel sidebar-panel" data-sidebar-panel="right-assets">
-        <div class="panel__header panel__header--split">
-          <h2>자산 레지스트리</h2>
-          <input id="assetFilterInput" class="asset-filter" type="search" placeholder="경로 / 스킴 / 상태 검색" />
-        </div>
-        <div id="assetTableWrap" class="asset-table-wrap"></div>
-        <div class="panel-divider"></div>
-        <div class="panel__header">
-          <h2>내보내기 / 리포트</h2>
-        </div>
-        <div class="button-grid">
-          <button id="downloadReportButton" class="button button--ghost">리포트 JSON</button>
-        </div>
-      </section>
     </aside>
   </div>
 
   <footer class="statusbar">
+    <div id="documentStatusChip" class="status-chip status-chip--document" data-status="idle">문서 없음</div>
     <div id="statusText">대기 중</div>
   </footer>
+
+  <div id="downloadModal" class="download-modal-overlay" hidden>
+    <section class="download-modal" role="dialog" aria-modal="true" aria-labelledby="downloadModalTitle">
+      <header class="download-modal__header">
+        <h2 id="downloadModalTitle">저장 / 출력</h2>
+        <button id="closeDownloadModalButton" class="button button--ghost button--small" type="button">닫기</button>
+      </header>
+      <div class="download-modal__body">
+        <label class="field">
+          <span>실행할 작업</span>
+          <select id="downloadChoiceSelect">
+            <option value="save-edited">문서 저장</option>
+            <option value="export-full-png">전체 PNG</option>
+            <option value="export-full-jpg">전체 JPG</option>
+            <option value="export-selection-png">선택 PNG</option>
+            <option value="export-sections-zip">섹션 ZIP</option>
+            <option value="download-normalized-html">정규화 HTML</option>
+            <option value="download-linked-zip">링크 ZIP</option>
+            <option value="download-export-preset-package">Preset ZIP</option>
+          </select>
+        </label>
+        <div class="download-modal__grid">
+          <label class="field">
+            <span>저장 포맷</span>
+            <select id="saveFormatSelect">
+              <option value="linked">linked (경로 유지)</option>
+              <option value="embedded">embedded (data URL 내장)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Preset</span>
+            <select id="exportPresetSelect"></select>
+          </label>
+          <label class="field">
+            <span>배율</span>
+            <select id="exportScaleSelectMain" data-export-scale-control>
+              <option value="1">1x</option>
+              <option value="2">2x</option>
+              <option value="3">3x</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>JPG 품질</span>
+            <input id="exportJpgQualityInputMain" data-export-jpg-quality-control type="number" min="0.1" max="1" step="0.01" value="0.92" />
+          </label>
+        </div>
+        <div class="download-modal__options">
+          <label class="field field--mini">
+            <span>선택 여백(px)</span>
+            <input id="selectionExportPaddingInput" type="number" min="0" max="240" step="1" value="16" />
+          </label>
+          <label class="field field--mini">
+            <span>선택 배경</span>
+            <select id="selectionExportBackgroundSelect">
+              <option value="transparent">투명</option>
+              <option value="opaque">불투명(흰색)</option>
+            </select>
+          </label>
+        </div>
+        <div class="download-modal__preset-buttons">
+          <button class="button button--ghost button--small" type="button" data-download-preset="basic">Basic preset</button>
+          <button class="button button--ghost button--small" type="button" data-download-preset="market">Market preset</button>
+          <button class="button button--ghost button--small" type="button" data-download-preset="hires">Hi-res preset</button>
+          <button class="button button--ghost button--small" type="button" data-download-preset="review">Review preset</button>
+        </div>
+        <div class="download-modal__preset-buttons">
+          <button id="downloadEditedButton" class="button button--ghost button--small" type="button">문서 저장</button>
+          <button id="downloadNormalizedButton" class="button button--ghost button--small" type="button">정규화 HTML</button>
+          <button id="downloadLinkedZipButton" class="button button--ghost button--small" type="button">링크 ZIP</button>
+          <button id="exportPngButton" class="button button--ghost button--small" type="button">PNG</button>
+          <button id="exportJpgButton" class="button button--ghost button--small" type="button">JPG</button>
+          <button id="exportSectionsZipButton" class="button button--ghost button--small" type="button">섹션 ZIP</button>
+          <button id="exportSelectionPngButton" class="button button--ghost button--small" type="button">선택 PNG</button>
+          <button id="exportPresetPackageButton" class="button button--ghost button--small" type="button">Preset ZIP</button>
+        </div>
+        <div class="download-modal__meta">
+          <span id="saveFormatStatus" class="topbar__sub">현재 저장 포맷: linked</span>
+          <span id="saveFormatGuide" class="topbar__sub topbar__sub--hint">추천: 내 PC에서 다시 편집할 땐 linked, 1파일 전달용은 embedded</span>
+          <span id="saveFormatPreview" class="topbar__sub topbar__sub--hint"></span>
+          <span id="saveMetaSummary" class="topbar__sub topbar__sub--hint"></span>
+        </div>
+      </div>
+      <footer class="download-modal__footer">
+        <button id="runDownloadChoiceButton" class="button" type="button">실행</button>
+      </footer>
+    </section>
+  </div>
 
   <div id="shortcutHelpOverlay" class="shortcut-help-overlay" hidden>
     <section class="shortcut-help-panel" role="dialog" aria-modal="true" aria-labelledby="shortcutHelpTitle">
