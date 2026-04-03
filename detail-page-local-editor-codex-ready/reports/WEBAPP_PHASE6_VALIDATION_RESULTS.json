@@ -2,10 +2,10 @@
   "summary": {
     "ok": false,
     "check_count": 166,
-    "passed": 158,
-    "failed": 8,
-    "bundle_bytes": 323709,
-    "bundle_sha256": "f7648a9daf350179abbd673bd4bd481ac732a93d99795e6b4bf5ba716fccba24",
+    "passed": 161,
+    "failed": 5,
+    "bundle_bytes": 337964,
+    "bundle_sha256": "a6949515543a66dfa0134197d365ca94143b8b2235c7bf771a7997e4036d074a",
     "browser_smoke_status": "unavailable",
     "failure_type": "dependency_missing"
   },
@@ -292,12 +292,12 @@
     },
     {
       "name": "index_has_duplicateButton",
-      "ok": false,
+      "ok": true,
       "detail": "duplicateButton"
     },
     {
       "name": "index_has_deleteButton",
-      "ok": false,
+      "ok": true,
       "detail": "deleteButton"
     },
     {
@@ -382,8 +382,8 @@
     },
     {
       "name": "all_main_js_ids_exist_in_index",
-      "ok": false,
-      "detail": "deleteButton, duplicateButton"
+      "ok": true,
+      "detail": "ok"
     },
     {
       "name": "frame_editor_has_toggleTextEdit",

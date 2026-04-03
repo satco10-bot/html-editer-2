@@ -72,6 +72,7 @@
         <button class="workflow-tab" data-workflow-step="save" role="tab" aria-selected="false">3) 저장/출력</button>
       </div>
       <p id="workflowGuideLine" class="workflow-guide">HTML 파일이나 폴더를 먼저 불러오세요.</p>
+      <button id="beginnerModeToggle" class="button button--secondary" type="button" aria-pressed="false">초보 모드: OFF</button>
 
       <div class="topbar__group" data-workflow-panel="load">
         <span class="topbar__label">열기</span>
@@ -93,15 +94,15 @@
 
       <div class="topbar__group topbar__group--workspace" data-workflow-panel="edit">
         <span class="topbar__label">작업</span>
-        <button id="undoButton" class="button button--ghost">되돌리기</button>
-        <button id="redoButton" class="button button--ghost">다시하기</button>
-        <button id="restoreAutosaveButton" class="button button--ghost">자동저장 복구</button>
-        <button id="toggleLeftSidebarButton" class="button button--ghost">왼쪽 패널</button>
-        <button id="toggleRightSidebarButton" class="button button--ghost">오른쪽 패널</button>
-        <button id="focusModeButton" class="button button--ghost">캔버스 집중</button>
+        <button id="undoButton" class="button button--ghost" data-beginner-advanced>되돌리기</button>
+        <button id="redoButton" class="button button--ghost" data-beginner-advanced>다시하기</button>
+        <button id="restoreAutosaveButton" class="button button--ghost" data-beginner-advanced>자동저장 복구</button>
+        <button id="toggleLeftSidebarButton" class="button button--ghost" data-beginner-advanced>왼쪽 패널</button>
+        <button id="toggleRightSidebarButton" class="button button--ghost" data-beginner-advanced>오른쪽 패널</button>
+        <button id="focusModeButton" class="button button--ghost" data-beginner-advanced>캔버스 집중</button>
       </div>
 
-      <details id="advancedTopbarPanel" class="topbar-advanced" data-workflow-panel="edit save">
+      <details id="advancedTopbarPanel" class="topbar-advanced" data-workflow-panel="edit save" data-beginner-advanced>
         <summary>고급 펼치기</summary>
         <div class="topbar__group">
           <span class="topbar__label">고급 저장 / 출력</span>
@@ -207,27 +208,29 @@
       <div class="stage-toolbar stage-toolbar--reboot">
         <div class="stage-toolbar__row">
           <div class="selection-mode segmented">
-            <button class="segmented__item is-active" data-selection-mode="smart" title="선택 도구 (V)">스마트</button>
-            <button class="segmented__item" data-selection-mode="image">이미지</button>
-            <button class="segmented__item" data-selection-mode="text" title="텍스트 도구 (T)">텍스트</button>
-            <button class="segmented__item" data-selection-mode="box" title="박스 도구 (R)">박스</button>
+            <button id="selectionSmartButton" class="segmented__item is-active" data-selection-mode="smart" title="선택 도구 (V)">선택</button>
+            <button class="segmented__item" data-selection-mode="image" data-beginner-advanced>이미지</button>
+            <button class="segmented__item" data-selection-mode="text" title="텍스트 도구 (T)" data-beginner-advanced>텍스트</button>
+            <button class="segmented__item" data-selection-mode="box" title="박스 도구 (R)" data-beginner-advanced>박스</button>
           </div>
           <div class="quick-actions button-row">
-            <button id="replaceImageButton" class="button button--secondary">이미지 넣기</button>
-            <button id="manualSlotButton" class="button button--ghost">슬롯 지정</button>
-            <button id="demoteSlotButton" class="button button--warn">슬롯 해제</button>
-            <button id="textEditButton" class="button button--ghost">텍스트 편집</button>
-            <button id="addTextButton" class="button button--ghost" title="텍스트 도구 (T)">텍스트 추가</button>
-            <button id="addBoxButton" class="button button--ghost" title="박스 도구 (R)">박스 추가</button>
-            <button id="addSlotButton" class="button button--ghost">슬롯 추가</button>
-            <button id="groupButton" class="button button--ghost" title="그룹 묶기 (Ctrl/Cmd+G)">그룹 묶기</button>
-            <button id="ungroupButton" class="button button--ghost" title="그룹 해제 (Shift+Ctrl/Cmd+G)">그룹 해제</button>
-            <button id="toggleHideButton" class="button button--ghost">숨김</button>
-            <button id="toggleLockButton" class="button button--ghost">잠금</button>
-            <button id="redetectButton" class="button button--ghost">다시 감지</button>
+            <button id="replaceImageButton" class="button button--secondary" data-beginner-advanced>이미지 넣기</button>
+            <button id="manualSlotButton" class="button button--ghost" data-beginner-advanced>슬롯 지정</button>
+            <button id="demoteSlotButton" class="button button--warn" data-beginner-advanced>슬롯 해제</button>
+            <button id="textEditButton" class="button button--ghost">텍스트</button>
+            <button id="duplicateButton" class="button button--ghost">복제</button>
+            <button id="deleteButton" class="button button--warn">삭제</button>
+            <button id="addTextButton" class="button button--ghost" title="텍스트 도구 (T)" data-beginner-advanced>텍스트 추가</button>
+            <button id="addBoxButton" class="button button--ghost" title="박스 도구 (R)" data-beginner-advanced>박스 추가</button>
+            <button id="addSlotButton" class="button button--ghost" data-beginner-advanced>슬롯 추가</button>
+            <button id="groupButton" class="button button--ghost" title="그룹 묶기 (Ctrl/Cmd+G)" data-beginner-advanced>그룹 묶기</button>
+            <button id="ungroupButton" class="button button--ghost" title="그룹 해제 (Shift+Ctrl/Cmd+G)" data-beginner-advanced>그룹 해제</button>
+            <button id="toggleHideButton" class="button button--ghost" data-beginner-advanced>숨김</button>
+            <button id="toggleLockButton" class="button button--ghost" data-beginner-advanced>잠금</button>
+            <button id="redetectButton" class="button button--ghost" data-beginner-advanced>다시 감지</button>
           </div>
         </div>
-        <div class="stage-toolbar__row">
+        <div class="stage-toolbar__row" data-beginner-advanced>
           <div class="image-preset-group segmented segmented--small">
             <button class="segmented__item" data-preset="cover">꽉 채우기</button>
             <button class="segmented__item" data-preset="contain">맞춤 넣기</button>
@@ -245,7 +248,7 @@
           </div>
         </div>
         <div class="stage-toolbar__row stage-toolbar__row--meta">
-          <div class="stage-hint">완료 기능: 리사이즈, 요소 추가(텍스트/박스/슬롯), 복제/삭제, XYWH 숫자 적용, z-order(앞/뒤), JPG·선택 PNG·3x 출력. Shift+드래그 다중선택과 스냅 가이드도 지원합니다.<br />미구현(별도): 그룹 묶기/해제, 고급 템플릿(선택 모음/컴포넌트화). 초보 순서: 요소 클릭 → 드래그/핸들로 배치 → 필요 시 Ctrl/Cmd+D(복제)·Delete(삭제)·XYWH 숫자 적용 후 출력하세요.</div>
+          <div class="stage-hint">초보 모드 기본 순서: ① 선택 버튼으로 요소 클릭 ② 드래그로 이동, 핸들로 리사이즈 ③ 필요 시 복제/삭제/텍스트 후 저장 또는 PNG 출력.<span data-beginner-advanced><br />완료 기능: 리사이즈, 요소 추가(텍스트/박스/슬롯), 복제/삭제, XYWH 숫자 적용, z-order(앞/뒤), JPG·선택 PNG·3x 출력. Shift+드래그 다중선택과 스냅 가이드도 지원합니다.</span></div>
           <div id="projectMeta" class="project-meta"></div>
         </div>
       </div>
@@ -550,6 +553,18 @@
       </ul>
       <p class="hint">입력창/텍스트 편집 중에는 단축키 충돌을 막기 위해 대부분의 편집 단축키를 무시합니다.</p>
     </section>
+  </div>
+  <div id="beginnerTutorialTooltip" class="beginner-tutorial" role="dialog" aria-live="polite" hidden>
+    <strong id="beginnerTutorialTitle">초보 모드 안내</strong>
+    <p id="beginnerTutorialBody"></p>
+    <div class="beginner-tutorial__footer">
+      <span id="beginnerTutorialStep">1 / 3</span>
+      <div class="button-row button-row--compact">
+        <button id="beginnerTutorialPrevButton" class="button button--ghost button--small" type="button">이전</button>
+        <button id="beginnerTutorialNextButton" class="button button--secondary button--small" type="button">다음</button>
+        <button id="beginnerTutorialCloseButton" class="button button--ghost button--small" type="button">닫기</button>
+      </div>
+    </div>
   </div>
 
   <script src="./app.bundle.js"></script>
