@@ -9,7 +9,14 @@ export function createProjectStore() {
   };
 
   function notify() {
-    for (const listener of listeners) listener(getState());
+    const snapshot = getState();
+    for (const listener of listeners) {
+      try {
+        listener(snapshot);
+      } catch (error) {
+        console.error('[project-store] listener failed:', error);
+      }
+    }
   }
 
   function getState() {
@@ -60,7 +67,11 @@ export function createProjectStore() {
 
   function subscribe(listener) {
     listeners.add(listener);
-    listener(getState());
+    try {
+      listener(getState());
+    } catch (error) {
+      console.error('[project-store] initial listener failed:', error);
+    }
     return () => listeners.delete(listener);
   }
 

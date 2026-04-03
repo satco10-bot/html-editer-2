@@ -22,8 +22,6 @@
 | `downloadNormalizedButton` | Y | Y | Y | ✅ 일치 |
 | `downloadLinkedZipButton` | Y | Y | Y | ✅ 일치 |
 | `exportPresetSelect` | Y | Y | Y | ✅ 일치 |
-| `exportScaleSelect` | Y | Y | Y | ✅ 일치 |
-| `exportJpgQualityInput` | Y | Y | Y | ✅ 일치 |
 | `exportPngButton` | Y | Y | Y | ✅ 일치 |
 | `exportJpgButton` | Y | Y | Y | ✅ 일치 |
 | `exportSectionsZipButton` | Y | Y | Y | ✅ 일치 |

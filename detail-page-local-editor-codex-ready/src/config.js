@@ -1,5 +1,5 @@
-export const APP_TITLE = '상세페이지 웹앱 로컬 에디터 · 6단계';
-export const APP_VERSION = 'phase6-local-2026-04-02';
+export const APP_TITLE = '상세페이지 웹앱 로컬 에디터 · 8단계';
+export const APP_VERSION = 'phase8-local-2026-04-03';
 export const EXPLICIT_SLOT_SELECTOR = '[data-image-slot], .image-slot, .drop-slot';
 export const PLACEHOLDER_TEXT_RE = /(\[[^\]]*(이미지|영상)[^\]]*\]|이미지\s*삽입부|삽입부|드래그\s*이미지|image\s*slot|image\s*area|누끼|클로즈업|착용컷|연출컷|상세컷|대표\s*이미지|메인\s*이미지|썸네일|thumbnail|visual|hero|shot)/i;
 export const STRONG_SLOT_CLASS_RE = /(^|\s)(media-shell|hero-shot|hero-visual|visual|opt-thumb|thumb|thumb-box|thumb-item|image-slot|drop-slot|image-wrap|photo-wrap|poster|cover|ph|c-box|cta-char|frame|hero-image|hero-media)(\s|$)/i;

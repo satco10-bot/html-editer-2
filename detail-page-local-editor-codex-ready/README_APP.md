@@ -28,6 +28,14 @@
 - File System Access API가 필수 경로가 되면 안 됨
 - `uploaded:` / 상대경로 / placeholder 슬롯 감지를 깨뜨리면 안 됨
 
+### 금지 API/의존 목록 (file gate 체크리스트)
+- `file://` 직접 실행 환경에서 **필수 경로**로 아래 API를 요구하면 안 됩니다.
+  - `fetch()` (초기 부팅에서 네트워크 의존 금지)
+  - `showOpenFilePicker`
+  - `showSaveFilePicker`
+  - `showDirectoryPicker`
+- 브라우저 보안 정책(secure context) 때문에 위 API는 환경별로 동작이 달라질 수 있으므로, 현재 앱은 `input[type=file]` + Blob URL 기반 플로우를 기본으로 유지합니다.
+
 ### 기능 상태 요약
 - Phase 6 기반 기능 유지
   - 슬롯 자동 감지, 이미지 교체, 텍스트 직접 편집, 정렬/간격, undo/redo, autosave
