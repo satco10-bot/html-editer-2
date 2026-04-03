@@ -72,7 +72,17 @@
         <button class="workflow-tab" data-workflow-step="save" role="tab" aria-selected="false">3) 저장/출력</button>
       </div>
       <p id="workflowGuideLine" class="workflow-guide">HTML 파일이나 폴더를 먼저 불러오세요.</p>
-      <button id="beginnerModeToggle" class="button button--secondary" type="button" aria-pressed="false">초보 모드: OFF</button>
+      <details id="viewMenu" class="topbar-view-menu topbar__center" data-workflow-panel="edit save">
+        <summary>보기(View)</summary>
+        <div class="topbar-view-menu__items">
+          <button id="viewSnapToggleButton" class="button button--ghost button--small" type="button" aria-pressed="true">스냅: ON</button>
+          <button id="viewGuideToggleButton" class="button button--ghost button--small" type="button" aria-pressed="true">가이드: ON</button>
+          <button id="viewRulerToggleButton" class="button button--ghost button--small" type="button" aria-pressed="false">눈금자: OFF</button>
+          <button id="focusModeButton" class="button button--ghost button--small" type="button">캔버스만 보기</button>
+          <button id="toggleRightSidebarButton" class="button button--ghost button--small" type="button">레이어 표시</button>
+          <button id="beginnerModeToggle" class="button button--secondary button--small" type="button" aria-pressed="false">초보 모드: OFF</button>
+        </div>
+      </details>
 
       <div class="topbar__group" data-workflow-panel="load">
         <span class="topbar__label">열기</span>
@@ -98,8 +108,6 @@
         <button id="redoButton" class="button button--ghost" data-beginner-advanced>다시하기</button>
         <button id="restoreAutosaveButton" class="button button--ghost" data-beginner-advanced>자동저장 복구</button>
         <button id="toggleLeftSidebarButton" class="button button--ghost" data-beginner-advanced>왼쪽 패널</button>
-        <button id="toggleRightSidebarButton" class="button button--ghost" data-beginner-advanced>오른쪽 패널</button>
-        <button id="focusModeButton" class="button button--ghost" data-beginner-advanced>캔버스 집중</button>
       </div>
 
       <details id="advancedTopbarPanel" class="topbar-advanced" data-workflow-panel="edit save" data-beginner-advanced>
@@ -148,12 +156,12 @@
 
     <aside id="leftSidebar" class="sidebar sidebar--left">
       <div class="sidebar-tabs">
-        <button class="sidebar-tab is-active" data-sidebar-tab="left-import">가져오기</button>
-        <button class="sidebar-tab" data-sidebar-tab="left-code">코드</button>
+        <button class="sidebar-tab is-active" data-sidebar-tab="left-upload">업로드</button>
+        <button class="sidebar-tab" data-sidebar-tab="left-advanced">고급</button>
         <button class="sidebar-tab" data-sidebar-tab="left-project">프로젝트</button>
       </div>
 
-      <section class="panel sidebar-panel is-active" data-sidebar-panel="left-import">
+      <section class="panel sidebar-panel is-active" data-sidebar-panel="left-upload">
         <div class="panel__header">
           <h2>가져오기</h2>
           <button id="applyPasteButton" class="button button--secondary button--small">붙여넣기 적용</button>
@@ -168,7 +176,7 @@
         <p class="hint">실사용 기준에선 폴더 import가 가장 안정적입니다. 상대경로와 <code>uploaded:</code> 매핑을 함께 잡습니다.</p>
       </section>
 
-      <section class="panel sidebar-panel" data-sidebar-panel="left-code">
+      <section class="panel sidebar-panel" data-sidebar-panel="left-advanced">
         <div class="panel__header panel__header--split">
           <h2>코드 워크벤치</h2>
           <div class="button-row button-row--compact">
@@ -192,6 +200,29 @@
         <pre id="originalCodeView" class="code-view code-view--hidden"></pre>
         <pre id="jsonReportView" class="code-view code-view--hidden"></pre>
         <p class="hint">현재 리부트 셸에서는 코드 편집과 적용을 다시 붙였습니다. 검색은 다음 일치 위치로 이동합니다.</p>
+        <div class="panel-divider"></div>
+        <div class="panel__header">
+          <h2>근접 후보 진단</h2>
+        </div>
+        <div id="selectionInspector"></div>
+        <div class="panel-divider"></div>
+        <div class="panel__header">
+          <h2>정규화 진단</h2>
+        </div>
+        <div id="normalizeStats" class="stat-stack"></div>
+        <div class="panel-divider"></div>
+        <div class="panel__header panel__header--split">
+          <h2>자산 레지스트리</h2>
+          <input id="assetFilterInput" class="asset-filter" type="search" placeholder="경로 / 스킴 / 상태 검색" />
+        </div>
+        <div id="assetTableWrap" class="asset-table-wrap"></div>
+        <div class="panel-divider"></div>
+        <div class="panel__header">
+          <h2>리포트</h2>
+        </div>
+        <div class="button-grid">
+          <button id="downloadReportButton" class="button button--ghost">리포트 JSON</button>
+        </div>
       </section>
 
       <section class="panel sidebar-panel" data-sidebar-panel="left-project">
@@ -333,20 +364,9 @@
         <button class="sidebar-tab" data-sidebar-tab="right-text">텍스트</button>
         <button class="sidebar-tab" data-sidebar-tab="right-arrange">정렬/간격</button>
         <button class="sidebar-tab" data-sidebar-tab="right-layers">레이어</button>
-        <button class="sidebar-tab" data-sidebar-tab="right-assets">자산/출력</button>
       </div>
 
       <section class="panel sidebar-panel is-active" data-sidebar-panel="right-inspect">
-        <div class="panel__header">
-          <h2>선택 / 슬롯 진단</h2>
-        </div>
-        <div id="selectionInspector"></div>
-        <div class="panel-divider"></div>
-        <div class="panel__header">
-          <h2>정규화 진단</h2>
-        </div>
-        <div id="normalizeStats" class="stat-stack"></div>
-        <div class="panel-divider"></div>
         <div class="panel__header panel__header--split">
           <h2>출력 전 검수</h2>
           <button id="preflightRefreshButton" class="button button--ghost button--small">다시 검사</button>
@@ -516,20 +536,6 @@
         <div id="slotList" class="slot-list"></div>
       </section>
 
-      <section class="panel sidebar-panel" data-sidebar-panel="right-assets">
-        <div class="panel__header panel__header--split">
-          <h2>자산 레지스트리</h2>
-          <input id="assetFilterInput" class="asset-filter" type="search" placeholder="경로 / 스킴 / 상태 검색" />
-        </div>
-        <div id="assetTableWrap" class="asset-table-wrap"></div>
-        <div class="panel-divider"></div>
-        <div class="panel__header">
-          <h2>내보내기 / 리포트</h2>
-        </div>
-        <div class="button-grid">
-          <button id="downloadReportButton" class="button button--ghost">리포트 JSON</button>
-        </div>
-      </section>
     </aside>
   </div>
 
