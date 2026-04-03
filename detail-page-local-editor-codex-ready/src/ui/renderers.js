@@ -105,6 +105,29 @@ export function renderSelectionInspector(container, editorMeta) {
   `;
 }
 
+export function renderInspectorControls(container, editorMeta, inspectorType = '') {
+  if (!container) return;
+  const summaryNode = container.querySelector('[data-inspector-summary]');
+  const emptyNode = container.querySelector('[data-inspector-empty]');
+  const sections = Array.from(container.querySelectorAll('[data-inspector-type]'));
+  const selectionCount = Number(editorMeta?.selectionCount || 0);
+  const selectedType = String(editorMeta?.selected?.type || '-');
+
+  if (summaryNode) {
+    summaryNode.textContent = selectionCount > 0
+      ? `선택 ${formatNumber(selectionCount)}개 · 타입 ${selectedType}`
+      : '선택된 요소가 없습니다.';
+  }
+
+  const hasActiveType = selectionCount > 0 && inspectorType;
+  if (emptyNode) emptyNode.hidden = hasActiveType;
+  for (const section of sections) {
+    const active = hasActiveType && section.dataset.inspectorType === inspectorType;
+    section.hidden = !active;
+    section.classList.toggle('is-active', active);
+  }
+}
+
 export function renderSlotList(container, editorMeta) {
   if (!container) return;
   if (!editorMeta?.slots?.length) {

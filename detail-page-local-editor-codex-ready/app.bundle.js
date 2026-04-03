@@ -1300,8 +1300,9 @@ function createProjectStore() {
     notify();
   }
 
-  function setStatus(text) {
+  function setStatus(text, { preserveLastError = false } = {}) {
     state.statusText = String(text || '대기 중');
+    if (!preserveLastError) state.lastError = '';
     notify();
   }
 
@@ -4506,6 +4507,28 @@ function renderSelectionInspector(container, editorMeta) {
     </article>
   `;
 }
+function renderInspectorControls(container, editorMeta, inspectorType = '') {
+  if (!container) return;
+  const summaryNode = container.querySelector('[data-inspector-summary]');
+  const emptyNode = container.querySelector('[data-inspector-empty]');
+  const sections = Array.from(container.querySelectorAll('[data-inspector-type]'));
+  const selectionCount = Number(editorMeta?.selectionCount || 0);
+  const selectedType = String(editorMeta?.selected?.type || '-');
+
+  if (summaryNode) {
+    summaryNode.textContent = selectionCount > 0
+      ? `선택 ${formatNumber(selectionCount)}개 · 타입 ${selectedType}`
+      : '선택된 요소가 없습니다.';
+  }
+
+  const hasActiveType = selectionCount > 0 && inspectorType;
+  if (emptyNode) emptyNode.hidden = hasActiveType;
+  for (const section of sections) {
+    const active = hasActiveType && section.dataset.inspectorType === inspectorType;
+    section.hidden = !active;
+    section.classList.toggle('is-active', active);
+  }
+}
 function renderSlotList(container, editorMeta) {
   if (!container) return;
   if (!editorMeta?.slots?.length) {
@@ -4813,6 +4836,7 @@ const elements = {
   layerFilterInput: document.getElementById('layerFilterInput'),
   preflightContainer: document.getElementById('preflightContainer'),
   preflightRefreshButton: document.getElementById('preflightRefreshButton'),
+  inspectorControls: document.getElementById('inspectorControls'),
   assetTableWrap: document.getElementById('assetTableWrap'),
   assetFilterInput: document.getElementById('assetFilterInput'),
   previewFrame: document.getElementById('previewFrame'),
@@ -5042,8 +5066,8 @@ function selectionExportBackground() {
   return raw === 'opaque' ? 'opaque' : 'transparent';
 }
 
-function setStatus(text) {
-  store.setStatus(text);
+function setStatus(text, options = undefined) {
+  store.setStatus(text, options);
 }
 
 function extractErrorMessage(error) {
@@ -5057,7 +5081,7 @@ function setStatusWithError(prefix, error, { logTag = 'APP_ERROR' } = {}) {
   const detail = extractErrorMessage(error);
   if (logTag) console.error(`[${logTag}]`, error);
   store.setLastError(detail);
-  setStatus(detail ? `${prefix} (${detail})` : prefix);
+  setStatus(prefix, { preserveLastError: true });
 }
 
 function isTypingInputTarget(target) {
@@ -5769,6 +5793,18 @@ function applyGeometryFromInputs() {
   return activeEditor.applyGeometryPatch(patch, { coordinateSpace: geometryCoordMode });
 }
 
+function resolveInspectorControlType(editorMeta) {
+  const selectionCount = Number(editorMeta?.selectionCount || 0);
+  if (selectionCount > 1) return 'multi';
+  if (selectionCount < 1) return '';
+  const selectedType = String(editorMeta?.selected?.type || '').toLowerCase();
+  if (selectedType.includes('image') || selectedType.includes('slot')) return 'image';
+  if (selectedType.includes('text')) return 'text';
+  if (selectedType.includes('box') || selectedType.includes('shape')) return 'box';
+  if (selectedType.includes('section') || selectedType.includes('group') || selectedType.includes('container')) return 'section';
+  return 'section';
+}
+
 function renderShell(state) {
   renderViewButtons(state.currentView);
   renderSelectionModeButtons(state.selectionMode);
@@ -5777,6 +5813,7 @@ function renderShell(state) {
   renderNormalizeStats(elements.normalizeStats, state.project);
   renderPreflight(elements.preflightContainer, state.editorMeta);
   renderSelectionInspector(elements.selectionInspector, state.editorMeta);
+  renderInspectorControls(elements.inspectorControls, state.editorMeta, resolveInspectorControlType(state.editorMeta));
   renderSlotList(elements.slotList, state.editorMeta);
   renderLayerTree(elements.layerTree, state.editorMeta, elements.layerFilterInput.value);
   renderProjectMeta(elements.projectMeta, state.project, {
@@ -5933,11 +5970,14 @@ function loadFixture(fixtureId) {
 
 async function openHtmlFile(file) {
   if (!file) return;
+  const requestId = importRequestSequence += 1;
   try {
     const html = await file.text();
+    if (requestId !== importRequestSequence) return;
     const fileIndex = createImportFileIndex([file], 'html-file');
     pendingMountOptions = { snapshot: null, preserveHistory: false };
     const project = normalizeProject({ html, sourceName: file.name, sourceType: 'html-file', fileIndex, htmlEntryPath: file.name });
+    if (requestId !== importRequestSequence) return;
     store.setProject(project);
     setStatus(`HTML 파일 ${file.name}을 불러왔습니다. 미해결 자산 ${project.summary.assetsUnresolved}개입니다.`);
   } catch (error) {
@@ -6498,8 +6538,11 @@ elements.applyAdvancedSettingsButton?.addEventListener('click', () => {
 
 elements.htmlFileInput.addEventListener('change', async (event) => {
   const [file] = event.target.files || [];
-  await openHtmlFile(file);
-  event.target.value = '';
+  try {
+    await openHtmlFile(file);
+  } finally {
+    event.target.value = '';
+  }
 });
 
 elements.folderInput.addEventListener('change', async (event) => {
@@ -6741,7 +6784,7 @@ elements.beginnerTutorialNextButton?.addEventListener('click', () => {
 elements.beginnerTutorialCloseButton?.addEventListener('click', closeBeginnerTutorial);
 
 setSidebarTab('left-import');
-setSidebarTab('right-inspect');
+setSidebarTab('right-inspector');
 setCodeSource('edited', { preserveDraft: false });
 syncSaveFormatUi();
 restorePanelLayoutState();
