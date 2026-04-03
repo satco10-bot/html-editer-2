@@ -5012,6 +5012,7 @@ let lastSaveConversion = null;
 let advancedSettingsDirty = false;
 let lastFocusedBeforeShortcutHelp = null;
 let lastFocusedBeforeDownloadModal = null;
+let importRequestSequence = 0;
 const zoomState = { mode: 'fit', value: 1 };
 const viewFeatureFlags = {
   snap: true,
@@ -5024,6 +5025,7 @@ const WORKFLOW_STEP_GUIDES = Object.freeze({
   edit: '요소를 클릭한 뒤 드래그하세요.',
   save: `결과를 확인한 뒤 [${OPEN_DOWNLOAD_MODAL_BUTTON_LABEL}] 버튼을 눌러 실행하세요.`,
 });
+const SHORTCUT_TOOLTIP_MAP = Object.freeze({});
 const BOOT_LOCAL_POLICY = Object.freeze({
   requiresStartupFetch: false,
   requiresFileSystemAccessApi: false,
@@ -5061,6 +5063,8 @@ const advancedSettings = {
   selectionExportPadding: 16,
   selectionExportBackground: 'transparent',
 };
+
+const EXPORT_SCALE_OPTIONS = Object.freeze([1, 2, 3]);
 
 const elements = {
   fixtureSelect: document.getElementById('fixtureSelect'),
@@ -6228,9 +6232,13 @@ function renderShell(state) {
   renderSelectionModeButtons(state.selectionMode);
   renderSummaryCards(elements.summaryCards, state.project, state.editorMeta);
   renderIssueList(elements.issueList, state.project);
-  if (elements.normalizeStats) renderNormalizeStats(elements.normalizeStats, state.project);
+  if (elements.normalizeStats) {
+    renderNormalizeStats(elements.normalizeStats, state.project);
+  }
   renderPreflight(elements.preflightContainer, state.editorMeta);
-  if (elements.selectionInspector) renderSelectionInspector(elements.selectionInspector, state.editorMeta);
+  if (elements.selectionInspector) {
+    renderSelectionInspector(elements.selectionInspector, state.editorMeta);
+  }
   renderSectionFilmstrip(elements.sectionList, state.editorMeta);
   renderSlotList(elements.slotList, state.editorMeta);
   renderUploadLists(state);
@@ -6247,7 +6255,9 @@ function renderShell(state) {
     exportPresetLabel: currentExportPreset().label,
     preflightBlockingErrors: state.editorMeta?.preflight?.blockingErrors || 0,
   });
-  if (elements.assetTableWrap) renderAssetTable(elements.assetTableWrap, state.project, elements.assetFilterInput?.value || '');
+  if (elements.assetTableWrap) {
+    renderAssetTable(elements.assetTableWrap, state.project, elements.assetFilterInput?.value || '');
+  }
   syncTextStyleControls(state.editorMeta);
   syncBatchSummary(state.editorMeta);
   syncGeometryControls();
@@ -6789,6 +6799,17 @@ function safeBoot() {
 safeBoot();
 
 function bindEvents() {
+  const logMissingElement = (elementName, context) => {
+    console.warn(`[${context}] 필수 요소 누락: #${elementName}`);
+  };
+  const bindElementEvent = (elementName, eventName, handler, options) => {
+    const target = elements[elementName];
+    if (!target) {
+      logMissingElement(elementName, 'bindEvents');
+      return;
+    }
+    target.addEventListener(eventName, handler, options);
+  };
   const requiredElementNames = [
     'openHtmlButton',
     'openFolderButton',
@@ -6818,7 +6839,7 @@ function bindEvents() {
   ];
   for (const elementName of requiredElementNames) {
     if (!elements[elementName]) {
-      console.warn(`[bindEvents] 필수 요소 누락: #${elementName}`);
+      logMissingElement(elementName, 'bindEvents');
     }
   }
 
@@ -7013,7 +7034,7 @@ elements.saveFormatSelect?.addEventListener('change', () => {
   syncSaveFormatUi();
   setStatus(`저장 포맷을 ${currentSaveFormat}로 변경했습니다.`);
 });
-elements.downloadReportButton?.addEventListener('click', downloadReportJson);
+bindElementEvent('downloadReportButton', 'click', downloadReportJson);
 elements.exportPresetSelect?.addEventListener('change', () => {
   currentExportPresetId = elements.exportPresetSelect.value || 'default';
   syncExportPresetUi({ forceScale: true });
@@ -7041,7 +7062,8 @@ elements.applyAdvancedSettingsButton?.addEventListener('click', () => {
 });
 
 elements.htmlFileInput?.addEventListener('change', async (event) => {
-  const [file] = event.target.files || [];
+  const fileList = event.target?.files;
+  const file = fileList && fileList.length > 0 ? fileList[0] : null;
   try {
     await openHtmlFile(file);
   } finally {
@@ -7073,7 +7095,13 @@ elements.replaceImageInput?.addEventListener('change', async (event) => {
   }
 });
 
-elements.assetFilterInput?.addEventListener('input', () => renderAssetTable(elements.assetTableWrap, store.getState().project, elements.assetFilterInput?.value || ''));
+bindElementEvent('assetFilterInput', 'input', () => {
+  if (!elements.assetTableWrap) {
+    logMissingElement('assetTableWrap', 'assetFilterInput');
+    return;
+  }
+  renderAssetTable(elements.assetTableWrap, store.getState().project, elements.assetFilterInput?.value || '');
+});
 elements.layerFilterInput?.addEventListener('input', () => renderLayerTree(elements.layerTree, store.getState().editorMeta, elements.layerFilterInput?.value || ''));
 elements.slotList?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-slot-uid]');

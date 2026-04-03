@@ -49,6 +49,20 @@ node --check app.bundle.js
 python3 scripts/validate_phase8.py
 ```
 
+## 초보자용: HTML 업로드 → 이미지 적용 → PNG 저장 테스트
+아래 한 줄로 핵심 워크플로우 자동 점검을 실행할 수 있습니다.
+```bash
+npm run test:workflow
+```
+
+처음 실행 전에 의존성(Playwright)을 설치해야 합니다.
+```bash
+python3 scripts/install_regression_dependencies.py
+python3 -m playwright install chromium
+```
+
+만약 실패하면, 테스트 스크립트가 JSON 형태로 `how_to_fix` 항목에 다음 실행 순서를 다시 안내합니다.
+
 ### `build_local_bundle` 실행 기준(입력/출력)
 - 입력(Entry): `src/main.js` (내부에서 `src/` 상대 import를 따라가며 하나로 합칩니다)
 - 출력(Output): `app.bundle.js` (브라우저가 `index.html`에서 직접 읽는 단일 번들 파일)
