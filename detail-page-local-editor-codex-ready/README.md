@@ -52,7 +52,7 @@ python3 scripts/validate_phase6.py
 ## Phase8 파이프라인 실행 가이드 (처음 실행도 바로 동작)
 1. 먼저 아래 **한 줄**만 실행합니다.
    ```bash
-   python3 -m pip install -r requirements-regression.txt
+   python3 scripts/install_regression_dependencies.py
    ```
 2. 이후 로컬/CI 모두 동일하게 아래 명령을 실행합니다.
    ```bash
@@ -60,11 +60,17 @@ python3 scripts/validate_phase6.py
    ```
 3. 파이프라인은 시작 전에 dependency precheck를 먼저 수행합니다.
    - 누락 패키지가 있으면 목록을 명확히 출력합니다.
-   - 같은 화면에 설치 명령 1줄(`python3 -m pip install -r requirements-regression.txt`)만 다시 안내합니다.
+   - 같은 화면에 설치/재시도 명령 2줄을 즉시 안내합니다.
+     - `python3 scripts/install_regression_dependencies.py`
+     - `python3 scripts/run_phase8_regression_pipeline.py`
 4. 결과 JSON/대시보드는 **dependency 실패**와 **scenario 실패**를 분리 기록합니다.
    - `dependency_precheck.status`: 의존성 상태
    - `scenario_execution.status`: 시나리오 실행/미실행 상태
-5. F05 gate 표시는 다음처럼 구분됩니다.
+   - `summary.step_fail` / `summary.step_not_run`: 실패와 미실행을 분리 집계
+5. 결과 JSON에는 환경 정보도 함께 저장됩니다.
+   - `environment.python_version`
+   - `environment.packages` (beautifulsoup4/lxml/playwright)
+6. F05 gate 표시는 다음처럼 구분됩니다.
    - `passed`: 통과
    - `failed`: 실행은 되었지만 실패
    - `not_run`: 의존성 문제 등으로 미실행
