@@ -1,11 +1,11 @@
 {
   "summary": {
     "ok": false,
-    "check_count": 165,
-    "passed": 164,
-    "failed": 1,
-    "bundle_bytes": 351716,
-    "bundle_sha256": "ccab3bb0c8c06e842d60d83433ade087139b41b513239198e667c016ac2b346e",
+    "check_count": 167,
+    "passed": 165,
+    "failed": 2,
+    "bundle_bytes": 353055,
+    "bundle_sha256": "efafc072aaf52c5ab5e53ce5e499af81a45d1664d3ff6383145afb109c0a494a",
     "browser_smoke_status": "unavailable",
     "failure_type": "dependency_missing"
   },
@@ -171,14 +171,24 @@
       "detail": "exportPresetSelect"
     },
     {
-      "name": "index_has_exportScaleSelect",
+      "name": "index_has_exportScaleSelectMain",
       "ok": true,
-      "detail": "exportScaleSelect"
+      "detail": "exportScaleSelectMain"
     },
     {
-      "name": "index_has_exportJpgQualityInput",
+      "name": "index_has_exportScaleSelectSelection",
       "ok": true,
-      "detail": "exportJpgQualityInput"
+      "detail": "exportScaleSelectSelection"
+    },
+    {
+      "name": "index_has_exportJpgQualityInputMain",
+      "ok": true,
+      "detail": "exportJpgQualityInputMain"
+    },
+    {
+      "name": "index_has_exportJpgQualityInputSelection",
+      "ok": true,
+      "detail": "exportJpgQualityInputSelection"
     },
     {
       "name": "index_has_exportPngButton",
@@ -573,7 +583,7 @@
     {
       "name": "index_has_jpg_quality_input",
       "ok": true,
-      "detail": "JPG quality input should exist"
+      "detail": "JPG quality input should exist in both topbar/selection panels"
     },
     {
       "name": "frame_has_marquee_runtime",
@@ -602,7 +612,7 @@
     },
     {
       "name": "frame_layer_index_command_unified",
-      "ok": true,
+      "ok": false,
       "detail": "[v2_applyLayerIndexCommand+front_back_method_exposure] z-order should use layer-index command family"
     },
     {
