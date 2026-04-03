@@ -4,8 +4,8 @@
     "check_count": 166,
     "passed": 158,
     "failed": 8,
-    "bundle_bytes": 343333,
-    "bundle_sha256": "e9dc71289e2181d119a4f71b870409b759875308b577f4542ae12de0a23204d5",
+    "bundle_bytes": 341421,
+    "bundle_sha256": "313994127b5cc902d464c39c38db5f0b421f487432f4d21a805730497a5bf37d",
     "browser_smoke_status": "unavailable",
     "failure_type": "dependency_missing"
   },

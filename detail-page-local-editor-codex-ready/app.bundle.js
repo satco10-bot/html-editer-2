@@ -4660,6 +4660,9 @@ const elements = {
   downloadEditedButton: document.getElementById('downloadEditedButton'),
   saveFormatSelect: document.getElementById('saveFormatSelect'),
   saveFormatStatus: document.getElementById('saveFormatStatus'),
+  saveFormatGuide: document.getElementById('saveFormatGuide'),
+  saveFormatPreview: document.getElementById('saveFormatPreview'),
+  saveMetaSummary: document.getElementById('saveMetaSummary'),
   downloadNormalizedButton: document.getElementById('downloadNormalizedButton'),
   downloadLinkedZipButton: document.getElementById('downloadLinkedZipButton'),
   exportPngButton: document.getElementById('exportPngButton'),
@@ -4938,6 +4941,42 @@ function normalizeSaveFormat(value) {
   return value === 'embedded' ? 'embedded' : 'linked';
 }
 
+function formatByteSize(bytes) {
+  const safeBytes = Number(bytes);
+  if (!Number.isFinite(safeBytes) || safeBytes <= 0) return '0 B';
+  if (safeBytes < 1024) return `${Math.round(safeBytes)} B`;
+  if (safeBytes < 1024 * 1024) return `${(safeBytes / 1024).toFixed(1)} KB`;
+  return `${(safeBytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function estimateSavePreview(project, format) {
+  const sourceHtml = String(activeEditor?.getEditedHtml?.({ persistDetectedSlots: true }) || project?.normalizedHtml || '');
+  const htmlBytes = new TextEncoder().encode(sourceHtml).length;
+  const resolvedAssets = Number(project?.summary?.assetsResolved || 0);
+  const unresolvedAssets = Number(project?.summary?.assetsUnresolved || 0);
+  if (format === 'embedded') {
+    return {
+      fileCountLabel: '1개 (HTML 단일 파일)',
+      sizeLabel: `예상 용량: ${formatByteSize(Math.round(htmlBytes * 1.3))} 내외`,
+      pathPolicy: '경로 유지: 아니요 (이미지 data URL 내장)',
+    };
+  }
+  return {
+    fileCountLabel: `${1 + resolvedAssets}개 내외 (HTML 1 + 자산 ${resolvedAssets})`,
+    sizeLabel: `예상 용량: ${formatByteSize(htmlBytes)} + 이미지 원본 합계`,
+    pathPolicy: unresolvedAssets > 0 ? `경로 유지: 예 (단, 미해결 ${unresolvedAssets}개 경고 가능)` : '경로 유지: 예',
+  };
+}
+
+function buildSaveMetaSummary() {
+  if (!lastSaveConversion) return `리포트 save 메타: selectedFormat=${currentSaveFormat}, lastConversion=아직 없음`;
+  const convertedCount = Number(lastSaveConversion.convertedDataUrlCount || 0);
+  const generatedCount = Number(lastSaveConversion.generatedAssetCount || 0);
+  const warningCount = Number(lastSaveConversion.brokenLinkedPathWarnings?.length || 0);
+  const savedAt = lastSaveConversion.savedAt ? new Date(lastSaveConversion.savedAt).toLocaleString() : '시간 없음';
+  return `리포트 save 메타: selectedFormat=${currentSaveFormat}, lastConversion=${lastSaveConversion.format || '-'} · dataURL→file ${convertedCount} · 생성자산 ${generatedCount} · 경고 ${warningCount} · ${savedAt}`;
+}
+
 function syncSaveFormatUi() {
   currentSaveFormat = normalizeSaveFormat(elements.saveFormatSelect?.value || currentSaveFormat);
   if (elements.saveFormatSelect && elements.saveFormatSelect.value !== currentSaveFormat) {
@@ -4946,6 +4985,19 @@ function syncSaveFormatUi() {
   if (elements.saveFormatStatus) {
     const modeLabel = currentSaveFormat === 'embedded' ? 'embedded (data URL 내장)' : 'linked (경로 유지)';
     elements.saveFormatStatus.textContent = `현재 저장 포맷: ${modeLabel}`;
+  }
+  if (elements.saveFormatGuide) {
+    const purposeGuide = currentSaveFormat === 'embedded'
+      ? '추천 안내: 1파일 전달/메신저 공유는 embedded가 편합니다.'
+      : '추천 안내: 내 PC에서 재편집(이미지 교체 포함)할 땐 linked가 안전합니다.';
+    elements.saveFormatGuide.textContent = purposeGuide;
+  }
+  if (elements.saveFormatPreview) {
+    const preview = estimateSavePreview(store.getState().project, currentSaveFormat);
+    elements.saveFormatPreview.textContent = `저장 결과 미리보기 → 파일 수: ${preview.fileCountLabel} · ${preview.sizeLabel} · ${preview.pathPolicy}`;
+  }
+  if (elements.saveMetaSummary) {
+    elements.saveMetaSummary.textContent = buildSaveMetaSummary();
   }
 }
 
@@ -5686,7 +5738,7 @@ async function downloadEditedHtml() {
   if (!activeEditor) {
     const fileName = `${projectBaseName(project)}__edited_working.html`;
     downloadTextFile(fileName, project.normalizedHtml, 'text/html;charset=utf-8');
-    setStatus(`편집 HTML을 저장했습니다: ${fileName}`);
+    setStatus(`편집 HTML을 저장했습니다: ${fileName} · 다음: 이 파일을 다시 열 때는 상단 "HTML 열기"를 누른 뒤 방금 저장한 파일을 선택하세요.`);
     return;
   }
   await downloadByFormat(currentSaveFormat);
@@ -5738,7 +5790,8 @@ async function downloadByFormat(format, { forceZip = false } = {}) {
     const entry = result.entries[0];
     const text = new TextDecoder().decode(entry.data);
     downloadTextFile(entry.name, text, 'text/html;charset=utf-8');
-    setStatus(`embedded HTML을 저장했습니다: ${entry.name} (blob→data ${result.conversion?.portableRewrite?.blobConvertedToDataUrl || 0}개)`);
+    setStatus(`embedded HTML을 저장했습니다: ${entry.name} (blob→data ${result.conversion?.portableRewrite?.blobConvertedToDataUrl || 0}개) · 다음: 파일을 더블클릭하거나, 상단 "HTML 열기"로 재오픈하세요.`);
+    syncSaveFormatUi();
     return;
   }
 
@@ -5748,7 +5801,8 @@ async function downloadByFormat(format, { forceZip = false } = {}) {
   downloadBlob(fileName, zipBlob);
   const warningCount = Number(result.conversion?.brokenLinkedPathWarnings?.length || 0);
   const warningText = warningCount > 0 ? ` · 경고 ${warningCount}건(BROKEN_LINKED_PATH)` : '';
-  setStatus(`${saveFormat} 패키지를 저장했습니다: ${fileName}${warningText}`);
+  setStatus(`${saveFormat} 패키지를 저장했습니다: ${fileName}${warningText} · 다음: ZIP 압축을 풀고 HTML + assets 폴더를 같은 위치에 둔 뒤 HTML을 다시 여세요.`);
+  syncSaveFormatUi();
 }
 
 async function exportFullPng() {
