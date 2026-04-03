@@ -141,14 +141,15 @@ export function renderLayerTree(container, editorMeta, filterText = '') {
     return;
   }
   container.innerHTML = rows.map((node) => `
-    <div class="layer-item ${selectedUids.has(node.uid) ? 'is-active' : ''} ${node.hidden ? 'is-hidden' : ''} ${node.locked ? 'is-locked' : ''}" data-layer-uid="${escapeHtml(node.uid)}" style="--depth:${Math.max(0, Number(node.depth || 0))}" role="button" tabindex="0">
+    <div class="layer-item ${(selectedUids.has(node.uid) || node.selectedViaGroup) ? 'is-active' : ''} ${node.hidden ? 'is-hidden' : ''} ${node.locked ? 'is-locked' : ''} ${node.type === 'group' ? 'is-group' : ''}" data-layer-uid="${escapeHtml(node.uid)}" style="--depth:${Math.max(0, Number(node.depth || 0))}" role="button" tabindex="0">
       <span class="layer-item__indent" aria-hidden="true"></span>
       <span class="layer-item__body">
-        <strong>${escapeHtml(truncate(node.label || node.uid, 40))}</strong>
+        <strong>${node.type === 'group' ? '🗂️ ' : ''}${escapeHtml(truncate(node.label || node.uid, 40))}</strong>
         <span class="layer-item__meta">${escapeHtml(node.type)} · ${escapeHtml(node.tagName || '')}${node.childCount ? ` · child ${escapeHtml(String(node.childCount))}` : ''}</span>
         <span class="layer-item__status">
           ${node.hidden ? '<span class="status-chip" data-status="hidden">숨김</span>' : ''}
           ${node.locked ? '<span class="status-chip" data-status="locked">잠금</span>' : ''}
+          ${node.selectedViaGroup ? '<span class="status-chip" data-status="selected">그룹선택</span>' : ''}
         </span>
       </span>
       <span class="layer-item__actions">
