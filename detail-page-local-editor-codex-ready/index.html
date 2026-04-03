@@ -254,17 +254,41 @@
         <div id="previewViewport" class="preview-viewport">
           <div id="canvasContextBar" class="canvas-context-bar" hidden>
             <div class="canvas-context-bar__actions">
-              <button class="button button--ghost button--small" data-canvas-action="duplicate" title="복제 (Ctrl/Cmd+D)">복제</button>
-              <button class="button button--warn button--small" data-canvas-action="delete" title="삭제 (Delete)">삭제</button>
-              <button class="button button--ghost button--small" data-canvas-action="bring-forward">앞으로</button>
-              <button class="button button--ghost button--small" data-canvas-action="send-backward">뒤로</button>
-              <button class="button button--ghost button--small" data-canvas-action="same-width">너비 맞춤</button>
-              <button class="button button--ghost button--small" data-canvas-action="same-height">높이 맞춤</button>
-              <button class="button button--ghost button--small" data-canvas-action="same-size">크기 맞춤</button>
-              <button class="button button--ghost button--small" data-canvas-action="align-left">좌정렬</button>
-              <button class="button button--ghost button--small" data-canvas-action="align-center">가운데</button>
-              <button class="button button--ghost button--small" data-canvas-action="align-right">우정렬</button>
+              <button class="button button--ghost button--small" data-canvas-action="duplicate" data-canvas-scope="common">복제</button>
+              <button class="button button--warn button--small" data-canvas-action="delete" data-canvas-scope="common">삭제</button>
+              <button class="button button--ghost button--small" data-canvas-action="bring-forward" data-canvas-scope="common">앞으로</button>
+              <button class="button button--ghost button--small" data-canvas-action="send-backward" data-canvas-scope="common">뒤로</button>
+
+              <button class="button button--ghost button--small" data-canvas-action="image-cover" data-canvas-scope="image">cover</button>
+              <button class="button button--ghost button--small" data-canvas-action="image-contain" data-canvas-scope="image">contain</button>
+              <button class="button button--ghost button--small" data-canvas-action="image-nudge-left" data-canvas-scope="image">← nudge</button>
+              <button class="button button--ghost button--small" data-canvas-action="image-nudge-up" data-canvas-scope="image">↑ nudge</button>
+              <button class="button button--ghost button--small" data-canvas-action="image-nudge-down" data-canvas-scope="image">↓ nudge</button>
+              <button class="button button--ghost button--small" data-canvas-action="image-nudge-right" data-canvas-scope="image">→ nudge</button>
+
+              <button class="button button--secondary button--small" data-canvas-action="text-edit" data-canvas-scope="text">텍스트 편집</button>
+              <button class="button button--ghost button--small" data-canvas-action="align-left" data-canvas-scope="text">좌정렬</button>
+              <button class="button button--ghost button--small" data-canvas-action="align-center" data-canvas-scope="text">가운데</button>
+              <button class="button button--ghost button--small" data-canvas-action="align-right" data-canvas-scope="text">우정렬</button>
+              <button class="button button--ghost button--small" data-canvas-action="same-size" data-canvas-scope="text">크기 맞춤</button>
+
+              <button class="button button--ghost button--small" data-canvas-action="same-width" data-canvas-scope="multi">너비 맞춤</button>
+              <button class="button button--ghost button--small" data-canvas-action="same-height" data-canvas-scope="multi">높이 맞춤</button>
+              <button class="button button--ghost button--small" data-canvas-action="same-size" data-canvas-scope="multi">크기 맞춤</button>
+              <button class="button button--ghost button--small" data-canvas-action="align-left" data-canvas-scope="multi">좌정렬</button>
+              <button class="button button--ghost button--small" data-canvas-action="align-center" data-canvas-scope="multi">가운데</button>
+              <button class="button button--ghost button--small" data-canvas-action="align-right" data-canvas-scope="multi">우정렬</button>
+              <button class="button button--ghost button--small" data-canvas-action="align-top" data-canvas-scope="multi">상단</button>
+              <button class="button button--ghost button--small" data-canvas-action="align-middle" data-canvas-scope="multi">중앙</button>
+              <button class="button button--ghost button--small" data-canvas-action="align-bottom" data-canvas-scope="multi">하단</button>
+              <button class="button button--ghost button--small" data-canvas-action="distribute-horizontal" data-canvas-scope="multi">가로 간격</button>
+              <button class="button button--ghost button--small" data-canvas-action="distribute-vertical" data-canvas-scope="multi">세로 간격</button>
             </div>
+            <!-- 숨김 규칙:
+                 1) common(복제/삭제/앞뒤)은 항상 고정 노출
+                 2) image는 단일 이미지 슬롯 선택일 때만 노출
+                 3) text는 단일 텍스트 선택일 때만 노출
+                 4) multi는 2개 이상 다중 선택일 때만 노출 -->
             <div class="canvas-context-bar__fine">
               <label class="field field--mini">
                 <span>X</span>

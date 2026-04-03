@@ -5254,6 +5254,75 @@ function syncGeometryControls() {
   }
 }
 
+function resolveCanvasContextScope(editorMeta) {
+  const count = Number(editorMeta?.selectionCount || 0);
+  if (count > 1) return 'multi';
+  if (count < 1) return '';
+  const selectedType = editorMeta?.selectedItems?.[0]?.type || editorMeta?.selected?.type || '';
+  if (selectedType === 'slot') return 'image';
+  if (selectedType === 'text') return 'text';
+  return '';
+}
+
+function executeCanvasContextAction(action) {
+  if (!activeEditor) return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
+  if (action === 'duplicate' || action === 'delete') return executeEditorCommand(action);
+  if (action === 'bring-forward') return activeEditor.bringSelectedForward();
+  if (action === 'send-backward') return activeEditor.sendSelectedBackward();
+  if (action === 'text-edit') return activeEditor.toggleTextEdit();
+  if (action === 'image-cover') return activeEditor.applyImagePreset('cover');
+  if (action === 'image-contain') return activeEditor.applyImagePreset('contain');
+  if (action === 'image-nudge-left') return activeEditor.nudgeSelectedImage({ dx: -2, dy: 0 });
+  if (action === 'image-nudge-right') return activeEditor.nudgeSelectedImage({ dx: 2, dy: 0 });
+  if (action === 'image-nudge-up') return activeEditor.nudgeSelectedImage({ dx: 0, dy: -2 });
+  if (action === 'image-nudge-down') return activeEditor.nudgeSelectedImage({ dx: 0, dy: 2 });
+  if ([
+    'same-width',
+    'same-height',
+    'same-size',
+    'align-left',
+    'align-center',
+    'align-right',
+    'align-top',
+    'align-middle',
+    'align-bottom',
+    'distribute-horizontal',
+    'distribute-vertical',
+  ].includes(action)) return activeEditor.applyBatchLayout(action);
+  return { ok: false, message: `지원하지 않는 캔버스 액션: ${action}` };
+}
+
+function syncCanvasDirectUi(editorMeta) {
+  const selectionCount = Number(editorMeta?.selectionCount || 0);
+  const hasSelection = selectionCount > 0;
+  if (elements.canvasContextBar) elements.canvasContextBar.hidden = !hasSelection;
+  if (!hasSelection) return;
+
+  const scope = resolveCanvasContextScope(editorMeta);
+  for (const button of elements.canvasActionButtons) {
+    const buttonScope = button.dataset.canvasScope || 'common';
+    const visible = buttonScope === 'common' || (scope && buttonScope === scope);
+    button.hidden = !visible;
+    button.disabled = !visible || !activeEditor;
+  }
+
+  const geometryEnabled = !!activeEditor?.getSelectionGeometry?.();
+  const mirrorPairs = [
+    [elements.canvasGeometryXInput, elements.geometryXInput],
+    [elements.canvasGeometryYInput, elements.geometryYInput],
+    [elements.canvasGeometryWInput, elements.geometryWInput],
+    [elements.canvasGeometryHInput, elements.geometryHInput],
+  ];
+  for (const [canvasInput, sourceInput] of mirrorPairs) {
+    if (!canvasInput || !sourceInput) continue;
+    canvasInput.value = sourceInput.value;
+    canvasInput.placeholder = sourceInput.placeholder || '';
+    canvasInput.dataset.mixed = sourceInput.dataset.mixed || '0';
+    canvasInput.disabled = !geometryEnabled;
+  }
+  if (elements.applyCanvasGeometryButton) elements.applyCanvasGeometryButton.disabled = !geometryEnabled;
+}
+
 function applyGeometryFromInputs() {
   if (!activeEditor) return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
   const values = {
@@ -5795,12 +5864,40 @@ for (const button of elements.actionButtons) {
   });
 }
 for (const button of elements.batchActionButtons) button.addEventListener('click', () => applyBatchAction(button.dataset.batchAction));
+for (const button of elements.canvasActionButtons) {
+  button.addEventListener('click', () => {
+    const result = executeCanvasContextAction(button.dataset.canvasAction);
+    if (result?.message) setStatus(result.message);
+    if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+  });
+}
 for (const button of elements.textAlignButtons) {
   button.addEventListener('click', () => {
     if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
     const result = activeEditor.applyTextStyle({ textAlign: button.dataset.textAlign });
     setStatus(result.message);
     if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+  });
+}
+elements.applyCanvasGeometryButton?.addEventListener('click', () => {
+  if (elements.geometryXInput) elements.geometryXInput.value = elements.canvasGeometryXInput?.value || '';
+  if (elements.geometryYInput) elements.geometryYInput.value = elements.canvasGeometryYInput?.value || '';
+  if (elements.geometryWInput) elements.geometryWInput.value = elements.canvasGeometryWInput?.value || '';
+  if (elements.geometryHInput) elements.geometryHInput.value = elements.canvasGeometryHInput?.value || '';
+  const result = applyGeometryFromInputs();
+  setStatus(result.message);
+});
+for (const [canvasInput, sourceInput] of [
+  [elements.canvasGeometryXInput, elements.geometryXInput],
+  [elements.canvasGeometryYInput, elements.geometryYInput],
+  [elements.canvasGeometryWInput, elements.geometryWInput],
+  [elements.canvasGeometryHInput, elements.geometryHInput],
+]) {
+  canvasInput?.addEventListener('input', () => {
+    if (!sourceInput) return;
+    sourceInput.value = canvasInput.value;
+    const result = applyGeometryFromInputs();
+    if (result.ok) setStatus(result.message);
   });
 }
 
