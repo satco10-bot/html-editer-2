@@ -598,11 +598,22 @@
             </select>
           </label>
         </div>
-        <div class="download-modal__preset-buttons">
-          <button class="button button--ghost button--small" type="button" data-download-preset="basic">Basic preset</button>
-          <button class="button button--ghost button--small" type="button" data-download-preset="market">Market preset</button>
-          <button class="button button--ghost button--small" type="button" data-download-preset="hires">Hi-res preset</button>
-          <button class="button button--ghost button--small" type="button" data-download-preset="review">Review preset</button>
+        <div id="exportPurposeCards" class="download-purpose-grid" role="group" aria-label="내보내기 목적 선택">
+          <button class="download-purpose-card" type="button" data-download-preset="market" data-download-choice="download-export-preset-package">
+            <strong>마켓 업로드용</strong>
+            <span>예시 파일: product__market-preset.zip</span>
+            <span>배율: 1x · 용량 예상: 4~15MB</span>
+          </button>
+          <button class="download-purpose-card" type="button" data-download-preset="review" data-download-choice="download-export-preset-package">
+            <strong>검수 공유용</strong>
+            <span>예시 파일: product__review-preset.zip</span>
+            <span>배율: 1x · 용량 예상: 2~8MB</span>
+          </button>
+          <button class="download-purpose-card" type="button" data-download-preset="hires" data-download-choice="download-export-preset-package">
+            <strong>고해상도 보관용</strong>
+            <span>예시 파일: product__hires-preset.zip</span>
+            <span>배율: 2x · 용량 예상: 15~60MB</span>
+          </button>
         </div>
         <div class="download-modal__preset-buttons">
           <button id="modalDownloadEditedButton" class="button button--ghost button--small" type="button" data-download-action="save-edited">문서 저장</button>

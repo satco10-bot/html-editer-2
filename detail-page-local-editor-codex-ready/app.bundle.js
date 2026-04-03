@@ -5063,6 +5063,13 @@ const advancedSettings = {
 };
 
 const EXPORT_SCALE_OPTIONS = Object.freeze([1, 2, 3]);
+const EXPORT_NEXT_ACTION_HINTS = Object.freeze({
+  'export-full-png': '다음: 업로드 화면에서 비율(권장 860px 기준)을 확인해 주세요.',
+  'export-full-jpg': '다음: 톤/압축 품질을 확인한 뒤 공유하세요.',
+  'export-selection-png': '다음: 선택 범위 경계가 맞는지 바로 확인해 주세요.',
+  'export-sections-zip': '다음: ZIP을 풀어 섹션 파일 순서와 누락 여부를 확인해 주세요.',
+  'download-export-preset-package': '다음: ZIP을 풀고 목적(업로드/검수/보관)에 맞게 전달해 주세요.',
+});
 
 const elements = {
   fixtureSelect: document.getElementById('fixtureSelect'),
@@ -5519,6 +5526,15 @@ function formatByteSize(bytes) {
   return `${(safeBytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+function nextActionHint(kind) {
+  return EXPORT_NEXT_ACTION_HINTS[kind] || '다음: 결과물을 열어 품질과 경로를 확인해 주세요.';
+}
+
+function notifySavedWithGuide(kind, fileName, detail = '') {
+  const detailText = detail ? ` (${detail})` : '';
+  setStatus(`저장 완료: ${fileName}${detailText} · ${nextActionHint(kind)}`);
+}
+
 function estimateSavePreview(project, format) {
   const sourceHtml = String(activeEditor?.getEditedHtml?.({ persistDetectedSlots: true }) || project?.normalizedHtml || '');
   const htmlBytes = new TextEncoder().encode(sourceHtml).length;
@@ -5857,6 +5873,9 @@ function syncExportPresetUi({ forceScale = false } = {}) {
     markAdvancedSettingsDirty(true);
   }
   if (elements.exportPresetSelect) elements.exportPresetSelect.title = preset.description || '';
+  for (const button of elements.downloadPresetButtons) {
+    button?.classList.toggle('is-active', (button?.dataset?.downloadPreset || '') === preset.id);
+  }
 }
 
 function setSelectionMode(nextMode) {
@@ -6581,7 +6600,7 @@ async function exportFullPng() {
   const blob = await activeEditor.exportFullPngBlob(exportScale());
   const fileName = `${projectBaseName(project)}__full.png`;
   downloadBlob(fileName, blob);
-  setStatus(`전체 PNG를 저장했습니다: ${fileName} (${exportScale()}x)${autoApplied ? ' · 변경된 고급값 자동 반영' : ''}`);
+  notifySavedWithGuide('export-full-png', fileName, `${exportScale()}x${autoApplied ? ', 고급값 자동 반영' : ''}`);
 }
 
 async function exportFullJpg() {
@@ -6594,7 +6613,7 @@ async function exportFullJpg() {
   const blob = await activeEditor.exportFullJpgBlob(exportScale(), quality);
   const fileName = `${projectBaseName(project)}__full.jpg`;
   downloadBlob(fileName, blob);
-  setStatus(`전체 JPG를 저장했습니다: ${fileName} (${exportScale()}x, 품질 ${quality.toFixed(2)})${autoApplied ? ' · 변경된 고급값 자동 반영' : ''}`);
+  notifySavedWithGuide('export-full-jpg', fileName, `${exportScale()}x, 품질 ${quality.toFixed(2)}${autoApplied ? ', 고급값 자동 반영' : ''}`);
 }
 
 async function exportSelectionPng() {
@@ -6611,9 +6630,7 @@ async function exportSelectionPng() {
   downloadBlob(fileName, blob);
   const skipped = meta?.policy?.skippedHidden + meta?.policy?.skippedLocked || 0;
   const bgLabel = options.background === 'opaque' ? '불투명(흰색)' : '투명';
-  setStatus(
-    `선택 영역 PNG를 저장했습니다: ${fileName} (${exportScale()}x, union bbox, 여백 ${options.padding}px, 배경 ${bgLabel}, 포함 ${meta?.targetCount || 0}개, 제외 ${skipped}개·숨김 제외 ${meta?.policy?.excludeHidden ? 'ON' : 'OFF'}·잠금 제외 ${meta?.policy?.excludeLocked ? 'ON' : 'OFF'})${autoApplied ? ' · 변경된 고급값 자동 반영' : ''}`,
-  );
+  notifySavedWithGuide('export-selection-png', fileName, `${exportScale()}x, 여백 ${options.padding}px, 배경 ${bgLabel}, 포함 ${meta?.targetCount || 0}개, 제외 ${skipped}개${autoApplied ? ', 고급값 자동 반영' : ''}`);
 }
 
 async function exportSectionsZip() {
@@ -6626,7 +6643,7 @@ async function exportSectionsZip() {
   const zipBlob = await buildZipBlob(entries);
   const fileName = `${projectBaseName(project)}__sections_png.zip`;
   downloadBlob(fileName, zipBlob);
-  setStatus(`섹션 PNG ZIP을 저장했습니다: ${fileName}${autoApplied ? ' · 변경된 고급값 자동 반영' : ''}`);
+  notifySavedWithGuide('export-sections-zip', fileName, `${exportScale()}x, 섹션 ${entries.length}개${autoApplied ? ', 고급값 자동 반영' : ''}`);
 }
 
 function downloadReportJson() {
@@ -6674,8 +6691,9 @@ async function downloadExportPresetPackage() {
   }
 
   const zip = await buildZipBlob(entries);
-  downloadBlob(`${baseName}__${preset.id}-preset.zip`, zip);
-  setStatus(`Export preset 패키지를 저장했습니다: ${preset.label}`);
+  const fileName = `${baseName}__${preset.id}-preset.zip`;
+  downloadBlob(fileName, zip);
+  notifySavedWithGuide('download-export-preset-package', fileName, `${preset.label}, 항목 ${entries.length}개`);
 }
 
 function restoreAutosave() {
@@ -7022,9 +7040,11 @@ elements.exportPresetPackageButton?.addEventListener('click', () => { runDownloa
 for (const button of elements.downloadPresetButtons) {
   button?.addEventListener('click', () => {
     const presetId = button.dataset.downloadPreset || 'market';
+    const recommendedChoice = button.dataset.downloadChoice || '';
     currentExportPresetId = presetId;
+    if (recommendedChoice && elements.downloadChoiceSelect) elements.downloadChoiceSelect.value = recommendedChoice;
     syncExportPresetUi({ forceScale: true });
-    setStatus(`Export preset: ${currentExportPreset().label} (배율은 고급값 적용 버튼으로 반영)`);
+    setStatus(`목적 카드 선택: ${currentExportPreset().label} · 실행할 작업은 ${elements.downloadChoiceSelect?.value || 'save-edited'}로 맞췄습니다.`);
   });
 }
 elements.saveFormatSelect?.addEventListener('change', () => {
