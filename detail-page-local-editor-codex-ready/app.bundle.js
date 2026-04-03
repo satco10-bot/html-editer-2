@@ -219,8 +219,8 @@ const FRAME_OVERLAY_ID = '__phase5_local_editor_overlay';
 const AUTOSAVE_KEY = 'detail-local-webapp-autosave-v6';
 const HISTORY_LIMIT = 80;
 const EXPORT_PRESETS = [
-  { id: 'default', label: '기본 패키지', scale: 1.5, bundleMode: 'basic', description: '편집 HTML + 전체 PNG + 리포트' },
-  { id: 'market', label: '마켓 업로드', scale: 1.5, bundleMode: 'market', description: '링크형 HTML + 섹션 PNG + 리포트' },
+  { id: 'default', label: '기본 패키지', scale: 1, bundleMode: 'basic', description: '편집 HTML + 전체 PNG + 리포트' },
+  { id: 'market', label: '마켓 업로드', scale: 1, bundleMode: 'market', description: '링크형 HTML + 섹션 PNG + 리포트' },
   { id: 'hires', label: '고해상도', scale: 2, bundleMode: 'hires', description: '전체 PNG 2x + 섹션 PNG 2x + 편집 HTML' },
   { id: 'review', label: '검수용', scale: 1, bundleMode: 'review', description: '정규화 HTML + 전체 PNG 1x + 리포트' },
 ];
@@ -1269,6 +1269,140 @@ function createProjectStore() {
 }
 
 
+/* ===== src/core/editor-model.js ===== */
+
+function parseStyle(styleText = '') {
+  const map = new Map();
+  for (const raw of String(styleText || '').split(';')) {
+    const [key, ...rest] = raw.split(':');
+    if (!key || !rest.length) continue;
+    map.set(key.trim().toLowerCase(), rest.join(':').trim());
+  }
+  return map;
+}
+
+function serializeStyle(map) {
+  return Array.from(map.entries()).map(([key, value]) => `${key}: ${value}`).join('; ');
+}
+
+function pxValue(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const match = raw.match(/^-?\d+(\.\d+)?/);
+  if (!match) return null;
+  const num = Number.parseFloat(match[0]);
+  return Number.isFinite(num) ? num : null;
+}
+
+function readNodeState(element) {
+  const uid = element.dataset.nodeUid || '';
+  const styleMap = parseStyle(element.getAttribute('style') || '');
+  const tx = pxValue(element.dataset.editorTx) || 0;
+  const ty = pxValue(element.dataset.editorTy) || 0;
+  return {
+    uid,
+    bounds: {
+      x: tx,
+      y: ty,
+      width: pxValue(styleMap.get('width')),
+      height: pxValue(styleMap.get('height')),
+    },
+    style: Object.fromEntries(styleMap.entries()),
+    slotMeta: {
+      detectedType: element.getAttribute('data-detected-slot') || '',
+      label: element.getAttribute('data-slot-label') || '',
+      score: Number.parseFloat(element.getAttribute('data-detected-slot-score') || '0') || 0,
+      reasons: (element.getAttribute('data-detected-slot-reasons') || '').split('|').map((item) => item.trim()).filter(Boolean),
+    },
+  };
+}
+function createEditorModel(doc) {
+  const nodes = new Map();
+  for (const element of Array.from(doc.querySelectorAll('[data-node-uid]'))) {
+    const state = readNodeState(element);
+    if (state.uid) nodes.set(state.uid, state);
+  }
+  return { version: 1, nodes };
+}
+function patchModelNode(model, uid, patch = {}) {
+  if (!model || !uid) return null;
+  const current = model.nodes.get(uid) || {
+    uid,
+    bounds: { x: 0, y: 0, width: null, height: null },
+    style: {},
+    slotMeta: { detectedType: '', label: '', score: 0, reasons: [] },
+  };
+  const next = {
+    ...current,
+    bounds: { ...current.bounds, ...(patch.bounds || {}) },
+    style: { ...current.style, ...(patch.style || {}) },
+    slotMeta: { ...current.slotMeta, ...(patch.slotMeta || {}) },
+  };
+  model.nodes.set(uid, next);
+  model.version += 1;
+  return next;
+}
+function applyModelNodesToDom(doc, model, uids = []) {
+  if (!model || !doc) return;
+  const targets = uids.length ? uids : Array.from(model.nodes.keys());
+  for (const uid of targets) {
+    const state = model.nodes.get(uid);
+    if (!state) continue;
+    const element = doc.querySelector(`[data-node-uid="${uid}"]`);
+    if (!element) continue;
+    const styleMap = parseStyle(element.getAttribute('style') || '');
+    if (state.bounds.width != null) styleMap.set('width', `${Math.round(state.bounds.width)}px`);
+    if (state.bounds.height != null) styleMap.set('height', `${Math.round(state.bounds.height)}px`);
+    for (const [key, value] of Object.entries(state.style || {})) {
+      if (value == null || value === '') styleMap.delete(String(key).toLowerCase());
+      else styleMap.set(String(key).toLowerCase(), String(value));
+    }
+    const styleText = serializeStyle(styleMap);
+    if (styleText) element.setAttribute('style', styleText);
+    else element.removeAttribute('style');
+    if (styleText) element.dataset.exportStyle = styleText;
+    else element.removeAttribute('data-export-style');
+    element.dataset.editorTx = String(Math.round(state.bounds.x || 0));
+    element.dataset.editorTy = String(Math.round(state.bounds.y || 0));
+    if (state.slotMeta?.label) element.setAttribute('data-slot-label', state.slotMeta.label);
+    if (state.slotMeta?.detectedType) element.setAttribute('data-detected-slot', state.slotMeta.detectedType);
+  }
+}
+
+
+/* ===== src/core/serialize-layer.js ===== */
+
+function restoreSerializedAssetRefs(exportDoc, { keepEditedAssets = true } = {}) {
+  for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
+    if (keepEditedAssets) {
+      if (img.dataset.exportSrc) img.setAttribute('src', img.dataset.exportSrc);
+      else if (img.dataset.originalSrc) img.setAttribute('src', img.dataset.originalSrc);
+    } else if (img.dataset.originalSrc) {
+      img.setAttribute('src', img.dataset.originalSrc);
+    }
+    if (img.dataset.originalSrcset && !img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.originalSrcset);
+    else if (!img.dataset.originalSrcset && !img.dataset.exportSrcset) img.removeAttribute('srcset');
+    if (keepEditedAssets && img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.exportSrcset);
+    img.removeAttribute('sizes');
+  }
+
+  for (const source of Array.from(exportDoc.querySelectorAll('source'))) {
+    if (keepEditedAssets && source.dataset.exportSrcset) source.setAttribute('srcset', source.dataset.exportSrcset);
+    else if (source.dataset.originalSrcset) source.setAttribute('srcset', source.dataset.originalSrcset);
+  }
+
+  for (const element of Array.from(exportDoc.querySelectorAll('[style]'))) {
+    if (keepEditedAssets && element.dataset.exportStyle) element.setAttribute('style', element.dataset.exportStyle);
+    else if (element.dataset.originalStyle) element.setAttribute('style', element.dataset.originalStyle);
+  }
+
+  for (const styleBlock of Array.from(exportDoc.querySelectorAll('style'))) {
+    if (!styleBlock.dataset.originalCss) continue;
+    try { styleBlock.textContent = decodeURIComponent(styleBlock.dataset.originalCss); } catch {}
+  }
+}
+
+
 /* ===== src/editor/frame-editor.js ===== */
 
 const FRAME_CSS_URL_RE = /url\((['"]?)([^"'()]+)\1\)/gi;
@@ -1586,6 +1720,8 @@ function createFrameEditor({
   let overlayNodes = null;
   const slotBackupMap = new Map();
   const modifiedSlots = new Set();
+  const editorModel = createEditorModel(doc);
+  let lastCommittedSnapshot = initialSnapshot?.html ? { ...initialSnapshot } : null;
 
   function uniqueConnectedElements(items) {
     const seen = new Set();
@@ -1939,7 +2075,10 @@ function createFrameEditor({
   }
 
   function emitMutation(label) {
-    onMutation(captureSnapshot(label));
+    const before = lastCommittedSnapshot || captureSnapshot('before-command');
+    const after = captureSnapshot(label);
+    lastCommittedSnapshot = after;
+    onMutation({ type: 'command', id: nextId('cmd'), label, before, after, modelVersion: editorModel.version, at: new Date().toISOString() });
   }
 
   function getElementByUid(uid) {
@@ -2103,6 +2242,10 @@ function createFrameEditor({
     const keepUids = preserveSelectionUids || selectedElements.map((element) => element.dataset.nodeUid).filter(Boolean) || [];
     detection = collectSlotCandidates(doc, { markDom: true });
     slotMap = new Map(detection.candidates.map((item) => [item.uid, item]));
+    const refreshedModel = createEditorModel(doc);
+    editorModel.nodes.clear();
+    for (const [uid, node] of refreshedModel.nodes.entries()) editorModel.nodes.set(uid, node);
+    editorModel.version = refreshedModel.version;
     const keepElements = uniqueConnectedElements(keepUids.map((uid) => getElementByUid(uid)));
     if (keepElements.length) selectElements(keepElements, { silent: true });
     else if (preserveSelectionUid || initialSnapshot?.selectedUid) {
@@ -2130,7 +2273,8 @@ function createFrameEditor({
     if (hidden) element.dataset.editorHidden = '1';
     else element.removeAttribute('data-editor-hidden');
     const baseDisplay = decodeData(element.dataset.editorBaseDisplay || '');
-    setInlineStyle(element, { display: hidden ? 'none' : (baseDisplay && baseDisplay !== 'none' ? baseDisplay : null) });
+    patchModelNode(editorModel, uid, { style: { display: hidden ? 'none' : (baseDisplay && baseDisplay !== 'none' ? baseDisplay : null) } });
+    applyModelNodesToDom(doc, editorModel, [uid]);
     element.dataset.editorModified = '1';
     modifiedSlots.add(uid);
     return true;
@@ -2142,6 +2286,7 @@ function createFrameEditor({
     element.dataset.nodeUid = uid;
     if (locked) element.dataset.editorLocked = '1';
     else element.removeAttribute('data-editor-locked');
+    patchModelNode(editorModel, uid, {});
     element.dataset.editorModified = '1';
     modifiedSlots.add(uid);
     return true;
@@ -2435,7 +2580,13 @@ function createFrameEditor({
     const translate = (tx || ty) ? `translate(${Number(tx.toFixed(3))}px, ${Number(ty.toFixed(3))}px)` : '';
     const base = state.base && state.base !== 'none' ? state.base : '';
     const nextTransform = [base, translate].filter(Boolean).join(' ').trim();
-    setInlineStyle(element, { transform: nextTransform || null });
+    const uid = element.dataset.nodeUid || nextId('node');
+    element.dataset.nodeUid = uid;
+    patchModelNode(editorModel, uid, {
+      bounds: { x: Number(tx.toFixed(3)), y: Number(ty.toFixed(3)) },
+      style: { transform: nextTransform || null },
+    });
+    applyModelNodesToDom(doc, editorModel, [uid]);
     element.dataset.editorModified = '1';
   }
 
@@ -2457,15 +2608,42 @@ function createFrameEditor({
     };
   }
 
+  function selectionHudState() {
+    const geometry = elementGeometry(selectedElement);
+    if (!selectedElement || !geometry) return null;
+    const siblings = selectedElement.parentElement
+      ? Array.from(selectedElement.parentElement.children).filter((node) => node.nodeType === 1)
+      : [];
+    const index = siblings.indexOf(selectedElement);
+    return {
+      ...geometry,
+      layerIndexFromBack: index >= 0 ? index + 1 : 0,
+      layerTotal: siblings.length,
+    };
+  }
+
   function applyGeometryPatch(patch = {}) {
     const target = selectedElement;
     if (!target) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
     if (isLockedElement(target)) return { ok: false, message: '잠긴 요소는 편집할 수 없습니다.' };
     if (Number.isFinite(patch.w) || Number.isFinite(patch.h)) {
+      const uid = target.dataset.nodeUid || nextId('node');
+      target.dataset.nodeUid = uid;
+      const boundsPatch = {};
       const stylePatch = {};
-      if (Number.isFinite(patch.w)) stylePatch.width = `${Math.max(8, patch.w)}px`;
-      if (Number.isFinite(patch.h)) stylePatch.height = `${Math.max(8, patch.h)}px`;
-      setInlineStyle(target, stylePatch);
+      if (Number.isFinite(patch.w)) {
+        boundsPatch.width = Math.max(8, patch.w);
+        stylePatch.width = `${Math.max(8, patch.w)}px`;
+      }
+      if (Number.isFinite(patch.h)) {
+        boundsPatch.height = Math.max(8, patch.h);
+        stylePatch.height = `${Math.max(8, patch.h)}px`;
+      }
+      patchModelNode(editorModel, uid, {
+        bounds: boundsPatch,
+        style: stylePatch,
+      });
+      applyModelNodesToDom(doc, editorModel, [uid]);
     }
     const state = readTransformState(target);
     const nextX = Number.isFinite(patch.x) ? patch.x : state.tx;
@@ -2808,30 +2986,7 @@ function createFrameEditor({
     const parser = new DOMParser();
     const currentHtml = createDoctypeHtml(doc);
     const exportDoc = parser.parseFromString(currentHtml, 'text/html');
-
-    for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
-      if (img.dataset.exportSrc) img.setAttribute('src', img.dataset.exportSrc);
-      else if (img.dataset.originalSrc) img.setAttribute('src', img.dataset.originalSrc);
-      if (img.dataset.originalSrcset && !img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.originalSrcset);
-      else if (!img.dataset.originalSrcset) img.removeAttribute('srcset');
-      img.removeAttribute('sizes');
-    }
-
-    for (const source of Array.from(exportDoc.querySelectorAll('source'))) {
-      if (source.dataset.originalSrcset) source.setAttribute('srcset', source.dataset.originalSrcset);
-    }
-
-    for (const element of Array.from(exportDoc.querySelectorAll('[style]'))) {
-      if (element.dataset.exportStyle) element.setAttribute('style', element.dataset.exportStyle);
-      else if (element.dataset.originalStyle) element.setAttribute('style', element.dataset.originalStyle);
-    }
-
-    for (const styleBlock of Array.from(exportDoc.querySelectorAll('style'))) {
-      if (styleBlock.dataset.originalCss) {
-        try { styleBlock.textContent = decodeURIComponent(styleBlock.dataset.originalCss); } catch {}
-      }
-    }
-
+    restoreSerializedAssetRefs(exportDoc, { keepEditedAssets: true });
     if (persistDetectedSlots) persistSlotLabels(exportDoc);
     stripFinalEditorRuntime(exportDoc);
     return createDoctypeHtml(exportDoc);
@@ -2841,21 +2996,7 @@ function createFrameEditor({
     const parser = new DOMParser();
     const currentHtml = createDoctypeHtml(doc);
     const exportDoc = parser.parseFromString(currentHtml, 'text/html');
-
-    for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
-      if (img.dataset.exportSrc) img.setAttribute('src', img.dataset.exportSrc);
-      if (img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.exportSrcset);
-      img.removeAttribute('sizes');
-    }
-
-    for (const source of Array.from(exportDoc.querySelectorAll('source'))) {
-      if (source.dataset.exportSrcset) source.setAttribute('srcset', source.dataset.exportSrcset);
-    }
-
-    for (const element of Array.from(exportDoc.querySelectorAll('[style]'))) {
-      if (element.dataset.exportStyle) element.setAttribute('style', element.dataset.exportStyle);
-    }
-
+    restoreSerializedAssetRefs(exportDoc, { keepEditedAssets: true });
     if (persistDetectedSlots) persistSlotLabels(exportDoc);
     stripFinalEditorRuntime(exportDoc);
     return exportDoc;
@@ -2943,6 +3084,34 @@ function createFrameEditor({
     };
   }
 
+  function normalizeExportScale(scale = 1) {
+    const value = Number.parseFloat(String(scale));
+    if (!Number.isFinite(value) || value <= 0) return 1;
+    if (value >= 2.5) return 3;
+    if (value >= 1.5) return 2;
+    return 1;
+  }
+
+  function elementRectToCrop(rect, docRect) {
+    return {
+      x: Math.max(0, Math.round(rect.left - docRect.left)),
+      y: Math.max(0, Math.round(rect.top - docRect.top)),
+      width: Math.max(1, Math.ceil(rect.width)),
+      height: Math.max(1, Math.ceil(rect.height)),
+    };
+  }
+
+  function computeSelectionBoundingCrop() {
+    const targets = uniqueConnectedElements(selectedElements).filter((element) => isElement(element) && element.isConnected);
+    if (!targets.length) return null;
+    const rects = targets.map((element) => element.getBoundingClientRect()).filter((rect) => rect.width > 0 && rect.height > 0);
+    if (!rects.length) return null;
+    const bounds = unionRect(rects);
+    if (!bounds) return null;
+    const docRect = doc.documentElement.getBoundingClientRect();
+    return elementRectToCrop(bounds, docRect);
+  }
+
   async function renderHtmlToCanvas(html, { fullWidth, fullHeight, crop, scale = 1 }) {
     const parsed = new DOMParser().parseFromString(html, 'text/html');
     parsed.documentElement.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
@@ -2968,53 +3137,46 @@ function createFrameEditor({
     return canvas;
   }
 
-  async function exportFullPngBlob(scale = 1.5) {
+  async function buildExportRenderContext() {
     const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: false });
     await rewriteBlobRefsToPortableUrls(exportDoc);
-    const metrics = measureExportRoot();
-    const canvas = await renderHtmlToCanvas(createDoctypeHtml(exportDoc), {
-      fullWidth: metrics.fullWidth,
-      fullHeight: metrics.fullHeight,
-      crop: { x: metrics.x, y: metrics.y, width: metrics.width, height: metrics.height },
-      scale,
+    return {
+      html: createDoctypeHtml(exportDoc),
+      metrics: measureExportRoot(),
+      exportDoc,
+    };
+  }
+
+  async function renderExportBlob({ area = null, scale = 1, format = 'png', quality = 0.92, context = null } = {}) {
+    const renderContext = context || (await buildExportRenderContext());
+    const resolvedArea = area || {
+      x: renderContext.metrics.x,
+      y: renderContext.metrics.y,
+      width: renderContext.metrics.width,
+      height: renderContext.metrics.height,
+    };
+    const canvas = await renderHtmlToCanvas(renderContext.html, {
+      fullWidth: renderContext.metrics.fullWidth,
+      fullHeight: renderContext.metrics.fullHeight,
+      crop: resolvedArea,
+      scale: normalizeExportScale(scale),
     });
-    return await canvasToBlob(canvas, 'image/png');
+    const mime = format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : 'image/png';
+    return await canvasToBlob(canvas, mime, mime === 'image/jpeg' ? quality : undefined);
+  }
+
+  async function exportFullPngBlob(scale = 1.5) {
+    return await renderExportBlob({ format: 'png', scale });
   }
 
   async function exportFullJpgBlob(scale = 1.5, quality = 0.92) {
-    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: false });
-    await rewriteBlobRefsToPortableUrls(exportDoc);
-    const metrics = measureExportRoot();
-    const canvas = await renderHtmlToCanvas(createDoctypeHtml(exportDoc), {
-      fullWidth: metrics.fullWidth,
-      fullHeight: metrics.fullHeight,
-      crop: { x: metrics.x, y: metrics.y, width: metrics.width, height: metrics.height },
-      scale,
-    });
-    return await canvasToBlob(canvas, 'image/jpeg', quality);
+    return await renderExportBlob({ format: 'jpg', scale, quality });
   }
 
   async function exportSelectionPngBlob(scale = 1.5) {
-    const target = selectedElement;
-    if (!target) throw new Error('먼저 요소를 선택해 주세요.');
-    const rect = target.getBoundingClientRect();
-    const docRect = doc.documentElement.getBoundingClientRect();
-    const crop = {
-      x: Math.max(0, Math.round(rect.left - docRect.left)),
-      y: Math.max(0, Math.round(rect.top - docRect.top)),
-      width: Math.max(1, Math.ceil(rect.width)),
-      height: Math.max(1, Math.ceil(rect.height)),
-    };
-    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: false });
-    await rewriteBlobRefsToPortableUrls(exportDoc);
-    const metrics = measureExportRoot();
-    const canvas = await renderHtmlToCanvas(createDoctypeHtml(exportDoc), {
-      fullWidth: metrics.fullWidth,
-      fullHeight: metrics.fullHeight,
-      crop,
-      scale,
-    });
-    return await canvasToBlob(canvas, 'image/png');
+    const crop = computeSelectionBoundingCrop();
+    if (!crop) throw new Error('먼저 요소를 선택해 주세요.');
+    return await renderExportBlob({ format: 'png', area: crop, scale });
   }
 
   function collectSectionRects() {
@@ -3031,12 +3193,7 @@ function createFrameEditor({
     }
     return candidates.map((element, index) => {
       const rect = element.getBoundingClientRect();
-      const crop = {
-        x: Math.max(0, Math.round(rect.left - docRect.left)),
-        y: Math.max(0, Math.round(rect.top - docRect.top)),
-        width: Math.max(1, Math.ceil(rect.width)),
-        height: Math.max(1, Math.ceil(rect.height)),
-      };
+      const crop = elementRectToCrop(rect, docRect);
       const rawName = buildLabel(element) || element.id || element.className || element.tagName.toLowerCase();
       return {
         crop,
@@ -3046,26 +3203,56 @@ function createFrameEditor({
   }
 
   async function exportSectionPngEntries(scale = 1.5) {
-    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: false });
-    await rewriteBlobRefsToPortableUrls(exportDoc);
-    const metrics = measureExportRoot();
-    const html = createDoctypeHtml(exportDoc);
+    const context = await buildExportRenderContext();
     const sections = collectSectionRects();
     const entries = [];
     for (const section of sections) {
       // eslint-disable-next-line no-await-in-loop
-      const canvas = await renderHtmlToCanvas(html, {
-        fullWidth: metrics.fullWidth,
-        fullHeight: metrics.fullHeight,
-        crop: section.crop,
-        scale,
-      });
-      // eslint-disable-next-line no-await-in-loop
-      const blob = await canvasToBlob(canvas, 'image/png');
+      const blob = await renderExportBlob({ format: 'png', area: section.crop, scale, context });
       // eslint-disable-next-line no-await-in-loop
       entries.push({ name: section.name, data: new Uint8Array(await blob.arrayBuffer()) });
     }
     return entries;
+  }
+
+  async function exportFixtureIntegrityReport() {
+    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: false });
+    const fixtureContract = project?.fixtureMeta?.slot_contract || null;
+    let placeholderOnlySlots = 0;
+    let unresolvedImages = 0;
+    for (const slotRecord of detection.candidates) {
+      const slot = exportDoc.querySelector(`[data-node-uid="${slotRecord.uid}"]`);
+      if (!slot || slot.dataset.slotIgnore === '1') continue;
+      const hasPlaceholder = PLACEHOLDER_TEXT_RE.test(placeholderTextValue(slot));
+      const target = findSlotMediaTarget(slot);
+      let hasMedia = false;
+      let unresolved = false;
+      if (target.kind === 'background') {
+        const styleValue = (target.element || slot).getAttribute('style') || '';
+        hasMedia = /url\(/i.test(styleValue);
+        unresolved = /%EB%AF%B8%ED%95%B4%EA%B2%B0|미해결/i.test(styleValue);
+      } else {
+        const img = target.element || slot.querySelector('img');
+        const src = img?.getAttribute('src') || '';
+        hasMedia = !!src;
+        unresolved = /%EB%AF%B8%ED%95%B4%EA%B2%B0|미해결/i.test(src);
+      }
+      if (hasPlaceholder && !hasMedia) placeholderOnlySlots += 1;
+      if (unresolved) unresolvedImages += 1;
+    }
+    const issues = [];
+    if (placeholderOnlySlots > 0) issues.push(`placeholder-only 슬롯 ${placeholderOnlySlots}개`);
+    if (unresolvedImages > 0) issues.push(`미해결 이미지 ${unresolvedImages}개`);
+    if (fixtureContract?.required_exact_count != null && detection.summary.totalCount !== fixtureContract.required_exact_count) {
+      issues.push(`fixture 슬롯 수 불일치(${detection.summary.totalCount}/${fixtureContract.required_exact_count})`);
+    }
+    return {
+      ok: issues.length === 0,
+      fixtureId: project?.fixtureId || '',
+      placeholderOnlySlots,
+      unresolvedImages,
+      issues,
+    };
   }
 
   async function buildLinkedPackageEntries() {
@@ -3270,7 +3457,13 @@ function createFrameEditor({
     }
     width = Math.max(8, width);
     height = Math.max(8, height);
-    setInlineStyle(target, { width: `${Math.round(width)}px`, height: `${Math.round(height)}px` });
+    const uid = target.dataset.nodeUid || nextId('node');
+    target.dataset.nodeUid = uid;
+    patchModelNode(editorModel, uid, {
+      bounds: { width, height },
+      style: { width: `${Math.round(width)}px`, height: `${Math.round(height)}px` },
+    });
+    applyModelNodesToDom(doc, editorModel, [uid]);
     writeTransformState(target, tx, ty);
     target.dataset.editorModified = '1';
     if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
@@ -3531,11 +3724,14 @@ function createFrameEditor({
     async exportSectionPngEntries(scale = 1.5) {
       return await exportSectionPngEntries(scale);
     },
+    async getExportFixtureIntegrityReport() {
+      return await exportFixtureIntegrityReport();
+    },
     captureSnapshot,
     getReport: buildReport,
     getPreflightReport: buildPreflightReport,
     getMeta() {
-      return getDerivedMeta();
+      return { ...getDerivedMeta(), modelVersion: editorModel.version };
     },
     destroy() {
       if (destroyed) return;
@@ -3847,8 +4043,11 @@ let currentExportPresetId = 'market';
 let currentCodeSource = 'edited';
 let codeEditorDirty = false;
 const zoomState = { mode: 'fit', value: 1 };
+const EXPORT_SCALE_OPTIONS = [1, 2, 3];
+const DEFAULT_JPG_QUALITY = 0.92;
 
 const historyState = {
+  baseSnapshot: null,
   undoStack: [],
   redoStack: [],
 };
@@ -3883,6 +4082,7 @@ const elements = {
   exportSelectionPngButton: document.getElementById('exportSelectionPngButton'),
   exportPresetSelect: document.getElementById('exportPresetSelect'),
   exportScaleSelect: document.getElementById('exportScaleSelect'),
+  exportJpgQualityInput: document.getElementById('exportJpgQualityInput'),
   exportPresetPackageButton: document.getElementById('exportPresetPackageButton'),
   downloadReportButton: document.getElementById('downloadReportButton'),
   htmlFileInput: document.getElementById('htmlFileInput'),
@@ -3940,6 +4140,16 @@ const elements = {
   zoomLabel: document.getElementById('zoomLabel'),
   previewViewport: document.getElementById('previewViewport'),
   previewScaler: document.getElementById('previewScaler'),
+  canvasContextBar: document.getElementById('canvasContextBar'),
+  miniHud: document.getElementById('miniHud'),
+  miniHudPos: document.getElementById('miniHudPos'),
+  miniHudSize: document.getElementById('miniHudSize'),
+  miniHudLayer: document.getElementById('miniHudLayer'),
+  canvasGeometryXInput: document.getElementById('canvasGeometryXInput'),
+  canvasGeometryYInput: document.getElementById('canvasGeometryYInput'),
+  canvasGeometryWInput: document.getElementById('canvasGeometryWInput'),
+  canvasGeometryHInput: document.getElementById('canvasGeometryHInput'),
+  applyCanvasGeometryButton: document.getElementById('applyCanvasGeometryButton'),
   codeEditorTextarea: document.getElementById('codeEditorTextarea'),
   codeSearchInput: document.getElementById('codeSearchInput'),
   codeSearchNextButton: document.getElementById('codeSearchNextButton'),
@@ -3955,6 +4165,7 @@ const elements = {
   actionButtons: Array.from(document.querySelectorAll('[data-action]')),
   batchActionButtons: Array.from(document.querySelectorAll('[data-batch-action]')),
   textAlignButtons: Array.from(document.querySelectorAll('[data-text-align]')),
+  canvasActionButtons: Array.from(document.querySelectorAll('[data-canvas-action]')),
 };
 
 function projectBaseName(project) {
@@ -3962,8 +4173,17 @@ function projectBaseName(project) {
 }
 
 function exportScale() {
-  const value = Number.parseFloat(elements.exportScaleSelect?.value || '1.5');
-  return Number.isFinite(value) && value > 0 ? value : 1.5;
+  const value = Number.parseFloat(elements.exportScaleSelect?.value || '1');
+  if (!Number.isFinite(value)) return 1;
+  if (value >= 2.5) return 3;
+  if (value >= 1.5) return 2;
+  return 1;
+}
+
+function exportJpgQuality() {
+  const raw = Number.parseFloat(elements.exportJpgQualityInput?.value || String(DEFAULT_JPG_QUALITY));
+  if (!Number.isFinite(raw)) return DEFAULT_JPG_QUALITY;
+  return Math.min(1, Math.max(0.1, raw));
 }
 
 function setStatus(text) {
@@ -4074,10 +4294,11 @@ function syncWorkspaceButtons() {
 function syncExportPresetUi({ forceScale = false } = {}) {
   const preset = currentExportPreset();
   if (elements.exportPresetSelect.value !== preset.id) elements.exportPresetSelect.value = preset.id;
-  const scaleValue = String(preset.scale);
   const shouldSyncScale = forceScale || elements.exportScaleSelect.dataset.boundPreset !== preset.id;
-  if (shouldSyncScale && Array.from(elements.exportScaleSelect.options).some((option) => option.value === scaleValue)) {
-    elements.exportScaleSelect.value = scaleValue;
+  const presetScale = Number.parseFloat(String(preset.scale));
+  const normalizedScale = presetScale >= 2.5 ? '3' : presetScale >= 1.5 ? '2' : '1';
+  if (shouldSyncScale && EXPORT_SCALE_OPTIONS.includes(Number.parseFloat(normalizedScale))) {
+    elements.exportScaleSelect.value = normalizedScale;
     elements.exportScaleSelect.dataset.boundPreset = preset.id;
   }
   if (elements.exportPresetPackageButton) elements.exportPresetPackageButton.title = preset.description || '';
@@ -4137,29 +4358,34 @@ function persistAutosave(snapshot) {
 
 function refreshHistoryButtons() {
   const hasProject = !!store.getState().project;
-  if (elements.undoButton) elements.undoButton.disabled = !hasProject || historyState.undoStack.length <= 1;
+  if (elements.undoButton) elements.undoButton.disabled = !hasProject || historyState.undoStack.length === 0;
   if (elements.redoButton) elements.redoButton.disabled = !hasProject || historyState.redoStack.length === 0;
   if (elements.restoreAutosaveButton) elements.restoreAutosaveButton.disabled = !readAutosavePayload();
 }
 
-function resetHistory() {
+function resetHistory(baseSnapshot = null) {
+  historyState.baseSnapshot = baseSnapshot?.html ? baseSnapshot : null;
   historyState.undoStack = [];
   historyState.redoStack = [];
   refreshHistoryButtons();
 }
 
-function recordHistorySnapshot(snapshot, { clearRedo = true } = {}) {
-  if (!snapshot?.html) return;
+function latestHistorySnapshot() {
+  return historyState.undoStack.at(-1)?.after || historyState.baseSnapshot;
+}
+
+function recordHistoryCommand(command, { clearRedo = true } = {}) {
+  if (!command?.after?.html || !command?.before?.html) return;
   const last = historyState.undoStack.at(-1);
-  if (last && last.html === snapshot.html && last.selectedUid === snapshot.selectedUid && last.selectionMode === snapshot.selectionMode) {
-    persistAutosave(snapshot);
+  if (last?.after?.html === command.after.html) {
+    persistAutosave(command.after);
     refreshHistoryButtons();
     return;
   }
-  historyState.undoStack.push(snapshot);
+  historyState.undoStack.push(command);
   if (historyState.undoStack.length > HISTORY_LIMIT) historyState.undoStack.shift();
   if (clearRedo) historyState.redoStack = [];
-  persistAutosave(snapshot);
+  persistAutosave(command.after);
   refreshHistoryButtons();
 }
 
@@ -4171,15 +4397,14 @@ function restoreHistorySnapshot(snapshot, label) {
 }
 
 function undoHistory() {
-  if (historyState.undoStack.length <= 1) {
+  if (!historyState.undoStack.length) {
     setStatus('되돌릴 작업이 없습니다.');
     return;
   }
   const current = historyState.undoStack.pop();
   historyState.redoStack.push(current);
-  const previous = historyState.undoStack.at(-1);
   refreshHistoryButtons();
-  restoreHistorySnapshot(previous, '이전 작업으로 되돌렸습니다.');
+  restoreHistorySnapshot(current.before, '이전 작업으로 되돌렸습니다.');
 }
 
 function redoHistory() {
@@ -4190,7 +4415,7 @@ function redoHistory() {
   const next = historyState.redoStack.pop();
   historyState.undoStack.push(next);
   refreshHistoryButtons();
-  restoreHistorySnapshot(next, '되돌린 작업을 다시 적용했습니다.');
+  restoreHistorySnapshot(next.after, '되돌린 작업을 다시 적용했습니다.');
 }
 
 function buildReportPayload(project, report) {
@@ -4309,6 +4534,41 @@ function syncGeometryControls() {
   elements.geometryYInput.value = String(geometry.y ?? 0);
   elements.geometryWInput.value = String(geometry.w ?? 0);
   elements.geometryHInput.value = String(geometry.h ?? 0);
+  if (elements.canvasGeometryXInput) elements.canvasGeometryXInput.value = String(geometry.x ?? 0);
+  if (elements.canvasGeometryYInput) elements.canvasGeometryYInput.value = String(geometry.y ?? 0);
+  if (elements.canvasGeometryWInput) elements.canvasGeometryWInput.value = String(geometry.w ?? 0);
+  if (elements.canvasGeometryHInput) elements.canvasGeometryHInput.value = String(geometry.h ?? 0);
+}
+
+function syncCanvasDirectUi(editorMeta) {
+  const hasEditor = !!activeEditor;
+  const selectionCount = Number(editorMeta?.selectionCount || 0);
+  const geometry = activeEditor?.getSelectionGeometry?.() || null;
+  const hud = activeEditor?.getSelectionHud?.() || null;
+  const hasSingle = !!geometry && selectionCount >= 1;
+
+  if (elements.canvasContextBar) elements.canvasContextBar.hidden = !(hasEditor && selectionCount >= 1);
+  if (elements.miniHud) elements.miniHud.hidden = !hasSingle;
+
+  const multiActions = new Set(['same-width', 'same-height', 'same-size', 'align-left', 'align-center', 'align-right']);
+  for (const button of elements.canvasActionButtons) {
+    const action = button.dataset.canvasAction;
+    button.disabled = !hasEditor || (multiActions.has(action) ? selectionCount < 2 : selectionCount < 1);
+  }
+  if (elements.applyCanvasGeometryButton) elements.applyCanvasGeometryButton.disabled = !hasSingle;
+  for (const input of [elements.canvasGeometryXInput, elements.canvasGeometryYInput, elements.canvasGeometryWInput, elements.canvasGeometryHInput]) {
+    if (!input) continue;
+    input.disabled = !hasSingle;
+  }
+
+  if (!hasSingle) return;
+  if (elements.miniHudPos) elements.miniHudPos.textContent = `X ${hud?.x ?? geometry.x ?? 0} / Y ${hud?.y ?? geometry.y ?? 0}`;
+  if (elements.miniHudSize) elements.miniHudSize.textContent = `W ${hud?.w ?? geometry.w ?? 0} / H ${hud?.h ?? geometry.h ?? 0}`;
+  if (elements.miniHudLayer) {
+    const current = Number(hud?.layerIndexFromBack || 0);
+    const total = Number(hud?.layerTotal || 0);
+    elements.miniHudLayer.textContent = total > 0 ? `레이어 ${current}/${total}` : '레이어 -/-';
+  }
 }
 
 function renderShell(state) {
@@ -4337,6 +4597,7 @@ function renderShell(state) {
   syncTextStyleControls(state.editorMeta);
   syncBatchSummary(state.editorMeta);
   syncGeometryControls();
+  syncCanvasDirectUi(state.editorMeta);
   elements.statusText.textContent = state.statusText;
   refreshComputedViews(state);
 
@@ -4412,8 +4673,8 @@ function mountProject(project, { snapshot = null, preserveHistory = false, force
       initialSnapshot: snapshot,
       onStateChange: (meta) => store.setEditorMeta(meta),
       onStatus: setStatus,
-      onMutation: (nextSnapshot) => {
-        recordHistorySnapshot(nextSnapshot);
+      onMutation: (command) => {
+        recordHistoryCommand(command);
         if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
       },
       onShortcut: handleEditorShortcut,
@@ -4422,10 +4683,11 @@ function mountProject(project, { snapshot = null, preserveHistory = false, force
     store.setEditorMeta(activeEditor.getMeta());
     applyPreviewZoom();
     if (!preserveHistory) {
-      resetHistory();
-      recordHistorySnapshot(activeEditor.captureSnapshot('initial'));
+      resetHistory(activeEditor.captureSnapshot('initial'));
+      persistAutosave(historyState.baseSnapshot);
+      refreshHistoryButtons();
     } else {
-      persistAutosave(historyState.undoStack.at(-1) || activeEditor.captureSnapshot('restore'));
+      persistAutosave(latestHistorySnapshot() || activeEditor.captureSnapshot('restore'));
       refreshHistoryButtons();
     }
     if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
@@ -4525,6 +4787,19 @@ function ensurePreflightBeforeExport(kind) {
   return true;
 }
 
+async function ensureFixtureIntegrityBeforeExport(kind) {
+  if (!activeEditor) return false;
+  const report = await activeEditor.getExportFixtureIntegrityReport?.();
+  if (!report || report.ok) return true;
+  const preview = (report.issues || []).slice(0, 3).join('\n- ');
+  const proceed = window.confirm(`Fixture 기준 export 검증에서 문제를 찾았습니다.\n- ${preview}\n그래도 ${kind}을(를) 계속하시겠습니까?`);
+  if (!proceed) {
+    setStatus(`Fixture 기준 export 검증 문제 때문에 ${kind}을(를) 중단했습니다.`);
+    return false;
+  }
+  return true;
+}
+
 async function downloadLinkedZip() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
@@ -4540,35 +4815,40 @@ async function exportFullPng() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
   if (!ensurePreflightBeforeExport('전체 PNG 저장')) return;
+  if (!(await ensureFixtureIntegrityBeforeExport('전체 PNG 저장'))) return;
   const blob = await activeEditor.exportFullPngBlob(exportScale());
   const fileName = `${projectBaseName(project)}__full.png`;
   downloadBlob(fileName, blob);
-  setStatus(`전체 PNG를 저장했습니다: ${fileName}`);
+  setStatus(`전체 PNG를 저장했습니다: ${fileName} (${exportScale()}x)`);
 }
 
 async function exportFullJpg() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
   if (!ensurePreflightBeforeExport('전체 JPG 저장')) return;
-  const blob = await activeEditor.exportFullJpgBlob(exportScale(), 0.92);
+  if (!(await ensureFixtureIntegrityBeforeExport('전체 JPG 저장'))) return;
+  const quality = exportJpgQuality();
+  const blob = await activeEditor.exportFullJpgBlob(exportScale(), quality);
   const fileName = `${projectBaseName(project)}__full.jpg`;
   downloadBlob(fileName, blob);
-  setStatus(`전체 JPG를 저장했습니다: ${fileName}`);
+  setStatus(`전체 JPG를 저장했습니다: ${fileName} (${exportScale()}x, 품질 ${quality.toFixed(2)})`);
 }
 
 async function exportSelectionPng() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
+  if (!(await ensureFixtureIntegrityBeforeExport('선택 영역 PNG 저장'))) return;
   const blob = await activeEditor.exportSelectionPngBlob(exportScale());
   const fileName = `${projectBaseName(project)}__selection.png`;
   downloadBlob(fileName, blob);
-  setStatus(`선택 영역 PNG를 저장했습니다: ${fileName}`);
+  setStatus(`선택 영역 PNG를 저장했습니다: ${fileName} (${exportScale()}x, 선택 bbox)`);
 }
 
 async function exportSectionsZip() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
   if (!ensurePreflightBeforeExport('섹션 PNG ZIP 저장')) return;
+  if (!(await ensureFixtureIntegrityBeforeExport('섹션 PNG ZIP 저장'))) return;
   const entries = await activeEditor.exportSectionPngEntries(exportScale());
   const zipBlob = await buildZipBlob(entries);
   const fileName = `${projectBaseName(project)}__sections_png.zip`;
@@ -4836,6 +5116,30 @@ elements.applyGeometryButton?.addEventListener('click', () => {
   const result = activeEditor.applyGeometryPatch(patch);
   setStatus(result.message);
 });
+elements.applyCanvasGeometryButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const patch = {
+    x: Number.parseFloat(elements.canvasGeometryXInput?.value || ''),
+    y: Number.parseFloat(elements.canvasGeometryYInput?.value || ''),
+    w: Number.parseFloat(elements.canvasGeometryWInput?.value || ''),
+    h: Number.parseFloat(elements.canvasGeometryHInput?.value || ''),
+  };
+  const result = activeEditor.applyGeometryPatch(patch);
+  setStatus(result.message);
+});
+for (const button of elements.canvasActionButtons) {
+  button.addEventListener('click', () => {
+    if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+    const action = button.dataset.canvasAction;
+    let result = { ok: false, message: '지원하지 않는 액션입니다.' };
+    if (action === 'duplicate') result = activeEditor.duplicateSelected();
+    else if (action === 'delete') result = activeEditor.deleteSelected();
+    else if (action === 'bring-forward') result = activeEditor.bringSelectedForward();
+    else if (action === 'send-backward') result = activeEditor.sendSelectedBackward();
+    else result = activeEditor.applyBatchLayout(action);
+    setStatus(result.message);
+  });
+}
 elements.bringForwardButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.bringSelectedForward();

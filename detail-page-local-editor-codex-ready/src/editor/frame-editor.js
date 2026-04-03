@@ -14,6 +14,8 @@ import {
   truncate,
 } from '../utils.js';
 import { collectSlotCandidates } from '../core/slot-detector.js';
+import { createEditorModel, patchModelNode, applyModelNodesToDom } from '../core/editor-model.js';
+import { restoreSerializedAssetRefs } from '../core/serialize-layer.js';
 
 const FRAME_CSS_URL_RE = /url\((['"]?)([^"'()]+)\1\)/gi;
 const ADD_ELEMENT_PRESETS = {
@@ -332,6 +334,8 @@ export function createFrameEditor({
   let overlayNodes = null;
   const slotBackupMap = new Map();
   const modifiedSlots = new Set();
+  const editorModel = createEditorModel(doc);
+  let lastCommittedSnapshot = initialSnapshot?.html ? { ...initialSnapshot } : null;
 
   function uniqueConnectedElements(items) {
     const seen = new Set();
@@ -685,7 +689,10 @@ export function createFrameEditor({
   }
 
   function emitMutation(label) {
-    onMutation(captureSnapshot(label));
+    const before = lastCommittedSnapshot || captureSnapshot('before-command');
+    const after = captureSnapshot(label);
+    lastCommittedSnapshot = after;
+    onMutation({ type: 'command', id: nextId('cmd'), label, before, after, modelVersion: editorModel.version, at: new Date().toISOString() });
   }
 
   function getElementByUid(uid) {
@@ -849,6 +856,10 @@ export function createFrameEditor({
     const keepUids = preserveSelectionUids || selectedElements.map((element) => element.dataset.nodeUid).filter(Boolean) || [];
     detection = collectSlotCandidates(doc, { markDom: true });
     slotMap = new Map(detection.candidates.map((item) => [item.uid, item]));
+    const refreshedModel = createEditorModel(doc);
+    editorModel.nodes.clear();
+    for (const [uid, node] of refreshedModel.nodes.entries()) editorModel.nodes.set(uid, node);
+    editorModel.version = refreshedModel.version;
     const keepElements = uniqueConnectedElements(keepUids.map((uid) => getElementByUid(uid)));
     if (keepElements.length) selectElements(keepElements, { silent: true });
     else if (preserveSelectionUid || initialSnapshot?.selectedUid) {
@@ -876,7 +887,8 @@ export function createFrameEditor({
     if (hidden) element.dataset.editorHidden = '1';
     else element.removeAttribute('data-editor-hidden');
     const baseDisplay = decodeData(element.dataset.editorBaseDisplay || '');
-    setInlineStyle(element, { display: hidden ? 'none' : (baseDisplay && baseDisplay !== 'none' ? baseDisplay : null) });
+    patchModelNode(editorModel, uid, { style: { display: hidden ? 'none' : (baseDisplay && baseDisplay !== 'none' ? baseDisplay : null) } });
+    applyModelNodesToDom(doc, editorModel, [uid]);
     element.dataset.editorModified = '1';
     modifiedSlots.add(uid);
     return true;
@@ -888,6 +900,7 @@ export function createFrameEditor({
     element.dataset.nodeUid = uid;
     if (locked) element.dataset.editorLocked = '1';
     else element.removeAttribute('data-editor-locked');
+    patchModelNode(editorModel, uid, {});
     element.dataset.editorModified = '1';
     modifiedSlots.add(uid);
     return true;
@@ -1181,7 +1194,13 @@ export function createFrameEditor({
     const translate = (tx || ty) ? `translate(${Number(tx.toFixed(3))}px, ${Number(ty.toFixed(3))}px)` : '';
     const base = state.base && state.base !== 'none' ? state.base : '';
     const nextTransform = [base, translate].filter(Boolean).join(' ').trim();
-    setInlineStyle(element, { transform: nextTransform || null });
+    const uid = element.dataset.nodeUid || nextId('node');
+    element.dataset.nodeUid = uid;
+    patchModelNode(editorModel, uid, {
+      bounds: { x: Number(tx.toFixed(3)), y: Number(ty.toFixed(3)) },
+      style: { transform: nextTransform || null },
+    });
+    applyModelNodesToDom(doc, editorModel, [uid]);
     element.dataset.editorModified = '1';
   }
 
@@ -1203,15 +1222,42 @@ export function createFrameEditor({
     };
   }
 
+  function selectionHudState() {
+    const geometry = elementGeometry(selectedElement);
+    if (!selectedElement || !geometry) return null;
+    const siblings = selectedElement.parentElement
+      ? Array.from(selectedElement.parentElement.children).filter((node) => node.nodeType === 1)
+      : [];
+    const index = siblings.indexOf(selectedElement);
+    return {
+      ...geometry,
+      layerIndexFromBack: index >= 0 ? index + 1 : 0,
+      layerTotal: siblings.length,
+    };
+  }
+
   function applyGeometryPatch(patch = {}) {
     const target = selectedElement;
     if (!target) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
     if (isLockedElement(target)) return { ok: false, message: '잠긴 요소는 편집할 수 없습니다.' };
     if (Number.isFinite(patch.w) || Number.isFinite(patch.h)) {
+      const uid = target.dataset.nodeUid || nextId('node');
+      target.dataset.nodeUid = uid;
+      const boundsPatch = {};
       const stylePatch = {};
-      if (Number.isFinite(patch.w)) stylePatch.width = `${Math.max(8, patch.w)}px`;
-      if (Number.isFinite(patch.h)) stylePatch.height = `${Math.max(8, patch.h)}px`;
-      setInlineStyle(target, stylePatch);
+      if (Number.isFinite(patch.w)) {
+        boundsPatch.width = Math.max(8, patch.w);
+        stylePatch.width = `${Math.max(8, patch.w)}px`;
+      }
+      if (Number.isFinite(patch.h)) {
+        boundsPatch.height = Math.max(8, patch.h);
+        stylePatch.height = `${Math.max(8, patch.h)}px`;
+      }
+      patchModelNode(editorModel, uid, {
+        bounds: boundsPatch,
+        style: stylePatch,
+      });
+      applyModelNodesToDom(doc, editorModel, [uid]);
     }
     const state = readTransformState(target);
     const nextX = Number.isFinite(patch.x) ? patch.x : state.tx;
@@ -1252,18 +1298,12 @@ export function createFrameEditor({
   }
 
   function deleteSelected() {
-    const targets = uniqueConnectedElements(selectedElements);
-    if (!targets.length) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
-    let removed = 0;
-    for (const element of targets) {
-      if (!element.isConnected || element === doc.body || element.tagName === 'HTML' || element.tagName === 'BODY') continue;
-      element.remove();
-      removed += 1;
-    }
-    if (!removed) return { ok: false, message: '삭제할 수 있는 요소가 없습니다.' };
-    redetect({ preserveSelectionUids: [] });
-    emitMutation('delete');
-    return { ok: true, message: `선택 요소 ${removed}개를 삭제했습니다.` };
+    return deleteSelection({
+      selectedElements: () => uniqueConnectedElements(selectedElements),
+      doc,
+      redetect,
+      emitMutation,
+    });
   }
 
   function addElement(kind) {
@@ -1332,6 +1372,15 @@ export function createFrameEditor({
       back: '선택 요소를 맨 뒤로 보냈습니다.',
     };
     return { ok: true, message: messageMap[command] || '레이어 순서를 변경했습니다.' };
+  }
+
+  function nudgeSelectedElements(dx = 0, dy = 0) {
+    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
+    if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
+    for (const element of targets) shiftElementBy(element, dx, dy);
+    emitState();
+    emitMutation('nudge-selection');
+    return { ok: true, message: `선택 요소 ${targets.length}개를 ${dx}, ${dy}만큼 이동했습니다.` };
   }
 
   function nudgeImagePosition(dx = 0, dy = 0) {
@@ -1554,30 +1603,7 @@ export function createFrameEditor({
     const parser = new DOMParser();
     const currentHtml = createDoctypeHtml(doc);
     const exportDoc = parser.parseFromString(currentHtml, 'text/html');
-
-    for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
-      if (img.dataset.exportSrc) img.setAttribute('src', img.dataset.exportSrc);
-      else if (img.dataset.originalSrc) img.setAttribute('src', img.dataset.originalSrc);
-      if (img.dataset.originalSrcset && !img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.originalSrcset);
-      else if (!img.dataset.originalSrcset) img.removeAttribute('srcset');
-      img.removeAttribute('sizes');
-    }
-
-    for (const source of Array.from(exportDoc.querySelectorAll('source'))) {
-      if (source.dataset.originalSrcset) source.setAttribute('srcset', source.dataset.originalSrcset);
-    }
-
-    for (const element of Array.from(exportDoc.querySelectorAll('[style]'))) {
-      if (element.dataset.exportStyle) element.setAttribute('style', element.dataset.exportStyle);
-      else if (element.dataset.originalStyle) element.setAttribute('style', element.dataset.originalStyle);
-    }
-
-    for (const styleBlock of Array.from(exportDoc.querySelectorAll('style'))) {
-      if (styleBlock.dataset.originalCss) {
-        try { styleBlock.textContent = decodeURIComponent(styleBlock.dataset.originalCss); } catch {}
-      }
-    }
-
+    restoreSerializedAssetRefs(exportDoc, { keepEditedAssets: true });
     if (persistDetectedSlots) persistSlotLabels(exportDoc);
     stripFinalEditorRuntime(exportDoc);
     return createDoctypeHtml(exportDoc);
@@ -1587,21 +1613,7 @@ export function createFrameEditor({
     const parser = new DOMParser();
     const currentHtml = createDoctypeHtml(doc);
     const exportDoc = parser.parseFromString(currentHtml, 'text/html');
-
-    for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
-      if (img.dataset.exportSrc) img.setAttribute('src', img.dataset.exportSrc);
-      if (img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.exportSrcset);
-      img.removeAttribute('sizes');
-    }
-
-    for (const source of Array.from(exportDoc.querySelectorAll('source'))) {
-      if (source.dataset.exportSrcset) source.setAttribute('srcset', source.dataset.exportSrcset);
-    }
-
-    for (const element of Array.from(exportDoc.querySelectorAll('[style]'))) {
-      if (element.dataset.exportStyle) element.setAttribute('style', element.dataset.exportStyle);
-    }
-
+    restoreSerializedAssetRefs(exportDoc, { keepEditedAssets: true });
     if (persistDetectedSlots) persistSlotLabels(exportDoc);
     stripFinalEditorRuntime(exportDoc);
     return exportDoc;
@@ -1689,6 +1701,34 @@ export function createFrameEditor({
     };
   }
 
+  function normalizeExportScale(scale = 1) {
+    const value = Number.parseFloat(String(scale));
+    if (!Number.isFinite(value) || value <= 0) return 1;
+    if (value >= 2.5) return 3;
+    if (value >= 1.5) return 2;
+    return 1;
+  }
+
+  function elementRectToCrop(rect, docRect) {
+    return {
+      x: Math.max(0, Math.round(rect.left - docRect.left)),
+      y: Math.max(0, Math.round(rect.top - docRect.top)),
+      width: Math.max(1, Math.ceil(rect.width)),
+      height: Math.max(1, Math.ceil(rect.height)),
+    };
+  }
+
+  function computeSelectionBoundingCrop() {
+    const targets = uniqueConnectedElements(selectedElements).filter((element) => isElement(element) && element.isConnected);
+    if (!targets.length) return null;
+    const rects = targets.map((element) => element.getBoundingClientRect()).filter((rect) => rect.width > 0 && rect.height > 0);
+    if (!rects.length) return null;
+    const bounds = unionRect(rects);
+    if (!bounds) return null;
+    const docRect = doc.documentElement.getBoundingClientRect();
+    return elementRectToCrop(bounds, docRect);
+  }
+
   async function renderHtmlToCanvas(html, { fullWidth, fullHeight, crop, scale = 1 }) {
     const parsed = new DOMParser().parseFromString(html, 'text/html');
     parsed.documentElement.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
@@ -1714,53 +1754,46 @@ export function createFrameEditor({
     return canvas;
   }
 
-  async function exportFullPngBlob(scale = 1.5) {
+  async function buildExportRenderContext() {
     const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: false });
     await rewriteBlobRefsToPortableUrls(exportDoc);
-    const metrics = measureExportRoot();
-    const canvas = await renderHtmlToCanvas(createDoctypeHtml(exportDoc), {
-      fullWidth: metrics.fullWidth,
-      fullHeight: metrics.fullHeight,
-      crop: { x: metrics.x, y: metrics.y, width: metrics.width, height: metrics.height },
-      scale,
+    return {
+      html: createDoctypeHtml(exportDoc),
+      metrics: measureExportRoot(),
+      exportDoc,
+    };
+  }
+
+  async function renderExportBlob({ area = null, scale = 1, format = 'png', quality = 0.92, context = null } = {}) {
+    const renderContext = context || (await buildExportRenderContext());
+    const resolvedArea = area || {
+      x: renderContext.metrics.x,
+      y: renderContext.metrics.y,
+      width: renderContext.metrics.width,
+      height: renderContext.metrics.height,
+    };
+    const canvas = await renderHtmlToCanvas(renderContext.html, {
+      fullWidth: renderContext.metrics.fullWidth,
+      fullHeight: renderContext.metrics.fullHeight,
+      crop: resolvedArea,
+      scale: normalizeExportScale(scale),
     });
-    return await canvasToBlob(canvas, 'image/png');
+    const mime = format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : 'image/png';
+    return await canvasToBlob(canvas, mime, mime === 'image/jpeg' ? quality : undefined);
+  }
+
+  async function exportFullPngBlob(scale = 1.5) {
+    return await renderExportBlob({ format: 'png', scale });
   }
 
   async function exportFullJpgBlob(scale = 1.5, quality = 0.92) {
-    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: false });
-    await rewriteBlobRefsToPortableUrls(exportDoc);
-    const metrics = measureExportRoot();
-    const canvas = await renderHtmlToCanvas(createDoctypeHtml(exportDoc), {
-      fullWidth: metrics.fullWidth,
-      fullHeight: metrics.fullHeight,
-      crop: { x: metrics.x, y: metrics.y, width: metrics.width, height: metrics.height },
-      scale,
-    });
-    return await canvasToBlob(canvas, 'image/jpeg', quality);
+    return await renderExportBlob({ format: 'jpg', scale, quality });
   }
 
   async function exportSelectionPngBlob(scale = 1.5) {
-    const target = selectedElement;
-    if (!target) throw new Error('먼저 요소를 선택해 주세요.');
-    const rect = target.getBoundingClientRect();
-    const docRect = doc.documentElement.getBoundingClientRect();
-    const crop = {
-      x: Math.max(0, Math.round(rect.left - docRect.left)),
-      y: Math.max(0, Math.round(rect.top - docRect.top)),
-      width: Math.max(1, Math.ceil(rect.width)),
-      height: Math.max(1, Math.ceil(rect.height)),
-    };
-    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: false });
-    await rewriteBlobRefsToPortableUrls(exportDoc);
-    const metrics = measureExportRoot();
-    const canvas = await renderHtmlToCanvas(createDoctypeHtml(exportDoc), {
-      fullWidth: metrics.fullWidth,
-      fullHeight: metrics.fullHeight,
-      crop,
-      scale,
-    });
-    return await canvasToBlob(canvas, 'image/png');
+    const crop = computeSelectionBoundingCrop();
+    if (!crop) throw new Error('먼저 요소를 선택해 주세요.');
+    return await renderExportBlob({ format: 'png', area: crop, scale });
   }
 
   function collectSectionRects() {
@@ -1777,12 +1810,7 @@ export function createFrameEditor({
     }
     return candidates.map((element, index) => {
       const rect = element.getBoundingClientRect();
-      const crop = {
-        x: Math.max(0, Math.round(rect.left - docRect.left)),
-        y: Math.max(0, Math.round(rect.top - docRect.top)),
-        width: Math.max(1, Math.ceil(rect.width)),
-        height: Math.max(1, Math.ceil(rect.height)),
-      };
+      const crop = elementRectToCrop(rect, docRect);
       const rawName = buildLabel(element) || element.id || element.className || element.tagName.toLowerCase();
       return {
         crop,
@@ -1792,26 +1820,56 @@ export function createFrameEditor({
   }
 
   async function exportSectionPngEntries(scale = 1.5) {
-    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: false });
-    await rewriteBlobRefsToPortableUrls(exportDoc);
-    const metrics = measureExportRoot();
-    const html = createDoctypeHtml(exportDoc);
+    const context = await buildExportRenderContext();
     const sections = collectSectionRects();
     const entries = [];
     for (const section of sections) {
       // eslint-disable-next-line no-await-in-loop
-      const canvas = await renderHtmlToCanvas(html, {
-        fullWidth: metrics.fullWidth,
-        fullHeight: metrics.fullHeight,
-        crop: section.crop,
-        scale,
-      });
-      // eslint-disable-next-line no-await-in-loop
-      const blob = await canvasToBlob(canvas, 'image/png');
+      const blob = await renderExportBlob({ format: 'png', area: section.crop, scale, context });
       // eslint-disable-next-line no-await-in-loop
       entries.push({ name: section.name, data: new Uint8Array(await blob.arrayBuffer()) });
     }
     return entries;
+  }
+
+  async function exportFixtureIntegrityReport() {
+    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: false });
+    const fixtureContract = project?.fixtureMeta?.slot_contract || null;
+    let placeholderOnlySlots = 0;
+    let unresolvedImages = 0;
+    for (const slotRecord of detection.candidates) {
+      const slot = exportDoc.querySelector(`[data-node-uid="${slotRecord.uid}"]`);
+      if (!slot || slot.dataset.slotIgnore === '1') continue;
+      const hasPlaceholder = PLACEHOLDER_TEXT_RE.test(placeholderTextValue(slot));
+      const target = findSlotMediaTarget(slot);
+      let hasMedia = false;
+      let unresolved = false;
+      if (target.kind === 'background') {
+        const styleValue = (target.element || slot).getAttribute('style') || '';
+        hasMedia = /url\(/i.test(styleValue);
+        unresolved = /%EB%AF%B8%ED%95%B4%EA%B2%B0|미해결/i.test(styleValue);
+      } else {
+        const img = target.element || slot.querySelector('img');
+        const src = img?.getAttribute('src') || '';
+        hasMedia = !!src;
+        unresolved = /%EB%AF%B8%ED%95%B4%EA%B2%B0|미해결/i.test(src);
+      }
+      if (hasPlaceholder && !hasMedia) placeholderOnlySlots += 1;
+      if (unresolved) unresolvedImages += 1;
+    }
+    const issues = [];
+    if (placeholderOnlySlots > 0) issues.push(`placeholder-only 슬롯 ${placeholderOnlySlots}개`);
+    if (unresolvedImages > 0) issues.push(`미해결 이미지 ${unresolvedImages}개`);
+    if (fixtureContract?.required_exact_count != null && detection.summary.totalCount !== fixtureContract.required_exact_count) {
+      issues.push(`fixture 슬롯 수 불일치(${detection.summary.totalCount}/${fixtureContract.required_exact_count})`);
+    }
+    return {
+      ok: issues.length === 0,
+      fixtureId: project?.fixtureId || '',
+      placeholderOnlySlots,
+      unresolvedImages,
+      issues,
+    };
   }
 
   async function buildLinkedPackageEntries() {
@@ -1905,91 +1963,69 @@ export function createFrameEditor({
   }
 
   function beginMoveDrag(target, event) {
-    if (!target || isLockedElement(target)) return false;
-    if (!selectedElements.some((element) => element.dataset.nodeUid === target.dataset.nodeUid)) {
-      selectElements([target], { silent: true });
-    }
-    const elements = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
-    if (!elements.length) return false;
-    const snapshots = elements.map((element) => ({
-      element,
-      rect: element.getBoundingClientRect(),
-      transform: readTransformState(element),
-    }));
-    const union = unionRect(snapshots.map((item) => item.rect));
-    const excluded = new Set(elements.map((element) => element.dataset.nodeUid));
-    dragState = {
-      mode: 'move',
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      moved: false,
-      snapshots,
-      union,
-      snapCandidates: buildSnapCandidates(excluded),
-    };
+    const nextState = beginMoveInteraction({
+      target,
+      event,
+      isLockedElement,
+      selectedElements: () => selectedElements,
+      selectElements,
+      uniqueConnectedElements,
+      readTransformState,
+      unionRect,
+      buildSnapCandidates,
+    });
+    if (!nextState) return false;
+    dragState = nextState;
     return true;
   }
 
   function beginMarqueeDrag(event) {
-    dragState = {
-      mode: 'marquee',
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      moved: false,
-      additive: !!(event.ctrlKey || event.metaKey || event.shiftKey),
-      seedSelection: uniqueConnectedElements(selectedElements),
-    };
+    dragState = beginMarqueeInteraction({
+      event,
+      selectedElements: () => selectedElements,
+      uniqueConnectedElements,
+    });
     return true;
   }
 
   function updateMarqueeSelection(endX, endY) {
-    if (!dragState || dragState.mode !== 'marquee') return;
-    const rect = normalizeClientRect(dragState.startX, dragState.startY, endX, endY);
-    showMarqueeRect(rect);
-    const hits = collectInteractiveLayers()
-      .filter((element) => !isLockedElement(element) && !isHiddenElement(element))
-      .filter((element) => {
-        const box = element.getBoundingClientRect();
-        return box.width > 1 && box.height > 1 && rectIntersects(box, rect);
-      });
-    const next = dragState.additive ? uniqueConnectedElements([...dragState.seedSelection, ...hits]) : uniqueConnectedElements(hits);
-    selectElements(next, { silent: true });
+    applyMarqueeInteraction({
+      dragState,
+      endX,
+      endY,
+      showMarqueeRect,
+      collectInteractiveLayers,
+      isLockedElement,
+      isHiddenElement,
+      rectIntersects,
+      uniqueConnectedElements,
+      selectElements,
+    });
   }
 
   function updateMoveDrag(clientX, clientY) {
-    if (!dragState || dragState.mode !== 'move') return;
-    const rawDx = clientX - dragState.startX;
-    const rawDy = clientY - dragState.startY;
-    const snapped = computeSnapAdjustment(dragState.union, rawDx, rawDy, dragState.snapCandidates);
-    for (const item of dragState.snapshots) {
-      writeTransformState(item.element, item.transform.tx + snapped.dx, item.transform.ty + snapped.dy);
-    }
-    showSnapLines({ x: snapped.guideX, y: snapped.guideY });
-    doc.documentElement.classList.add('__phase6_dragging_cursor');
-    doc.body.classList.add('__phase6_dragging_cursor');
+    applyMoveInteraction({
+      dragState,
+      clientX,
+      clientY,
+      computeSnapAdjustment,
+      writeTransformState,
+      showSnapLines,
+      doc,
+    });
   }
 
   function beginResizeDrag(event, corner) {
-    const target = selectedElement;
-    if (!target || isLockedElement(target)) return false;
-    const rect = target.getBoundingClientRect();
-    const transform = readTransformState(target);
-    const width = Number.parseFloat(win.getComputedStyle(target).width || String(rect.width)) || rect.width;
-    const height = Number.parseFloat(win.getComputedStyle(target).height || String(rect.height)) || rect.height;
-    resizeState = {
-      pointerId: event.pointerId,
+    const nextState = beginResizeInteraction({
+      event,
       corner,
-      target,
-      startX: event.clientX,
-      startY: event.clientY,
-      startWidth: width,
-      startHeight: height,
-      startTx: transform.tx,
-      startTy: transform.ty,
-      moved: false,
-    };
+      selectedElement: () => selectedElement,
+      isLockedElement,
+      readTransformState,
+      win,
+    });
+    if (!nextState) return false;
+    resizeState = nextState;
     return true;
   }
 
@@ -2016,7 +2052,13 @@ export function createFrameEditor({
     }
     width = Math.max(8, width);
     height = Math.max(8, height);
-    setInlineStyle(target, { width: `${Math.round(width)}px`, height: `${Math.round(height)}px` });
+    const uid = target.dataset.nodeUid || nextId('node');
+    target.dataset.nodeUid = uid;
+    patchModelNode(editorModel, uid, {
+      bounds: { width, height },
+      style: { width: `${Math.round(width)}px`, height: `${Math.round(height)}px` },
+    });
+    applyModelNodesToDom(doc, editorModel, [uid]);
     writeTransformState(target, tx, ty);
     target.dataset.editorModified = '1';
     if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
@@ -2125,35 +2167,69 @@ export function createFrameEditor({
     }
   }
 
+  function executeCommand(command, payload = {}) {
+    if (command === 'duplicate') return duplicateSelected();
+    if (command === 'delete') return deleteSelected();
+    if (command === 'nudge-selection') return nudgeSelectedElements(payload.dx || 0, payload.dy || 0);
+    if (command === 'undo' || command === 'redo' || command === 'save-edited') {
+      onShortcut(command);
+      return { ok: true, message: command };
+    }
+    return { ok: false, message: `지원하지 않는 명령: ${command}` };
+  }
+
   function handleKeydown(event) {
     const withModifier = event.ctrlKey || event.metaKey;
     if (withModifier && !event.altKey) {
       const key = String(event.key || '').toLowerCase();
       if (key === 'z') {
         event.preventDefault();
-        onShortcut(event.shiftKey ? 'redo' : 'undo');
+        executeCommand(event.shiftKey ? 'redo' : 'undo');
         return;
       }
       if (key === 'y') {
         event.preventDefault();
-        onShortcut('redo');
+        executeCommand('redo');
         return;
       }
       if (key === 's') {
         event.preventDefault();
-        onShortcut('save-edited');
+        executeCommand('save-edited');
         return;
       }
       if (key === 'd') {
         event.preventDefault();
-        onStatus(duplicateSelected().message);
+        onStatus(executeCommand('duplicate').message);
         return;
       }
     }
     if (!withModifier && !editingTextElement && (event.key === 'Delete' || event.key === 'Backspace')) {
       event.preventDefault();
-      onStatus(deleteSelected().message);
+      onStatus(executeCommand('delete').message);
       return;
+    }
+    if (!withModifier && !editingTextElement) {
+      const delta = event.shiftKey ? 10 : 1;
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        onStatus(executeCommand('nudge-selection', { dx: -delta, dy: 0 }).message);
+        return;
+      }
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        onStatus(executeCommand('nudge-selection', { dx: delta, dy: 0 }).message);
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        onStatus(executeCommand('nudge-selection', { dx: 0, dy: -delta }).message);
+        return;
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        onStatus(executeCommand('nudge-selection', { dx: 0, dy: delta }).message);
+        return;
+      }
     }
     if (!editingTextElement) return;
     if (event.key === 'Escape') {
@@ -2256,6 +2332,7 @@ export function createFrameEditor({
     bringSelectedToFront: () => applyLayerIndexCommand('front'),
     sendSelectedToBack: () => applyLayerIndexCommand('back'),
     nudgeSelectedImage: ({ dx = 0, dy = 0 } = {}) => nudgeImagePosition(dx, dy),
+    executeCommand,
     getEditedHtml: serializeEditedHtml,
     getCurrentPortableHtml: async () => {
       const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
@@ -2277,11 +2354,14 @@ export function createFrameEditor({
     async exportSectionPngEntries(scale = 1.5) {
       return await exportSectionPngEntries(scale);
     },
+    async getExportFixtureIntegrityReport() {
+      return await exportFixtureIntegrityReport();
+    },
     captureSnapshot,
     getReport: buildReport,
     getPreflightReport: buildPreflightReport,
     getMeta() {
-      return getDerivedMeta();
+      return { ...getDerivedMeta(), modelVersion: editorModel.version };
     },
     destroy() {
       if (destroyed) return;

@@ -19,8 +19,8 @@ export const AUTOSAVE_KEY = 'detail-local-webapp-autosave-v6';
 export const HISTORY_LIMIT = 80;
 
 export const EXPORT_PRESETS = [
-  { id: 'default', label: '기본 패키지', scale: 1.5, bundleMode: 'basic', description: '편집 HTML + 전체 PNG + 리포트' },
-  { id: 'market', label: '마켓 업로드', scale: 1.5, bundleMode: 'market', description: '링크형 HTML + 섹션 PNG + 리포트' },
+  { id: 'default', label: '기본 패키지', scale: 1, bundleMode: 'basic', description: '편집 HTML + 전체 PNG + 리포트' },
+  { id: 'market', label: '마켓 업로드', scale: 1, bundleMode: 'market', description: '링크형 HTML + 섹션 PNG + 리포트' },
   { id: 'hires', label: '고해상도', scale: 2, bundleMode: 'hires', description: '전체 PNG 2x + 섹션 PNG 2x + 편집 HTML' },
   { id: 'review', label: '검수용', scale: 1, bundleMode: 'review', description: '정규화 HTML + 전체 PNG 1x + 리포트' },
 ];
