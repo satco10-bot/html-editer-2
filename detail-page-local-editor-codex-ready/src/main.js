@@ -563,6 +563,21 @@ function handleEditorShortcut(action) {
   if (action === 'save-edited') return downloadEditedHtml();
 }
 
+function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
+  if (!activeEditor) {
+    setStatus('먼저 미리보기를 로드해 주세요.');
+    return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
+  }
+  const fallback = {
+    duplicate: () => activeEditor.duplicateSelected(),
+    delete: () => activeEditor.deleteSelected(),
+  };
+  const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
+  setStatus(result.message);
+  if (refresh && (store.getState().currentView === 'edited' || store.getState().currentView === 'report')) refreshComputedViews(store.getState());
+  return result;
+}
+
 function mountProject(project, { snapshot = null, preserveHistory = false, force = false } = {}) {
   if (activeEditor) {
     try { activeEditor.destroy(); } catch {}
@@ -973,18 +988,8 @@ elements.textEditButton.addEventListener('click', () => {
   setStatus(result.message);
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
-elements.duplicateButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const result = activeEditor.duplicateSelected();
-  setStatus(result.message);
-  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
-});
-elements.deleteButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const result = activeEditor.deleteSelected();
-  setStatus(result.message);
-  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
-});
+elements.duplicateButton?.addEventListener('click', () => { executeEditorCommand('duplicate'); });
+elements.deleteButton?.addEventListener('click', () => { executeEditorCommand('delete'); });
 elements.addTextButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.addTextElement();
