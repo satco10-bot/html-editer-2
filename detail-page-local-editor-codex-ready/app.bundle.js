@@ -5261,6 +5261,7 @@ const viewFeatureFlags = {
   ruler: false,
 };
 const OPEN_DOWNLOAD_MODAL_BUTTON_LABEL = '저장/출력 열기';
+const DEFAULT_JPG_QUALITY = 0.92;
 const WORKFLOW_STEP_GUIDES = Object.freeze({
   load: 'HTML 파일이나 폴더를 먼저 불러오세요.',
   edit: '요소를 클릭한 뒤 드래그하세요.',
@@ -5284,10 +5285,13 @@ const BOOT_LOCAL_POLICY = Object.freeze({
   requiresFileSystemAccessApi: false,
   requiresServerEndpoint: false,
 });
+const SUPPORTED_IMAGE_EXTENSIONS = Object.freeze(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.avif']);
+const SUPPORTED_IMAGE_EXTENSIONS_TEXT = SUPPORTED_IMAGE_EXTENSIONS.join(', ');
 const APP_STATES = Object.freeze({
   launch: 'launch',
   editor: 'editor',
 });
+let currentAppState = APP_STATES.launch;
 const BEGINNER_MODE_STORAGE_KEY = 'detail_editor_beginner_mode_v1';
 const ONBOARDING_COMPLETED_STORAGE_KEY = 'detail_editor_onboarding_completed_v1';
 const ONBOARDING_SAMPLE_CHECKED_STORAGE_KEY = 'detail_editor_onboarding_sample_checked_v1';
@@ -5568,6 +5572,7 @@ const elements = {
   onboardingChecklist: document.getElementById('onboardingChecklist'),
   onboardingChecklistItem: document.getElementById('onboardingChecklistItem'),
   onboardingChecklistDoneButton: document.getElementById('onboardingChecklistDoneButton'),
+  beginnerMoreItems: Array.from(document.querySelectorAll('[data-beginner-more-item]')),
 };
 
 const beginnerMoreItemAnchors = new WeakMap();
@@ -5773,6 +5778,36 @@ function selectionExportBackground() {
 
 function setStatus(text, options = undefined) {
   store.setStatus(text, options);
+}
+
+function setImageApplyDiagnostic(diagnostic) {
+  store.setImageApplyDiagnostic(diagnostic || null);
+}
+
+function buildImageFailureDiagnostic({ files = [], editorMeta = null, statusMessage = '' } = {}) {
+  const firstFile = files[0] || null;
+  const fileName = firstFile?.name || '';
+  const selected = editorMeta?.selected || null;
+  const selectedSlotLabel = selected?.label || selected?.uid || '';
+  const extension = fileName.includes('.') ? fileName.slice(fileName.lastIndexOf('.')).toLowerCase() : '';
+  const unsupportedFormat = !!extension && !SUPPORTED_IMAGE_EXTENSIONS.includes(extension);
+  const filenameMismatch = !!fileName && !!selectedSlotLabel && !fileName.toLowerCase().includes(String(selectedSlotLabel).toLowerCase());
+  const slotUnselected = !selected || selected.type !== 'slot';
+
+  return {
+    status: 'failed',
+    message: statusMessage || '이미지 적용 실패 원인을 확인해 주세요.',
+    reasons: {
+      slotUnselected,
+      filenameMismatch,
+      unsupportedFormat,
+    },
+    details: {
+      slotUnselected: slotUnselected ? '슬롯을 먼저 선택한 뒤 이미지를 넣어 주세요.' : '',
+      filenameMismatch: filenameMismatch ? `선택 슬롯(${selectedSlotLabel})과 파일명(${fileName})이 다릅니다.` : '',
+      unsupportedFormat: unsupportedFormat ? `지원하지 않는 확장자입니다: ${extension}` : '',
+    },
+  };
 }
 
 function setAppState(nextState) {
