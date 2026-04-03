@@ -5,10 +5,10 @@
 ## 현재 기준(최신) 핵심 기능 요약
 - 이 버전은 **phase6 로컬 워크플로우를 유지**하면서, 직접 편집/출력 기능을 최신 기준으로 보강한 상태입니다.
 - 검증 호환 키워드: **6단계**, **숨김/잠금**, **스냅**, **Preset**.
-- 캔버스 직접 편집: 선택/이동/리사이즈, 요소 추가(텍스트/박스/슬롯), 복제/삭제
-- 정밀 배치: XYWH 숫자 적용, z-order(앞으로/뒤로), 스냅 가이드
+- 캔버스 직접 편집: 선택/이동/리사이즈, 요소 추가(텍스트/박스/슬롯), 복제/삭제, 그룹 묶기/해제
+- 정밀 배치: XYWH 숫자 적용, z-order(앞으로/뒤로), Shift+드래그 다중선택, 스냅 가이드
 - 출력: JPG, 선택 PNG, 1x/2x/3x 배율, Export Preset
-- 아직 미구현: 그룹 묶기/해제, 고급 템플릿(선택 모음/컴포넌트화)
+- 아직 미구현: 고급 템플릿(선택 모음/컴포넌트화)
 
 ## 제일 쉬운 사용법
 1. 이 폴더를 압축 해제합니다.
@@ -40,7 +40,7 @@
 ## 로컬 실행
 압축을 푼 뒤 `index.html`을 브라우저에서 직접 열면 됩니다.
 
-초보자 빠른 순서(1~2줄): 요소를 클릭한 뒤 드래그/핸들로 먼저 위치·크기를 맞추고, 필요하면 `Ctrl/Cmd+D`(복제), `Delete`(삭제), XYWH 숫자 입력으로 마무리하세요. 마지막에 JPG 또는 선택 PNG로 출력하면 됩니다.
+초보자 빠른 순서(1~2줄): ① 요소 선택 → ② 드래그/핸들·XYWH 숫자로 수정 → ③ 저장/출력 버튼 실행. 이 3단계만 기억하면 처음 써도 바로 작업할 수 있습니다.
 
 ## 개발/검증 명령
 ```bash
@@ -49,12 +49,29 @@ node --check app.bundle.js
 python3 scripts/validate_phase6.py
 ```
 
-## Phase8 파이프라인 실행 가이드 (CI/로컬 5줄 요약)
-1. `python3 -m pip install -r requirements-regression.txt` 로 공통 의존성을 먼저 설치합니다.
-2. Playwright는 패키지 설치만으로 끝나지 않으므로 `python3 -m playwright install chromium` 를 추가 실행합니다.
-3. 로컬/CI 모두 동일하게 `python3 scripts/run_phase8_regression_pipeline.py` 를 실행하면 JSON + Dashboard 리포트가 생성됩니다.
-4. 대시보드에서 🟠(의존성 실패)와 🔴(시나리오 실패)를 분리해서 보고, F05 경고의 실패 원인 라벨을 먼저 확인합니다.
-5. `quality_confidence` 가 `high` 인 실행만 “신뢰 가능한 결과”로 판단하고 배포/병합 의사결정에 사용합니다.
+## Phase8 파이프라인 실행 가이드 (처음 실행도 바로 동작)
+1. 먼저 아래 **한 줄**만 실행합니다.
+   ```bash
+   python3 -m pip install -r requirements-regression.txt
+   ```
+2. 이후 로컬/CI 모두 동일하게 아래 명령을 실행합니다.
+   ```bash
+   python3 scripts/run_phase8_regression_pipeline.py
+   ```
+3. 파이프라인은 시작 전에 dependency precheck를 먼저 수행합니다.
+   - 누락 패키지가 있으면 목록을 명확히 출력합니다.
+   - 같은 화면에 설치 명령 1줄(`python3 -m pip install -r requirements-regression.txt`)만 다시 안내합니다.
+4. 결과 JSON/대시보드는 **dependency 실패**와 **scenario 실패**를 분리 기록합니다.
+   - `dependency_precheck.status`: 의존성 상태
+   - `scenario_execution.status`: 시나리오 실행/미실행 상태
+5. F05 gate 표시는 다음처럼 구분됩니다.
+   - `passed`: 통과
+   - `failed`: 실행은 되었지만 실패
+   - `not_run`: 의존성 문제 등으로 미실행
+
+### quality_confidence가 low로 떨어지는 조건
+- dependency precheck 실패(필수 패키지 누락)
+- F05 gate가 `not_run`인 경우(즉, 게이트 자체가 미실행)
 
 ## 왜 zip 하나만 올리면 안 되나요?
 Codex는 저장소 안의 **실제 파일들**을 읽고 바꾸는 방식입니다.

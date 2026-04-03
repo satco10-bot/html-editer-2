@@ -1756,13 +1756,91 @@ function createFrameEditor({
     return selected.filter((element) => !selected.some((other) => other !== element && other.contains(element)));
   }
 
+  function buildAncestorChain(element) {
+    const chain = [];
+    let cursor = element;
+    while (cursor && cursor !== doc && isElement(cursor)) {
+      chain.push(cursor);
+      cursor = cursor.parentElement;
+    }
+    return chain;
+  }
+
+  function lowestCommonAncestor(elements) {
+    const targets = uniqueConnectedElements(elements).filter((element) => element !== doc.documentElement && element !== doc.body);
+    if (!targets.length) return null;
+    if (targets.length === 1) return targets[0].parentElement || null;
+    const baseChain = buildAncestorChain(targets[0]);
+    for (const candidate of baseChain) {
+      const shared = targets.every((element) => element === candidate || candidate.contains(element));
+      if (shared) return candidate;
+    }
+    return null;
+  }
+
+  function resolveGroupScope(targets) {
+    const orderedTargets = filterTopLevelSelection(targets).filter((element) => !isLockedElement(element));
+    if (orderedTargets.length < 2) return { ok: false, message: '그룹은 2개 이상 선택해야 합니다.' };
+    const lca = lowestCommonAncestor(orderedTargets);
+    if (!lca || ['HTML', 'BODY'].includes(lca.tagName) || lca === doc.body) {
+      return { ok: false, message: '그룹을 만들 공통 부모를 찾지 못했습니다.' };
+    }
+    if (isGroupElement(lca)) {
+      return { ok: false, message: '이미 그룹 내부입니다. 하위 요소를 직접 선택해 주세요.' };
+    }
+    if (orderedTargets.some((element) => element === lca)) {
+      return { ok: false, message: '공통 조상 자체는 그룹 대상으로 선택할 수 없습니다.' };
+    }
+    return { ok: true, targets: orderedTargets, parent: lca };
+  }
+
+  function resolveDirectChildUnderParent(element, parent) {
+    let cursor = element;
+    while (cursor && cursor.parentElement && cursor.parentElement !== parent) cursor = cursor.parentElement;
+    if (cursor?.parentElement === parent) return cursor;
+    return null;
+  }
+
+  function stabilizeGroupedChildLayout(child, beforeRect) {
+    if (!child || !beforeRect) return;
+    const afterRect = child.getBoundingClientRect();
+    const dx = beforeRect.left - afterRect.left;
+    const dy = beforeRect.top - afterRect.top;
+    if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return;
+    shiftElementBy(child, dx, dy);
+  }
+
+  function buildGroupRestoreMeta(records) {
+    return encodeData(JSON.stringify(records.map((record) => ({
+      uid: record.uid,
+      parentUid: record.parentUid,
+      nextSiblingUid: record.nextSiblingUid,
+      index: record.index,
+    }))));
+  }
+
+  function readGroupRestoreMeta(group) {
+    try {
+      return JSON.parse(decodeData(group?.dataset?.groupRestoreMeta || '[]'));
+    } catch {
+      return [];
+    }
+  }
+
+  function runGroupLayerSyncValidation({ action = 'group', expectedSelectionUids = [] } = {}) {
+    const layerTree = buildLayerTree();
+    const layerUids = new Set(layerTree.map((item) => item.uid));
+    const selectedUids = uniqueConnectedElements(selectedElements).map((element) => element.dataset.nodeUid).filter(Boolean);
+    const missingSelection = selectedUids.filter((uid) => !layerUids.has(uid));
+    const expectedMissing = expectedSelectionUids.filter((uid) => uid && !selectedUids.includes(uid));
+    if (!missingSelection.length && !expectedMissing.length) return;
+    onStatus(
+      `[검증:${action}] 레이어/선택 동기화 확인 필요 · layer누락:${missingSelection.length} · selection누락:${expectedMissing.length}`
+    );
+  }
+
   function canGroupSelection() {
-    const targets = filterTopLevelSelection(selectedElements).filter((element) => !isLockedElement(element));
-    if (targets.length < 2) return false;
-    const parent = targets[0]?.parentElement;
-    if (!parent || parent === doc.body || parent.tagName === 'HTML' || parent.tagName === 'BODY') return false;
-    if (isGroupElement(parent)) return false;
-    return targets.every((element) => element.parentElement === parent && !isGroupElement(element));
+    return resolveGroupScope(selectedElements).ok;
   }
 
   function canUngroupSelection() {
@@ -2756,27 +2834,52 @@ function createFrameEditor({
   }
 
   function groupSelected() {
-    const targets = filterTopLevelSelection(selectedElements).filter((element) => !isLockedElement(element));
-    if (targets.length < 2) return { ok: false, message: '그룹은 2개 이상 선택해야 합니다.' };
-    const parent = targets[0]?.parentElement;
-    if (!parent || parent === doc.body || ['HTML', 'BODY'].includes(parent.tagName)) {
-      return { ok: false, message: '그룹을 만들 공통 부모를 찾지 못했습니다.' };
-    }
-    if (!targets.every((element) => element.parentElement === parent)) {
-      return { ok: false, message: '같은 부모 레벨의 요소만 그룹으로 묶을 수 있습니다.' };
-    }
+    const scope = resolveGroupScope(selectedElements);
+    if (!scope.ok) return { ok: false, message: scope.message };
+    const { parent, targets } = scope;
     const siblingOrder = Array.from(parent.children || []);
-    const orderedTargets = targets.slice().sort((a, b) => siblingOrder.indexOf(a) - siblingOrder.indexOf(b));
+    const orderedTargets = targets.slice().sort((a, b) => {
+      const aAnchor = resolveDirectChildUnderParent(a, parent);
+      const bAnchor = resolveDirectChildUnderParent(b, parent);
+      const ai = siblingOrder.indexOf(aAnchor);
+      const bi = siblingOrder.indexOf(bAnchor);
+      if (ai === -1 && bi === -1) return 0;
+      if (ai === -1) return -1;
+      if (bi === -1) return 1;
+      return ai - bi;
+    });
+    const beforeRects = new Map(orderedTargets.map((target) => [target, target.getBoundingClientRect()]));
+    const restoreMeta = orderedTargets.map((target) => {
+      if (!target.dataset.nodeUid) target.dataset.nodeUid = nextId('node');
+      const sourceParent = target.parentElement;
+      if (sourceParent && !sourceParent.dataset.nodeUid) sourceParent.dataset.nodeUid = nextId('node');
+      const nextSibling = target.nextElementSibling;
+      if (nextSibling && !nextSibling.dataset.nodeUid) nextSibling.dataset.nodeUid = nextId('node');
+      return {
+        uid: target.dataset.nodeUid || '',
+        parentUid: sourceParent?.dataset?.nodeUid || '',
+        nextSiblingUid: nextSibling?.dataset?.nodeUid || '',
+        index: Array.from(sourceParent?.children || []).indexOf(target),
+      };
+    });
     const group = doc.createElement('div');
     group.dataset.nodeRole = 'group';
     group.dataset.nodeUid = nextId('node');
     group.dataset.groupLabel = `그룹 ${orderedTargets.length}`;
+    group.dataset.groupRestoreMeta = buildGroupRestoreMeta(restoreMeta);
     group.setAttribute('aria-label', group.dataset.groupLabel);
-    parent.insertBefore(group, orderedTargets[0]);
-    for (const target of orderedTargets) group.appendChild(target);
+    const anchorForInsert = resolveDirectChildUnderParent(orderedTargets[0], parent);
+    if (anchorForInsert && anchorForInsert.parentElement === parent) parent.insertBefore(group, anchorForInsert);
+    else parent.appendChild(group);
+    for (const target of orderedTargets) {
+      group.appendChild(target);
+      stabilizeGroupedChildLayout(target, beforeRects.get(target));
+    }
+    setInlineStyle(group, { position: 'relative', minHeight: '1px' });
     group.dataset.editorModified = '1';
     modifiedSlots.add(group.dataset.nodeUid);
     redetect({ preserveSelectionUids: [group.dataset.nodeUid] });
+    runGroupLayerSyncValidation({ action: 'group', expectedSelectionUids: [group.dataset.nodeUid] });
     emitMutation('group-selection');
     return { ok: true, message: `선택 요소 ${orderedTargets.length}개를 그룹으로 묶었습니다.` };
   }
@@ -2804,13 +2907,29 @@ function createFrameEditor({
       const parent = group.parentElement;
       if (!parent) continue;
       const children = Array.from(group.children || []).filter((child) => isElement(child));
+      const restoreMetaRows = readGroupRestoreMeta(group);
+      const restoreMetaByUid = new Map(restoreMetaRows.map((row) => [String(row.uid || ''), row]));
       for (const child of children) {
-        parent.insertBefore(child, group);
+        const childUid = child.dataset.nodeUid || '';
+        const restoreMeta = restoreMetaByUid.get(childUid);
+        const restoreParent = getElementByUid(restoreMeta?.parentUid || '') || parent;
+        const restoreRef = getElementByUid(restoreMeta?.nextSiblingUid || '');
+        if (restoreParent && restoreRef && restoreRef.parentElement === restoreParent) {
+          restoreParent.insertBefore(child, restoreRef);
+        } else if (restoreParent) {
+          const restoreIndex = Number(restoreMeta?.index);
+          const siblingAtIndex = Number.isFinite(restoreIndex) ? (restoreParent.children?.[restoreIndex] || null) : null;
+          if (siblingAtIndex) restoreParent.insertBefore(child, siblingAtIndex);
+          else restoreParent.appendChild(child);
+        } else {
+          parent.insertBefore(child, group);
+        }
         if (child.dataset.nodeUid) keepSelectionUids.push(child.dataset.nodeUid);
       }
       group.remove();
     }
     redetect({ preserveSelectionUids: keepSelectionUids });
+    runGroupLayerSyncValidation({ action: 'ungroup', expectedSelectionUids: keepSelectionUids });
     emitMutation('ungroup-selection');
     return { ok: true, message: `그룹 ${groups.length}개를 해제했습니다.` };
   }
@@ -4559,6 +4678,9 @@ const elements = {
   downloadEditedButton: document.getElementById('downloadEditedButton'),
   saveFormatSelect: document.getElementById('saveFormatSelect'),
   saveFormatStatus: document.getElementById('saveFormatStatus'),
+  saveFormatGuide: document.getElementById('saveFormatGuide'),
+  saveFormatPreview: document.getElementById('saveFormatPreview'),
+  saveMetaSummary: document.getElementById('saveMetaSummary'),
   downloadNormalizedButton: document.getElementById('downloadNormalizedButton'),
   downloadLinkedZipButton: document.getElementById('downloadLinkedZipButton'),
   exportPngButton: document.getElementById('exportPngButton'),
@@ -4911,6 +5033,42 @@ function normalizeSaveFormat(value) {
   return value === 'embedded' ? 'embedded' : 'linked';
 }
 
+function formatByteSize(bytes) {
+  const safeBytes = Number(bytes);
+  if (!Number.isFinite(safeBytes) || safeBytes <= 0) return '0 B';
+  if (safeBytes < 1024) return `${Math.round(safeBytes)} B`;
+  if (safeBytes < 1024 * 1024) return `${(safeBytes / 1024).toFixed(1)} KB`;
+  return `${(safeBytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function estimateSavePreview(project, format) {
+  const sourceHtml = String(activeEditor?.getEditedHtml?.({ persistDetectedSlots: true }) || project?.normalizedHtml || '');
+  const htmlBytes = new TextEncoder().encode(sourceHtml).length;
+  const resolvedAssets = Number(project?.summary?.assetsResolved || 0);
+  const unresolvedAssets = Number(project?.summary?.assetsUnresolved || 0);
+  if (format === 'embedded') {
+    return {
+      fileCountLabel: '1개 (HTML 단일 파일)',
+      sizeLabel: `예상 용량: ${formatByteSize(Math.round(htmlBytes * 1.3))} 내외`,
+      pathPolicy: '경로 유지: 아니요 (이미지 data URL 내장)',
+    };
+  }
+  return {
+    fileCountLabel: `${1 + resolvedAssets}개 내외 (HTML 1 + 자산 ${resolvedAssets})`,
+    sizeLabel: `예상 용량: ${formatByteSize(htmlBytes)} + 이미지 원본 합계`,
+    pathPolicy: unresolvedAssets > 0 ? `경로 유지: 예 (단, 미해결 ${unresolvedAssets}개 경고 가능)` : '경로 유지: 예',
+  };
+}
+
+function buildSaveMetaSummary() {
+  if (!lastSaveConversion) return `리포트 save 메타: selectedFormat=${currentSaveFormat}, lastConversion=아직 없음`;
+  const convertedCount = Number(lastSaveConversion.convertedDataUrlCount || 0);
+  const generatedCount = Number(lastSaveConversion.generatedAssetCount || 0);
+  const warningCount = Number(lastSaveConversion.brokenLinkedPathWarnings?.length || 0);
+  const savedAt = lastSaveConversion.savedAt ? new Date(lastSaveConversion.savedAt).toLocaleString() : '시간 없음';
+  return `리포트 save 메타: selectedFormat=${currentSaveFormat}, lastConversion=${lastSaveConversion.format || '-'} · dataURL→file ${convertedCount} · 생성자산 ${generatedCount} · 경고 ${warningCount} · ${savedAt}`;
+}
+
 function syncSaveFormatUi() {
   currentSaveFormat = normalizeSaveFormat(elements.saveFormatSelect?.value || currentSaveFormat);
   if (elements.saveFormatSelect && elements.saveFormatSelect.value !== currentSaveFormat) {
@@ -4919,6 +5077,19 @@ function syncSaveFormatUi() {
   if (elements.saveFormatStatus) {
     const modeLabel = currentSaveFormat === 'embedded' ? 'embedded (data URL 내장)' : 'linked (경로 유지)';
     elements.saveFormatStatus.textContent = `현재 저장 포맷: ${modeLabel}`;
+  }
+  if (elements.saveFormatGuide) {
+    const purposeGuide = currentSaveFormat === 'embedded'
+      ? '추천 안내: 1파일 전달/메신저 공유는 embedded가 편합니다.'
+      : '추천 안내: 내 PC에서 재편집(이미지 교체 포함)할 땐 linked가 안전합니다.';
+    elements.saveFormatGuide.textContent = purposeGuide;
+  }
+  if (elements.saveFormatPreview) {
+    const preview = estimateSavePreview(store.getState().project, currentSaveFormat);
+    elements.saveFormatPreview.textContent = `저장 결과 미리보기 → 파일 수: ${preview.fileCountLabel} · ${preview.sizeLabel} · ${preview.pathPolicy}`;
+  }
+  if (elements.saveMetaSummary) {
+    elements.saveMetaSummary.textContent = buildSaveMetaSummary();
   }
 }
 
@@ -5659,7 +5830,7 @@ async function downloadEditedHtml() {
   if (!activeEditor) {
     const fileName = `${projectBaseName(project)}__edited_working.html`;
     downloadTextFile(fileName, project.normalizedHtml, 'text/html;charset=utf-8');
-    setStatus(`편집 HTML을 저장했습니다: ${fileName}`);
+    setStatus(`편집 HTML을 저장했습니다: ${fileName} · 다음: 이 파일을 다시 열 때는 상단 "HTML 열기"를 누른 뒤 방금 저장한 파일을 선택하세요.`);
     return;
   }
   await downloadByFormat(currentSaveFormat);
@@ -5711,7 +5882,8 @@ async function downloadByFormat(format, { forceZip = false } = {}) {
     const entry = result.entries[0];
     const text = new TextDecoder().decode(entry.data);
     downloadTextFile(entry.name, text, 'text/html;charset=utf-8');
-    setStatus(`embedded HTML을 저장했습니다: ${entry.name} (blob→data ${result.conversion?.portableRewrite?.blobConvertedToDataUrl || 0}개)`);
+    setStatus(`embedded HTML을 저장했습니다: ${entry.name} (blob→data ${result.conversion?.portableRewrite?.blobConvertedToDataUrl || 0}개) · 다음: 파일을 더블클릭하거나, 상단 "HTML 열기"로 재오픈하세요.`);
+    syncSaveFormatUi();
     return;
   }
 
@@ -5721,7 +5893,8 @@ async function downloadByFormat(format, { forceZip = false } = {}) {
   downloadBlob(fileName, zipBlob);
   const warningCount = Number(result.conversion?.brokenLinkedPathWarnings?.length || 0);
   const warningText = warningCount > 0 ? ` · 경고 ${warningCount}건(BROKEN_LINKED_PATH)` : '';
-  setStatus(`${saveFormat} 패키지를 저장했습니다: ${fileName}${warningText}`);
+  setStatus(`${saveFormat} 패키지를 저장했습니다: ${fileName}${warningText} · 다음: ZIP 압축을 풀고 HTML + assets 폴더를 같은 위치에 둔 뒤 HTML을 다시 여세요.`);
+  syncSaveFormatUi();
 }
 
 async function exportFullPng() {

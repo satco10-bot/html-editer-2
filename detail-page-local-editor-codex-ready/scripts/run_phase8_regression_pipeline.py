@@ -23,6 +23,10 @@ DEPENDENCY_MODULES = [
 ]
 
 
+def get_single_install_command() -> str:
+    return f"python3 -m pip install -r {REQUIREMENTS_FILE.relative_to(ROOT)}"
+
+
 def check_dependencies() -> dict[str, Any]:
     missing: list[str] = []
     details: list[dict[str, str]] = []
@@ -58,6 +62,8 @@ def classify_script_failure(stdout: str, stderr: str, returncode: int) -> str:
 
 
 def classify_quality_confidence(dependency: dict[str, Any], steps: list[dict[str, Any]], f05_gate: dict[str, Any]) -> str:
+    if f05_gate.get('status') == 'not_run':
+        return 'low'
     if not dependency.get('ok'):
         return 'low'
     has_runtime_error = any(step.get('error_type') == 'runtime_error' for step in steps if step.get('status') != 'PASS')
@@ -73,11 +79,10 @@ def explain_install_guide(dependency: dict[str, Any]) -> None:
         print('[DEPENDENCY] ✅ 필요한 Python 패키지가 모두 준비되었습니다.')
         return
     missing = dependency.get('missing', [])
-    print(f"[DEPENDENCY] ❌ 누락된 패키지: {', '.join(missing) if missing else 'unknown'}")
-    print('[DEPENDENCY] 설치 가이드:')
-    print(f"  1) python3 -m pip install -r {REQUIREMENTS_FILE.relative_to(ROOT)}")
-    print('  2) python3 -m playwright install chromium')
-    print('  3) 설치 후 파이프라인을 다시 실행하세요.')
+    print('[DEPENDENCY] ❌ dependency precheck 실패')
+    print(f"[DEPENDENCY] missing_packages: {', '.join(missing) if missing else 'unknown'}")
+    print('[DEPENDENCY] 아래 명령 1줄만 실행한 뒤 파이프라인을 다시 실행하세요:')
+    print(f"[DEPENDENCY] {get_single_install_command()}")
 
 
 def run_json_script(script_rel_path: str) -> dict[str, Any]:
@@ -198,9 +203,11 @@ def generate_dashboard(run_payload: dict[str, Any]) -> None:
     scenario_failures = sum(1 for step in run_payload['steps'] if step.get('error_type') == 'scenario_failed')
     runtime_failures = sum(1 for step in run_payload['steps'] if step.get('error_type') == 'runtime_error')
     f05_gate = run_payload.get('f05_gate', {})
-    f05_gate_ok = bool(f05_gate.get('ok'))
+    f05_gate_status = f05_gate.get('status', 'failed')
+    f05_gate_ok = f05_gate_status == 'passed'
     f05_cause = f05_gate.get('failure_cause', 'none')
     f05_cause_label = {'none': '없음', 'dependency': '의존성', 'scenario': '시나리오', 'runtime': '런타임'}.get(f05_cause, f05_cause)
+    quality_low_reasons = run_payload.get('quality_low_reasons', [])
     lines = [
         '# Phase 8 Regression Pipeline Summary',
         '',
@@ -210,7 +217,7 @@ def generate_dashboard(run_payload: dict[str, Any]) -> None:
         f'- dependency_failures: {dependency_failures} (🟠)',
         f'- scenario_failures: {scenario_failures} (🔴)',
         f'- runtime_failures: {runtime_failures} (🟣)',
-        f'- f05_gate_passed: {f05_gate_ok}',
+        f'- f05_gate_status: {f05_gate_status}',
         '',
         '| step | status | failure_label | failure_type |',
         '|---|---|---|---|',
@@ -220,12 +227,21 @@ def generate_dashboard(run_payload: dict[str, Any]) -> None:
             f"| {step.get('name')} | {step.get('status')} | {_step_failure_label(step)} | {step.get('error_type', 'none')} |",
         )
 
-    if f05_gate_ok:
+    if f05_gate_status == 'passed':
         lines.extend(
             [
                 '',
                 '## ✅ F05 Gate',
                 f"- 상태: PASS ({f05_gate.get('message', '')})",
+            ],
+        )
+    elif f05_gate_status == 'not_run':
+        lines.extend(
+            [
+                '',
+                '## ⏸️ F05 Gate 미실행',
+                f"- 원인 분류: {f05_cause_label}",
+                f"- 메시지: {f05_gate.get('message', 'F05 게이트가 실행되지 않았습니다.')}",
             ],
         )
     else:
@@ -238,6 +254,17 @@ def generate_dashboard(run_payload: dict[str, Any]) -> None:
             ],
         )
 
+    lines.extend(
+        [
+            '',
+            '## quality_confidence = low 조건',
+            '- dependency precheck 실패(필수 패키지 누락)',
+            '- F05 gate 미실행(not_run)',
+        ],
+    )
+    if quality_low_reasons:
+        lines.append(f"- 이번 실행 low 사유: {', '.join(quality_low_reasons)}")
+
     DASHBOARD_FILE.write_text('\n'.join(lines).strip() + '\n', encoding='utf-8')
 
 
@@ -247,6 +274,13 @@ def main() -> None:
     dependency = check_dependencies()
     steps: list[dict[str, Any]] = []
     explain_install_guide(dependency)
+    dependency_section = {
+        'status': 'pass' if dependency['ok'] else 'fail',
+        'missing_packages': dependency.get('missing', []),
+        'install_command': get_single_install_command(),
+    }
+    scenario_section: dict[str, Any]
+
     if dependency['ok']:
         steps.append({'name': 'dependency_check', 'status': 'PASS', 'error_type': 'none'})
         validate_result = run_json_script('scripts/validate_phase6.py')
@@ -255,14 +289,26 @@ def main() -> None:
         regression_result = run_json_script('scripts/regression_layer_canvas_sync.py')
         steps.append({'name': 'regression_layer_canvas_sync', 'status': 'PASS' if regression_result['status'] == 'ok' else 'FAIL', 'error_type': regression_result['error_type']})
         regression_json = regression_result.get('json', {}) if isinstance(regression_result.get('json'), dict) else {}
-        f05_gate = regression_json.get('f05_gate', {'ok': False, 'message': 'F05 결과를 찾을 수 없습니다.'})
+        f05_gate = regression_json.get(
+            'f05_gate',
+            {
+                'ok': False,
+                'status': 'failed',
+                'message': 'F05 결과를 찾을 수 없습니다.',
+            },
+        )
+        scenario_section = {
+            'status': 'executed',
+            'validate_phase6': validate_result['status'],
+            'regression_layer_canvas_sync': regression_result['status'],
+        }
     else:
         steps.append({'name': 'dependency_check', 'status': 'FAIL', 'missing': dependency['missing'], 'error_type': 'dependency_missing'})
         validate_result = {
             'script': 'scripts/validate_phase6.py',
             'returncode': None,
             'status': 'skipped',
-            'error_type': 'dependency_missing',
+            'error_type': 'not_run',
             'stdout_tail': '',
             'stderr_tail': '',
         }
@@ -270,13 +316,20 @@ def main() -> None:
             'script': 'scripts/regression_layer_canvas_sync.py',
             'returncode': None,
             'status': 'skipped',
-            'error_type': 'dependency_missing',
+            'error_type': 'not_run',
             'stdout_tail': '',
             'stderr_tail': '',
         }
-        steps.append({'name': 'validate_phase6', 'status': 'SKIP', 'error_type': 'dependency_missing'})
-        steps.append({'name': 'regression_layer_canvas_sync', 'status': 'SKIP', 'error_type': 'dependency_missing'})
-        f05_gate = {'ok': False, 'message': '의존성 부족으로 F05 게이트를 실행하지 못했습니다.'}
+        steps.append({'name': 'validate_phase6', 'status': 'NOT_RUN', 'error_type': 'not_run'})
+        steps.append({'name': 'regression_layer_canvas_sync', 'status': 'NOT_RUN', 'error_type': 'not_run'})
+        f05_gate = {'ok': False, 'status': 'not_run', 'message': '의존성 부족으로 F05 게이트를 실행하지 못했습니다.'}
+        scenario_section = {
+            'status': 'not_run',
+            'reason': 'dependency_precheck_failed',
+        }
+
+    if 'status' not in f05_gate:
+        f05_gate['status'] = 'passed' if f05_gate.get('ok') else 'failed'
 
     dependency_failures = sum(1 for step in steps if step.get('error_type') == 'dependency_missing')
     scenario_failures = sum(1 for step in steps if step.get('error_type') == 'scenario_failed')
@@ -292,13 +345,21 @@ def main() -> None:
 
     overall_ok = dependency['ok'] and validate_result['status'] == 'ok' and regression_result['status'] == 'ok' and bool(f05_gate.get('ok'))
     quality_confidence = classify_quality_confidence(dependency, steps, f05_gate)
+    quality_low_reasons: list[str] = []
+    if not dependency.get('ok'):
+        quality_low_reasons.append('dependency_precheck_failed')
+    if f05_gate.get('status') == 'not_run':
+        quality_low_reasons.append('f05_gate_not_run')
 
     pipeline_payload = {
         'started_at': started_at,
         'finished_at': datetime.now(timezone.utc).isoformat(),
         'requirements_file': str(REQUIREMENTS_FILE.relative_to(ROOT)),
         'dependency': dependency,
+        'dependency_precheck': dependency_section,
+        'scenario_execution': scenario_section,
         'quality_confidence': quality_confidence,
+        'quality_low_reasons': quality_low_reasons,
         'steps': steps,
         'f05_gate': f05_gate,
         'validate_phase6': compact_script_result(validate_result),
@@ -320,7 +381,8 @@ def main() -> None:
 
     pass_fail_line = f"[PIPELINE] overall={pipeline_payload['summary']['overall_status']} pass={pipeline_payload['summary']['step_pass']} fail={pipeline_payload['summary']['step_fail']}"
     print(pass_fail_line)
-    print(f"[F05_GATE] {'PASS' if f05_gate.get('ok') else 'FAIL'} :: 원인={f05_gate.get('failure_cause', 'none')} :: {f05_gate.get('message', '')}")
+    f05_terminal_status = {'passed': 'PASS', 'failed': 'FAIL', 'not_run': 'NOT_RUN'}.get(f05_gate.get('status', 'failed'), 'FAIL')
+    print(f"[F05_GATE] {f05_terminal_status} :: 원인={f05_gate.get('failure_cause', 'none')} :: {f05_gate.get('message', '')}")
     print(json.dumps(pipeline_payload, ensure_ascii=False, indent=2))
 
     if not dependency['ok']:
