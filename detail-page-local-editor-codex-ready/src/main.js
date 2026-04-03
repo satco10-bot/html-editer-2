@@ -38,10 +38,11 @@ const viewFeatureFlags = {
   guide: true,
   ruler: false,
 };
+const OPEN_DOWNLOAD_MODAL_BUTTON_LABEL = '저장/출력 열기';
 const WORKFLOW_STEP_GUIDES = Object.freeze({
   load: 'HTML 파일이나 폴더를 먼저 불러오세요.',
   edit: '요소를 클릭한 뒤 드래그하세요.',
-  save: '결과를 확인한 뒤 [저장/출력 열기] 버튼을 눌러 실행하세요.',
+  save: `결과를 확인한 뒤 [${OPEN_DOWNLOAD_MODAL_BUTTON_LABEL}] 버튼을 눌러 실행하세요.`,
 });
 const BOOT_LOCAL_POLICY = Object.freeze({
   requiresStartupFetch: false,
@@ -61,7 +62,7 @@ const BEGINNER_TUTORIAL_STEPS = Object.freeze([
   },
   {
     title: '3) 결과 저장',
-    body: '완료하면 상단 [저장/출력 열기] 버튼으로 결과를 바로 내보내세요.',
+    body: `완료하면 상단 [${OPEN_DOWNLOAD_MODAL_BUTTON_LABEL}] 버튼으로 결과를 바로 내보내세요.`,
   },
 ]);
 let isBeginnerMode = false;
