@@ -1,3 +1,5 @@
+import { ensureUniqueNodeUids } from './node-uid.js';
+
 function parseStyle(styleText = '') {
   const map = new Map();
   for (const raw of String(styleText || '').split(';')) {
@@ -45,6 +47,7 @@ function readNodeState(element) {
 }
 
 export function createEditorModel(doc) {
+  ensureUniqueNodeUids(doc, { selector: '[data-node-uid]' });
   const nodes = new Map();
   for (const element of Array.from(doc.querySelectorAll('[data-node-uid]'))) {
     const state = readNodeState(element);
@@ -98,3 +101,4 @@ export function applyModelNodesToDom(doc, model, uids = []) {
     if (state.slotMeta?.detectedType) element.setAttribute('data-detected-slot', state.slotMeta.detectedType);
   }
 }
+import { ensureUniqueNodeUids } from './node-uid.js';

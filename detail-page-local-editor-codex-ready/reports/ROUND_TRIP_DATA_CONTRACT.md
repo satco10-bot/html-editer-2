@@ -104,7 +104,11 @@
 
 - Patch 적용 실패는 조용히 skip 금지.
 - 실패 항목은 `warningList`에 누적하고 UI 리포트/로그에 노출.
-- UID 누락/중복 발견 시 preflight 자동 보정 후, 보정 건수 표시.
+- UID 누락/중복 발견 시 preflight 자동 보정 후, 아래 집계를 리포트 패널에 표시.
+  - `uidScanned`: 검사한 노드 수
+  - `uidAssigned`: 누락 UID 자동 발급 수
+  - `uidDeduped`: 중복 UID 자동 재발급 수
+  - `uidDuplicateGroups`: 충돌 그룹 수
 - round-trip 테스트에서 아래를 기본 게이트로 사용:
   - UID 보존율
   - HTML 구조 diff 허용치
@@ -128,4 +132,3 @@
 - "UID는 왜 중요한가요?" → 같은 요소를 다시 찾는 주소 역할.
 - "Patch는 왜 쓰나요?" → 변경 이유와 범위를 작게 기록해 충돌을 줄임.
 - "Round-trip 테스트는 왜 필수인가요?" → 저장/재오픈에서 깨지는 버그를 눈이 아니라 자동으로 잡기 위해.
-
