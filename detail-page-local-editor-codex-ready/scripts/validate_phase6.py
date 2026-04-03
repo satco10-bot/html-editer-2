@@ -244,7 +244,7 @@ def main() -> None:
         'replaceImageButton', 'manualSlotButton', 'demoteSlotButton', 'toggleHideButton', 'toggleLockButton', 'redetectButton', 'textEditButton',
         'undoButton', 'redoButton', 'restoreAutosaveButton',
         'downloadEditedButton', 'downloadNormalizedButton', 'downloadLinkedZipButton',
-        'exportPresetSelect', 'exportScaleSelect', 'exportJpgQualityInput', 'exportPngButton', 'exportJpgButton', 'exportSectionsZipButton', 'exportSelectionPngButton', 'exportPresetPackageButton', 'downloadReportButton',
+        'exportPresetSelect', 'exportScaleSelectMain', 'exportScaleSelectSelection', 'exportJpgQualityInputMain', 'exportJpgQualityInputSelection', 'exportPngButton', 'exportJpgButton', 'exportSectionsZipButton', 'exportSelectionPngButton', 'exportPresetPackageButton', 'downloadReportButton',
         'replaceImageInput', 'previewFrame', 'slotList', 'selectionInspector', 'assetFilterInput',
         'preflightContainer', 'preflightRefreshButton', 'layerTree', 'layerFilterInput',
         'textFontSizeInput', 'textLineHeightInput', 'textLetterSpacingInput', 'textWeightSelect', 'textColorInput',
@@ -281,7 +281,12 @@ def main() -> None:
     add_check(checks, 'index_has_stage_hint', 'Shift+드래그' in index_html and '스냅 가이드' in index_html, 'canvas interaction hint should exist')
     add_check(checks, 'index_has_export_preset_label', ('Export preset' in index_html or '<span>Preset</span>' in index_html), 'export preset selector should be visible')
     add_check(checks, 'index_has_3x_scale_option', '<option value="3">3x</option>' in index_html, '3x export scale option should exist')
-    add_check(checks, 'index_has_jpg_quality_input', 'id="exportJpgQualityInput"' in index_html, 'JPG quality input should exist')
+    add_check(
+        checks,
+        'index_has_jpg_quality_input',
+        'data-export-jpg-quality-control' in index_html and 'id="exportJpgQualityInputMain"' in index_html and 'id="exportJpgQualityInputSelection"' in index_html,
+        'JPG quality input should exist in both topbar/selection panels',
+    )
     add_check(
         checks,
         'frame_has_marquee_runtime',
@@ -336,7 +341,7 @@ def main() -> None:
             'applyLayerIndexCommand + front/back 명령 경로를 기준으로 업데이트가 필요합니다.'
         ),
     )
-    add_check(checks, 'main_uses_jpg_quality_option', 'exportJpgQualityInput' in main_js and 'exportJpgQuality()' in main_js, 'JPG quality option should be wired in main export flow')
+    add_check(checks, 'main_uses_jpg_quality_option', 'exportJpgQualityInputs' in main_js and 'exportJpgQuality()' in main_js, 'JPG quality option should be wired in main export flow')
     add_check(checks, 'main_has_fixture_integrity_gate', 'ensureFixtureIntegrityBeforeExport' in main_js and 'getExportFixtureIntegrityReport' in frame_js, 'fixture-based export integrity check should guard exports')
 
     add_check(checks, 'fixture_count_is_5', len(manifest.get('fixtures', [])) == 5, f"fixtures={len(manifest.get('fixtures', []))}")

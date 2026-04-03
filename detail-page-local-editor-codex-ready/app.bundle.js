@@ -3016,6 +3016,22 @@ function createFrameEditor({
     return { ok: true, message: messageMap[direction] || '레이어 순서를 변경했습니다.' };
   }
 
+  function bringSelectedForward() {
+    return applyLayerIndexCommand('forward');
+  }
+
+  function sendSelectedBackward() {
+    return applyLayerIndexCommand('backward');
+  }
+
+  function bringSelectedToFront() {
+    return applyLayerIndexCommand('front');
+  }
+
+  function sendSelectedToBack() {
+    return applyLayerIndexCommand('back');
+  }
+
   function nudgeSelectedElements(dx = 0, dy = 0) {
     const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
     if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
@@ -4705,8 +4721,12 @@ const elements = {
   selectionExportPaddingInput: document.getElementById('selectionExportPaddingInput'),
   selectionExportBackgroundSelect: document.getElementById('selectionExportBackgroundSelect'),
   exportPresetSelect: document.getElementById('exportPresetSelect'),
-  exportScaleSelect: document.getElementById('exportScaleSelect'),
-  exportJpgQualityInput: document.getElementById('exportJpgQualityInput'),
+  exportScaleSelectMain: document.getElementById('exportScaleSelectMain'),
+  exportScaleSelectSelection: document.getElementById('exportScaleSelectSelection'),
+  exportScaleSelectControls: Array.from(document.querySelectorAll('[data-export-scale-control]')),
+  exportJpgQualityInputMain: document.getElementById('exportJpgQualityInputMain'),
+  exportJpgQualityInputSelection: document.getElementById('exportJpgQualityInputSelection'),
+  exportJpgQualityInputs: Array.from(document.querySelectorAll('[data-export-jpg-quality-control]')),
   exportPresetPackageButton: document.getElementById('exportPresetPackageButton'),
   downloadReportButton: document.getElementById('downloadReportButton'),
   htmlFileInput: document.getElementById('htmlFileInput'),
@@ -5113,10 +5133,29 @@ function markAdvancedSettingsDirty(isDirty) {
   elements.advancedSettingsState.textContent = isDirty ? '고급값 변경됨 · 적용 필요' : '고급값 대기 없음';
 }
 
+function getFirstControlValue(controlList, fallbackValue) {
+  const controls = Array.isArray(controlList) ? controlList : [];
+  const firstControl = controls.find((control) => control);
+  if (!firstControl) return fallbackValue;
+  return firstControl.value;
+}
+
+function syncMirroredControls(controlList, nextValue, sourceControl = null) {
+  const controls = Array.isArray(controlList) ? controlList : [];
+  for (const control of controls) {
+    if (!control || control === sourceControl) continue;
+    if (control.value !== nextValue) control.value = nextValue;
+  }
+}
+
 function syncAdvancedFormFromState() {
   if (elements.geometryCoordModeSelect) elements.geometryCoordModeSelect.value = advancedSettings.geometryCoordMode;
-  if (elements.exportScaleSelect) elements.exportScaleSelect.value = String(advancedSettings.exportScale);
-  if (elements.exportJpgQualityInput) elements.exportJpgQualityInput.value = String(advancedSettings.exportJpgQuality);
+  for (const control of elements.exportScaleSelectControls) {
+    if (control) control.value = String(advancedSettings.exportScale);
+  }
+  for (const control of elements.exportJpgQualityInputs) {
+    if (control) control.value = String(advancedSettings.exportJpgQuality);
+  }
   if (elements.selectionExportPaddingInput) elements.selectionExportPaddingInput.value = String(advancedSettings.selectionExportPadding);
   if (elements.selectionExportBackgroundSelect) elements.selectionExportBackgroundSelect.value = advancedSettings.selectionExportBackground;
   markAdvancedSettingsDirty(false);
@@ -5124,9 +5163,9 @@ function syncAdvancedFormFromState() {
 
 function applyAdvancedSettingsFromForm() {
   const nextCoordMode = elements.geometryCoordModeSelect?.value === 'absolute' ? 'absolute' : 'relative';
-  const nextScaleRaw = Number.parseFloat(elements.exportScaleSelect?.value || '1');
+  const nextScaleRaw = Number.parseFloat(getFirstControlValue(elements.exportScaleSelectControls, '1'));
   const nextScale = nextScaleRaw >= 2.5 ? 3 : (nextScaleRaw >= 1.5 ? 2 : 1);
-  const nextJpgRaw = Number.parseFloat(elements.exportJpgQualityInput?.value || String(DEFAULT_JPG_QUALITY));
+  const nextJpgRaw = Number.parseFloat(getFirstControlValue(elements.exportJpgQualityInputs, String(DEFAULT_JPG_QUALITY)));
   const nextJpgQuality = Number.isFinite(nextJpgRaw) ? Math.min(1, Math.max(0.1, nextJpgRaw)) : DEFAULT_JPG_QUALITY;
   const nextPaddingRaw = Number.parseFloat(elements.selectionExportPaddingInput?.value || '16');
   const nextPadding = Number.isFinite(nextPaddingRaw) ? Math.max(0, Math.min(240, Math.round(nextPaddingRaw))) : 16;
@@ -5262,8 +5301,8 @@ function syncExportPresetUi({ forceScale = false } = {}) {
   const shouldSyncScale = forceScale;
   const presetScale = Number.parseFloat(String(preset.scale));
   const normalizedScale = presetScale >= 2.5 ? '3' : presetScale >= 1.5 ? '2' : '1';
-  if (shouldSyncScale && EXPORT_SCALE_OPTIONS.includes(Number.parseFloat(normalizedScale)) && elements.exportScaleSelect) {
-    elements.exportScaleSelect.value = normalizedScale;
+  if (shouldSyncScale && EXPORT_SCALE_OPTIONS.includes(Number.parseFloat(normalizedScale))) {
+    syncMirroredControls(elements.exportScaleSelectControls, normalizedScale);
     markAdvancedSettingsDirty(true);
   }
   if (elements.exportPresetPackageButton) elements.exportPresetPackageButton.title = preset.description || '';
@@ -6289,10 +6328,20 @@ elements.exportPresetSelect.addEventListener('change', () => {
   syncExportPresetUi({ forceScale: true });
   setStatus(`Export preset: ${currentExportPreset().label} (배율은 고급값 적용 버튼으로 반영)`);
 });
-elements.exportScaleSelect.addEventListener('change', () => {
-  markAdvancedSettingsDirty(true);
-});
-elements.exportJpgQualityInput?.addEventListener('input', () => markAdvancedSettingsDirty(true));
+for (const control of elements.exportScaleSelectControls) {
+  control?.addEventListener('change', (event) => {
+    const sourceControl = event?.currentTarget || null;
+    syncMirroredControls(elements.exportScaleSelectControls, sourceControl?.value || '1', sourceControl);
+    markAdvancedSettingsDirty(true);
+  });
+}
+for (const control of elements.exportJpgQualityInputs) {
+  control?.addEventListener('input', (event) => {
+    const sourceControl = event?.currentTarget || null;
+    syncMirroredControls(elements.exportJpgQualityInputs, sourceControl?.value || String(DEFAULT_JPG_QUALITY), sourceControl);
+    markAdvancedSettingsDirty(true);
+  });
+}
 elements.selectionExportPaddingInput?.addEventListener('input', () => markAdvancedSettingsDirty(true));
 elements.selectionExportBackgroundSelect?.addEventListener('change', () => markAdvancedSettingsDirty(true));
 elements.applyAdvancedSettingsButton?.addEventListener('click', () => {
