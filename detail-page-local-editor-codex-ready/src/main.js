@@ -1244,13 +1244,13 @@ function renderShell(state) {
   renderSelectionModeButtons(state.selectionMode);
   renderSummaryCards(elements.summaryCards, state.project, state.editorMeta);
   renderIssueList(elements.issueList, state.project);
-  renderNormalizeStats(elements.normalizeStats, state.project);
+  if (elements.normalizeStats) renderNormalizeStats(elements.normalizeStats, state.project);
   renderPreflight(elements.preflightContainer, state.editorMeta);
-  renderSelectionInspector(elements.selectionInspector, state.editorMeta);
+  if (elements.selectionInspector) renderSelectionInspector(elements.selectionInspector, state.editorMeta);
   renderSectionFilmstrip(elements.sectionList, state.editorMeta);
   renderSlotList(elements.slotList, state.editorMeta);
   renderUploadLists(state);
-  renderLayerTree(elements.layerTree, state.editorMeta, elements.layerFilterInput.value);
+  renderLayerTree(elements.layerTree, state.editorMeta, elements.layerFilterInput?.value || '');
   renderProjectMeta(elements.projectMeta, state.project, {
     selectionMode: state.selectionMode,
     undoDepth: historyState.undoStack.length,
@@ -1263,7 +1263,7 @@ function renderShell(state) {
     exportPresetLabel: currentExportPreset().label,
     preflightBlockingErrors: state.editorMeta?.preflight?.blockingErrors || 0,
   });
-  renderAssetTable(elements.assetTableWrap, state.project, elements.assetFilterInput.value);
+  if (elements.assetTableWrap) renderAssetTable(elements.assetTableWrap, state.project, elements.assetFilterInput?.value || '');
   syncTextStyleControls(state.editorMeta);
   syncBatchSummary(state.editorMeta);
   syncGeometryControls();
@@ -1309,7 +1309,7 @@ function renderShell(state) {
   if (elements.sectionMoveDownButton) elements.sectionMoveDownButton.disabled = !hasEditor || !state.editorMeta?.selectedSectionUid;
   if (elements.sectionDeleteButton) elements.sectionDeleteButton.disabled = !hasEditor || !state.editorMeta?.selectedSectionUid;
   if (elements.sectionAddButton) elements.sectionAddButton.disabled = !hasEditor;
-  elements.downloadReportButton.disabled = !hasProject;
+  if (elements.downloadReportButton) elements.downloadReportButton.disabled = !hasProject;
   if (elements.applyCodeToEditorButton) elements.applyCodeToEditorButton.disabled = !hasProject || currentCodeSource === 'report';
   if (elements.reloadCodeFromEditorButton) elements.reloadCodeFromEditorButton.disabled = !hasProject;
   if (elements.saveFormatSelect) elements.saveFormatSelect.disabled = !hasProject;
@@ -1798,6 +1798,40 @@ function safeBoot() {
 
 safeBoot();
 
+function bindEvents() {
+  const requiredElementNames = [
+    'openHtmlButton',
+    'openFolderButton',
+    'loadFixtureButton',
+    'applyPasteButton',
+    'replaceImageButton',
+    'manualSlotButton',
+    'toggleHideButton',
+    'toggleLockButton',
+    'demoteSlotButton',
+    'redetectButton',
+    'preflightRefreshButton',
+    'applyTextStyleButton',
+    'clearTextStyleButton',
+    'undoButton',
+    'redoButton',
+    'restoreAutosaveButton',
+    'downloadReportButton',
+    'exportPresetSelect',
+    'htmlFileInput',
+    'folderInput',
+    'replaceImageInput',
+    'assetFilterInput',
+    'layerFilterInput',
+    'slotList',
+    'layerTree',
+  ];
+  for (const elementName of requiredElementNames) {
+    if (!elements[elementName]) {
+      console.warn(`[bindEvents] 필수 요소 누락: #${elementName}`);
+    }
+  }
+
 for (const button of elements.selectionModeButtons) button.addEventListener('click', () => setSelectionMode(button.dataset.selectionMode));
 if (elements.workflowGuideSelect) elements.workflowGuideSelect.addEventListener('change', () => syncWorkflowGuide(store.getState(), { announce: true }));
 for (const button of elements.presetButtons) {
@@ -1856,38 +1890,38 @@ for (const [canvasInput, sourceInput] of [
   });
 }
 
-elements.openHtmlButton.addEventListener('click', () => elements.htmlFileInput.click());
-elements.openFolderButton.addEventListener('click', () => elements.folderInput.click());
-elements.loadFixtureButton.addEventListener('click', () => loadFixture(elements.fixtureSelect.value));
-elements.applyPasteButton.addEventListener('click', applyPastedHtml);
-elements.replaceImageButton.addEventListener('click', () => elements.replaceImageInput.click());
-elements.manualSlotButton.addEventListener('click', () => {
+elements.openHtmlButton?.addEventListener('click', () => elements.htmlFileInput?.click());
+elements.openFolderButton?.addEventListener('click', () => elements.folderInput?.click());
+elements.loadFixtureButton?.addEventListener('click', () => loadFixture(elements.fixtureSelect?.value));
+elements.applyPasteButton?.addEventListener('click', applyPastedHtml);
+elements.replaceImageButton?.addEventListener('click', () => elements.replaceImageInput?.click());
+elements.manualSlotButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.markSelectedAsSlot();
   setStatus(result.message);
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
-elements.toggleHideButton.addEventListener('click', () => {
+elements.toggleHideButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.toggleSelectedHidden();
   setStatus(result.message);
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
 elements.arrangeToggleHideButton?.addEventListener('click', () => elements.toggleHideButton?.click());
-elements.toggleLockButton.addEventListener('click', () => {
+elements.toggleLockButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.toggleSelectedLocked();
   setStatus(result.message);
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
 elements.arrangeToggleLockButton?.addEventListener('click', () => elements.toggleLockButton?.click());
-elements.demoteSlotButton.addEventListener('click', () => {
+elements.demoteSlotButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.demoteSelectedSlot();
   setStatus(result.message);
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
-elements.redetectButton.addEventListener('click', () => {
+elements.redetectButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   activeEditor.redetect();
   setStatus('슬롯 자동 감지를 다시 실행했습니다.');
@@ -1940,16 +1974,16 @@ elements.imageNudgeLeftButton?.addEventListener('click', () => setStatus(activeE
 elements.imageNudgeRightButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 2, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
 elements.imageNudgeUpButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: -2 })?.message || '먼저 미리보기를 로드해 주세요.'));
 elements.imageNudgeDownButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: 2 })?.message || '먼저 미리보기를 로드해 주세요.'));
-elements.preflightRefreshButton.addEventListener('click', () => {
+elements.preflightRefreshButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   activeEditor.refreshDerivedMeta();
   setStatus('출력 전 검수를 다시 계산했습니다.');
 });
-elements.applyTextStyleButton.addEventListener('click', () => applyTextStyleFromControls({ clear: false }));
-elements.clearTextStyleButton.addEventListener('click', () => applyTextStyleFromControls({ clear: true }));
-elements.undoButton.addEventListener('click', undoHistory);
-elements.redoButton.addEventListener('click', redoHistory);
-elements.restoreAutosaveButton.addEventListener('click', restoreAutosave);
+elements.applyTextStyleButton?.addEventListener('click', () => applyTextStyleFromControls({ clear: false }));
+elements.clearTextStyleButton?.addEventListener('click', () => applyTextStyleFromControls({ clear: true }));
+elements.undoButton?.addEventListener('click', undoHistory);
+elements.redoButton?.addEventListener('click', redoHistory);
+elements.restoreAutosaveButton?.addEventListener('click', restoreAutosave);
 elements.openDownloadModalButton?.addEventListener('click', () => toggleDownloadModal(true));
 elements.closeDownloadModalButton?.addEventListener('click', () => toggleDownloadModal(false));
 elements.downloadChoiceSelect?.addEventListener('change', () => renderShell(store.getState()));
@@ -1983,8 +2017,8 @@ elements.saveFormatSelect?.addEventListener('change', () => {
   syncSaveFormatUi();
   setStatus(`저장 포맷을 ${currentSaveFormat}로 변경했습니다.`);
 });
-elements.downloadReportButton.addEventListener('click', downloadReportJson);
-elements.exportPresetSelect.addEventListener('change', () => {
+elements.downloadReportButton?.addEventListener('click', downloadReportJson);
+elements.exportPresetSelect?.addEventListener('change', () => {
   currentExportPresetId = elements.exportPresetSelect.value || 'default';
   syncExportPresetUi({ forceScale: true });
   setStatus(`Export preset: ${currentExportPreset().label} (배율은 고급값 적용 버튼으로 반영)`);
@@ -2010,7 +2044,7 @@ elements.applyAdvancedSettingsButton?.addEventListener('click', () => {
   setStatus(result.message);
 });
 
-elements.htmlFileInput.addEventListener('change', async (event) => {
+elements.htmlFileInput?.addEventListener('change', async (event) => {
   const [file] = event.target.files || [];
   try {
     await openHtmlFile(file);
@@ -2019,7 +2053,7 @@ elements.htmlFileInput.addEventListener('change', async (event) => {
   }
 });
 
-elements.folderInput.addEventListener('change', async (event) => {
+elements.folderInput?.addEventListener('change', async (event) => {
   const files = Array.from(event.target.files || []);
   try {
     if (files.length) await handleFolderImport(files);
@@ -2028,7 +2062,7 @@ elements.folderInput.addEventListener('change', async (event) => {
   }
 });
 
-elements.replaceImageInput.addEventListener('change', async (event) => {
+elements.replaceImageInput?.addEventListener('change', async (event) => {
   const files = Array.from(event.target.files || []);
   try {
     if (!files.length) return;
@@ -2043,9 +2077,9 @@ elements.replaceImageInput.addEventListener('change', async (event) => {
   }
 });
 
-elements.assetFilterInput.addEventListener('input', () => renderAssetTable(elements.assetTableWrap, store.getState().project, elements.assetFilterInput.value));
-elements.layerFilterInput.addEventListener('input', () => renderLayerTree(elements.layerTree, store.getState().editorMeta, elements.layerFilterInput.value));
-elements.slotList.addEventListener('click', (event) => {
+elements.assetFilterInput?.addEventListener('input', () => renderAssetTable(elements.assetTableWrap, store.getState().project, elements.assetFilterInput?.value || ''));
+elements.layerFilterInput?.addEventListener('input', () => renderLayerTree(elements.layerTree, store.getState().editorMeta, elements.layerFilterInput?.value || ''));
+elements.slotList?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-slot-uid]');
   if (!button || !activeEditor) return;
   const ok = activeEditor.selectNodeByUid(button.dataset.slotUid, { additive: event.ctrlKey || event.metaKey || event.shiftKey, toggle: event.ctrlKey || event.metaKey, scroll: true });
@@ -2087,7 +2121,7 @@ elements.sectionAddButton?.addEventListener('click', () => {
   const result = activeEditor.addSectionAfterUid(uid);
   setStatus(result.message);
 });
-elements.layerTree.addEventListener('click', (event) => {
+elements.layerTree?.addEventListener('click', (event) => {
   const actionButton = event.target.closest('[data-layer-action][data-layer-uid]');
   if (actionButton && activeEditor) {
     event.preventDefault();
@@ -2105,7 +2139,7 @@ elements.layerTree.addEventListener('click', (event) => {
   const ok = activeEditor.selectNodeByUid(button.dataset.layerUid, { additive: event.ctrlKey || event.metaKey || event.shiftKey, toggle: event.ctrlKey || event.metaKey, scroll: true });
   if (ok) setStatus('레이어를 선택했습니다.');
 });
-elements.layerTree.addEventListener('keydown', (event) => {
+elements.layerTree?.addEventListener('keydown', (event) => {
   const key = String(event.key || '');
   if (key !== 'Enter' && key !== ' ') return;
   const row = event.target.closest?.('[data-layer-uid]');
@@ -2306,6 +2340,9 @@ elements.beginnerTutorialCloseButton?.addEventListener('click', closeBeginnerTut
 elements.viewSnapToggleButton?.addEventListener('click', () => toggleViewFeatureFlag('snap', '스냅'));
 elements.viewGuideToggleButton?.addEventListener('click', () => toggleViewFeatureFlag('guide', '가이드'));
 elements.viewRulerToggleButton?.addEventListener('click', () => toggleViewFeatureFlag('ruler', '눈금자'));
+}
+
+bindEvents();
 
 setSidebarTab('left-upload');
 setSidebarTab('right-inspect');
