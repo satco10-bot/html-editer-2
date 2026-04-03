@@ -679,6 +679,60 @@ function createAssetResolver(fileIndex, htmlEntryRelativePath = '') {
 }
 
 
+/* ===== src/core/node-uid.js ===== */
+
+function normalizeUid(value) {
+  return String(value || '').trim();
+}
+function ensureUniqueNodeUids(doc, { selector = '*', attribute = 'data-node-uid' } = {}) {
+  if (!doc?.querySelectorAll) {
+    return {
+      scanned: 0,
+      assigned: 0,
+      deduped: 0,
+      unchanged: 0,
+      duplicateGroups: 0,
+    };
+  }
+
+  const elements = Array.from(doc.querySelectorAll(selector));
+  const used = new Set();
+  const duplicateCounter = new Map();
+  let assigned = 0;
+  let deduped = 0;
+  let unchanged = 0;
+
+  for (const element of elements) {
+    const rawUid = normalizeUid(element.getAttribute(attribute));
+    if (!rawUid) {
+      const nextUid = nextId('node');
+      element.setAttribute(attribute, nextUid);
+      used.add(nextUid);
+      assigned += 1;
+      continue;
+    }
+    if (!used.has(rawUid)) {
+      used.add(rawUid);
+      unchanged += 1;
+      continue;
+    }
+    duplicateCounter.set(rawUid, (duplicateCounter.get(rawUid) || 0) + 1);
+    const nextUid = nextId('node');
+    element.setAttribute(attribute, nextUid);
+    used.add(nextUid);
+    deduped += 1;
+  }
+
+  return {
+    scanned: elements.length,
+    assigned,
+    deduped,
+    unchanged,
+    duplicateGroups: duplicateCounter.size,
+  };
+}
+
+
 /* ===== src/core/slot-detector.js ===== */
 
 function directTextContent(element) {
@@ -1022,9 +1076,13 @@ function normalizeProject({
   const scriptsRemoved = removeScripts(doc, issues);
   ensureHead(doc);
 
-  Array.from(doc.querySelectorAll('*')).forEach((element) => {
-    if (!element.dataset.nodeUid) element.dataset.nodeUid = nextId('node');
-  });
+  const uidRepair = ensureUniqueNodeUids(doc);
+  if (uidRepair.assigned > 0) {
+    issues.push(createIssue('warning', 'UID_MISSING_REPAIRED', `data-node-uid 누락 ${uidRepair.assigned}건을 자동 보정했습니다.`));
+  }
+  if (uidRepair.deduped > 0) {
+    issues.push(createIssue('warning', 'UID_DUPLICATE_REPAIRED', `data-node-uid 중복 ${uidRepair.deduped}건(${uidRepair.duplicateGroups}개 그룹)을 자동 보정했습니다.`));
+  }
 
   const imgElements = Array.from(doc.querySelectorAll('img'));
   for (const img of imgElements) {
@@ -1215,6 +1273,10 @@ function normalizeProject({
     remoteStylesheetCount: remoteStylesheets.length,
     unresolvedReferenceCount: unresolvedRefs.size,
     linkedSlotCount: doc.querySelectorAll(EXPLICIT_SLOT_SELECTOR).length,
+    uidScanned: uidRepair.scanned,
+    uidAssigned: uidRepair.assigned,
+    uidDeduped: uidRepair.deduped,
+    uidDuplicateGroups: uidRepair.duplicateGroups,
   };
 
   const normalizedHtml = `<!DOCTYPE html>\n${doc.documentElement.outerHTML}`;
@@ -1227,6 +1289,7 @@ function normalizeProject({
     originalHtml: String(html || ''),
     normalizedHtml,
     summary,
+    uidRepair,
     issues,
     assets,
     slotDetection,
@@ -1402,6 +1465,7 @@ function readNodeState(element) {
   };
 }
 function createEditorModel(doc) {
+  ensureUniqueNodeUids(doc, { selector: '[data-node-uid]' });
   const nodes = new Map();
   for (const element of Array.from(doc.querySelectorAll('[data-node-uid]'))) {
     const state = readNodeState(element);
@@ -5222,6 +5286,7 @@ const APP_STATES = Object.freeze({
   launch: 'launch',
   editor: 'editor',
 });
+let currentAppState = APP_STATES.launch;
 const BEGINNER_MODE_STORAGE_KEY = 'detail_editor_beginner_mode_v1';
 const ONBOARDING_COMPLETED_STORAGE_KEY = 'detail_editor_onboarding_completed_v1';
 const ONBOARDING_SAMPLE_CHECKED_STORAGE_KEY = 'detail_editor_onboarding_sample_checked_v1';
@@ -5280,11 +5345,12 @@ const historyState = {
 };
 const HISTORY_MERGE_WINDOW_MS = 700;
 const LIVE_HISTORY_LABELS = new Set(['geometry-patch', 'apply-text-style', 'clear-text-style']);
+const DEFAULT_JPG_QUALITY = 0.92;
 
 const advancedSettings = {
   geometryCoordMode: 'relative',
   exportScale: 1,
-  exportJpgQuality: 0.92,
+  exportJpgQuality: DEFAULT_JPG_QUALITY,
   selectionExportPadding: 16,
   selectionExportBackground: 'transparent',
 };
@@ -5485,6 +5551,7 @@ const elements = {
   stackVerticalButton: document.getElementById('stackVerticalButton'),
   tidyHorizontalButton: document.getElementById('tidyHorizontalButton'),
   tidyVerticalButton: document.getElementById('tidyVerticalButton'),
+  beginnerMoreItems: Array.from(document.querySelectorAll('[data-beginner-more-item]')),
   beginnerModeToggle: document.getElementById('beginnerModeToggle'),
   advancedTopbarPanel: document.getElementById('advancedTopbarPanel'),
   beginnerTutorialTooltip: document.getElementById('beginnerTutorialTooltip'),
@@ -5732,6 +5799,28 @@ function setStatusWithError(prefix, error, { logTag = 'APP_ERROR' } = {}) {
   if (logTag) console.error(`[${logTag}]`, error);
   store.setLastError(detail);
   setStatus(prefix, { preserveLastError: true });
+}
+
+function buildImageFailureDiagnostic({ files = [], editorMeta = null, statusMessage = '' } = {}) {
+  const firstFile = files[0] || null;
+  const selected = editorMeta?.selected || null;
+  const selectedSlotLike = !!selected && (selected.type === 'slot' || selected.detectedType === 'slot');
+  const reasons = {
+    slotUnselected: !selectedSlotLike,
+    filenameMismatch: false,
+    unsupportedFormat: !!firstFile && !String(firstFile.type || '').startsWith('image/'),
+  };
+  const details = {
+    slotUnselected: selectedSlotLike ? '선택된 슬롯이 있습니다.' : '이미지를 적용할 슬롯을 먼저 선택해 주세요.',
+    filenameMismatch: '필요하면 파일명에 슬롯 이름 일부를 포함해 자동 매칭 정확도를 높이세요.',
+    unsupportedFormat: reasons.unsupportedFormat ? `현재 파일 형식: ${firstFile.type || 'unknown'}` : '이미지 파일 형식입니다.',
+  };
+  return {
+    status: 'failed',
+    message: statusMessage || '이미지 적용 실패 원인을 확인해 주세요.',
+    reasons,
+    details,
+  };
 }
 
 function isTypingInputTarget(target) {
@@ -7789,23 +7878,23 @@ elements.replaceImageInput?.addEventListener('change', async (event) => {
     if (!activeEditor) {
       const message = '먼저 미리보기를 로드해 주세요.';
       setStatus(message);
-      setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
+      store.setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
       return;
     }
     const applied = await activeEditor.applyFiles(files);
     if (applied) {
       setStatus(`${applied}개 이미지를 적용했습니다.`);
-      setImageApplyDiagnostic(null);
+      store.setImageApplyDiagnostic(null);
     } else {
       const message = '이미지를 적용하지 못했습니다.';
       setStatus(message);
-      setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
+      store.setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
     }
     if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
   } catch (error) {
     const message = `이미지 적용 중 오류: ${error?.message || error}`;
     setStatus(message);
-    setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
+    store.setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
   } finally {
     event.target.value = '';
   }

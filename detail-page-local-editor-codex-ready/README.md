@@ -63,6 +63,11 @@ python3 -m playwright install chromium
 
 만약 실패하면, 테스트 스크립트가 JSON 형태로 `how_to_fix` 항목에 다음 실행 순서를 다시 안내합니다.
 
+## 수동 회귀 체크리스트(초보자용 12개 시나리오)
+자동 테스트와 별개로, 실제 사용 흐름을 사람이 직접 점검하려면 아래 문서를 사용하세요.
+
+- `docs/png-export-manual-regression-12-scenarios.md`
+
 ## 초보자용 QA 실행 순서 (명령 2개 + 결과 판독 2단계)
 아래 순서는 **"구조 점검 → 실제 워크플로우 점검 → 실패 원인 분리 → 리포트 확인"** 흐름입니다.
 
@@ -100,6 +105,13 @@ python3 scripts/test_workflow_html_image_png.py
     python3 -m playwright install chromium
     python3 scripts/validate_phase8.py
     python3 scripts/test_workflow_html_image_png.py
+    ```
+  - 리눅스에서 `libatk-1.0.so.0` 같은 공유 라이브러리 오류가 보이면, 브라우저 런타임 패키지를 먼저 설치합니다.
+    ```bash
+    apt-get update
+    apt-get install -y libatk1.0-0 libatk-bridge2.0-0 libcups2t64 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2t64 libpango-1.0-0 libcairo2 libnss3 libx11-xcb1 libxcursor1 libxext6 libxi6 libxtst6 libgtk-3-0
+    python3 -m playwright install chromium
+    python3 scripts/validate_phase8.py
     ```
 - **시나리오 실패(기능 문제)** 신호
   - 의존성 오류 없이 테스트가 실행되었지만 `assert`, `FAILED`, `gate failed` 같은 실패 결과가 나옵니다.

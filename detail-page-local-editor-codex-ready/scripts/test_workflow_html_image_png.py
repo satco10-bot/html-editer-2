@@ -80,6 +80,32 @@ def wait_status_contains(page, phrase: str, timeout_ms: int, stage: str) -> None
         raise RuntimeError(f"{stage} 단계 대기 실패: phrase={phrase!r}, statusText={current!r}, error={error}") from error
 
 
+def ensure_editor_shell_ready(page) -> None:
+    open_html_button = page.locator('#openHtmlButton')
+    if open_html_button.count() and open_html_button.first.is_visible():
+        return
+    launcher_upload = page.locator('#launcherUploadButton')
+    if launcher_upload.count() and launcher_upload.first.is_visible():
+        return
+
+    launcher_new = page.locator('#launcherNewButton')
+    if launcher_new.count():
+        launcher_new.first.click()
+        page.wait_for_timeout(500)
+
+
+def click_html_upload_entry(page):
+    open_html_button = page.locator('#openHtmlButton')
+    if open_html_button.count() and open_html_button.first.is_visible():
+        open_html_button.first.click()
+        return
+    launcher_upload = page.locator('#launcherUploadButton')
+    if launcher_upload.count() and launcher_upload.first.is_visible():
+        launcher_upload.first.click()
+        return
+    raise RuntimeError('HTML 업로드 버튼을 찾지 못했습니다. (#openHtmlButton / #launcherUploadButton)')
+
+
 def run() -> dict[str, object]:
     sync_api = load_playwright_sync_api()
     TimeoutErrorType = sync_api.TimeoutError
@@ -98,11 +124,12 @@ def run() -> dict[str, object]:
                 browser = p.chromium.launch(**launch_options)
                 page = browser.new_page(viewport={'width': 1600, 'height': 1200})
                 page.goto(APP_URL, wait_until='load', timeout=30000)
+                ensure_editor_shell_ready(page)
                 page.wait_for_selector('#htmlFileInput', state='attached', timeout=10000)
                 page.wait_for_selector('#replaceImageInput', state='attached', timeout=10000)
 
                 with page.expect_file_chooser(timeout=10000) as html_chooser_info:
-                    page.click('#openHtmlButton')
+                    click_html_upload_entry(page)
                 html_chooser_info.value.set_files(str(html_path))
                 wait_status_contains(page, 'HTML 파일', 30000, 'HTML 업로드')
 

@@ -68,6 +68,7 @@ const APP_STATES = Object.freeze({
   launch: 'launch',
   editor: 'editor',
 });
+let currentAppState = APP_STATES.launch;
 const BEGINNER_MODE_STORAGE_KEY = 'detail_editor_beginner_mode_v1';
 const ONBOARDING_COMPLETED_STORAGE_KEY = 'detail_editor_onboarding_completed_v1';
 const ONBOARDING_SAMPLE_CHECKED_STORAGE_KEY = 'detail_editor_onboarding_sample_checked_v1';
@@ -126,11 +127,12 @@ const historyState = {
 };
 const HISTORY_MERGE_WINDOW_MS = 700;
 const LIVE_HISTORY_LABELS = new Set(['geometry-patch', 'apply-text-style', 'clear-text-style']);
+const DEFAULT_JPG_QUALITY = 0.92;
 
 const advancedSettings = {
   geometryCoordMode: 'relative',
   exportScale: 1,
-  exportJpgQuality: 0.92,
+  exportJpgQuality: DEFAULT_JPG_QUALITY,
   selectionExportPadding: 16,
   selectionExportBackground: 'transparent',
 };
@@ -331,6 +333,7 @@ const elements = {
   stackVerticalButton: document.getElementById('stackVerticalButton'),
   tidyHorizontalButton: document.getElementById('tidyHorizontalButton'),
   tidyVerticalButton: document.getElementById('tidyVerticalButton'),
+  beginnerMoreItems: Array.from(document.querySelectorAll('[data-beginner-more-item]')),
   beginnerModeToggle: document.getElementById('beginnerModeToggle'),
   advancedTopbarPanel: document.getElementById('advancedTopbarPanel'),
   beginnerTutorialTooltip: document.getElementById('beginnerTutorialTooltip'),
@@ -578,6 +581,28 @@ function setStatusWithError(prefix, error, { logTag = 'APP_ERROR' } = {}) {
   if (logTag) console.error(`[${logTag}]`, error);
   store.setLastError(detail);
   setStatus(prefix, { preserveLastError: true });
+}
+
+function buildImageFailureDiagnostic({ files = [], editorMeta = null, statusMessage = '' } = {}) {
+  const firstFile = files[0] || null;
+  const selected = editorMeta?.selected || null;
+  const selectedSlotLike = !!selected && (selected.type === 'slot' || selected.detectedType === 'slot');
+  const reasons = {
+    slotUnselected: !selectedSlotLike,
+    filenameMismatch: false,
+    unsupportedFormat: !!firstFile && !String(firstFile.type || '').startsWith('image/'),
+  };
+  const details = {
+    slotUnselected: selectedSlotLike ? '선택된 슬롯이 있습니다.' : '이미지를 적용할 슬롯을 먼저 선택해 주세요.',
+    filenameMismatch: '필요하면 파일명에 슬롯 이름 일부를 포함해 자동 매칭 정확도를 높이세요.',
+    unsupportedFormat: reasons.unsupportedFormat ? `현재 파일 형식: ${firstFile.type || 'unknown'}` : '이미지 파일 형식입니다.',
+  };
+  return {
+    status: 'failed',
+    message: statusMessage || '이미지 적용 실패 원인을 확인해 주세요.',
+    reasons,
+    details,
+  };
 }
 
 function isTypingInputTarget(target) {
@@ -2635,23 +2660,23 @@ elements.replaceImageInput?.addEventListener('change', async (event) => {
     if (!activeEditor) {
       const message = '먼저 미리보기를 로드해 주세요.';
       setStatus(message);
-      setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
+      store.setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
       return;
     }
     const applied = await activeEditor.applyFiles(files);
     if (applied) {
       setStatus(`${applied}개 이미지를 적용했습니다.`);
-      setImageApplyDiagnostic(null);
+      store.setImageApplyDiagnostic(null);
     } else {
       const message = '이미지를 적용하지 못했습니다.';
       setStatus(message);
-      setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
+      store.setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
     }
     if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
   } catch (error) {
     const message = `이미지 적용 중 오류: ${error?.message || error}`;
     setStatus(message);
-    setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
+    store.setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
   } finally {
     event.target.value = '';
   }
