@@ -41,10 +41,13 @@
             <option value="1">1x</option>
             <option value="1.5" selected>1.5x</option>
             <option value="2">2x</option>
+            <option value="3">3x</option>
           </select>
         </label>
         <button id="exportPngButton" class="button button--ghost">PNG</button>
+        <button id="exportJpgButton" class="button button--ghost">JPG</button>
         <button id="exportSectionsZipButton" class="button button--ghost">섹션 ZIP</button>
+        <button id="exportSelectionPngButton" class="button button--ghost">선택 PNG</button>
         <button id="exportPresetPackageButton" class="button button--ghost">Preset ZIP</button>
       </div>
 
@@ -138,6 +141,11 @@
             <button id="manualSlotButton" class="button button--ghost">슬롯 지정</button>
             <button id="demoteSlotButton" class="button button--warn">슬롯 해제</button>
             <button id="textEditButton" class="button button--ghost">텍스트 편집</button>
+            <button id="duplicateButton" class="button button--ghost">복제</button>
+            <button id="deleteButton" class="button button--warn">삭제</button>
+            <button id="addTextButton" class="button button--ghost">텍스트 추가</button>
+            <button id="addBoxButton" class="button button--ghost">박스 추가</button>
+            <button id="addSlotButton" class="button button--ghost">슬롯 추가</button>
             <button id="toggleHideButton" class="button button--ghost">숨김</button>
             <button id="toggleLockButton" class="button button--ghost">잠금</button>
             <button id="redetectButton" class="button button--ghost">다시 감지</button>
@@ -255,6 +263,38 @@
           <h2>정렬 / 간격</h2>
           <div id="batchSelectionSummary" class="mini-summary">1개 이하 선택</div>
         </div>
+        <div class="style-form">
+          <div class="style-grid">
+            <label class="field field--mini">
+              <span>X</span>
+              <input id="geometryXInput" type="number" step="1" />
+            </label>
+            <label class="field field--mini">
+              <span>Y</span>
+              <input id="geometryYInput" type="number" step="1" />
+            </label>
+            <label class="field field--mini">
+              <span>W</span>
+              <input id="geometryWInput" type="number" min="8" step="1" />
+            </label>
+            <label class="field field--mini">
+              <span>H</span>
+              <input id="geometryHInput" type="number" min="8" step="1" />
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="applyGeometryButton" class="button button--secondary">XYWH 적용</button>
+            <button id="bringForwardButton" class="button button--ghost">앞으로</button>
+            <button id="sendBackwardButton" class="button button--ghost">뒤로</button>
+          </div>
+          <div class="button-row">
+            <button id="imageNudgeLeftButton" class="button button--ghost button--small">이미지 ←</button>
+            <button id="imageNudgeRightButton" class="button button--ghost button--small">이미지 →</button>
+            <button id="imageNudgeUpButton" class="button button--ghost button--small">이미지 ↑</button>
+            <button id="imageNudgeDownButton" class="button button--ghost button--small">이미지 ↓</button>
+          </div>
+        </div>
+        <div class="panel-divider"></div>
         <div class="action-grid">
           <button class="button button--ghost button--small" data-batch-action="same-width">같은 너비</button>
           <button class="button button--ghost button--small" data-batch-action="same-height">같은 높이</button>

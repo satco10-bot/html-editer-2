@@ -1531,6 +1531,7 @@ function createFrameEditor({
   let editingTextElement = null;
   let editingTextOriginalHtml = '';
   let dragState = null;
+  let resizeState = null;
   let suppressClickUntil = 0;
   let overlayNodes = null;
   const slotBackupMap = new Map();
@@ -1585,8 +1586,23 @@ function createFrameEditor({
     const lineY = doc.createElement('div');
     lineY.className = '__phase6_snap_line_y';
     lineY.dataset.editorRuntime = '1';
-    doc.body.append(marquee, lineX, lineY);
-    overlayNodes = { marquee, lineX, lineY };
+    const resizeBox = doc.createElement('div');
+    resizeBox.className = '__phase7_resize_box';
+    resizeBox.dataset.editorRuntime = '1';
+    resizeBox.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;display:none;z-index:999998;border:1px solid rgba(14,165,233,0.95);pointer-events:none;box-shadow:0 0 0 1px rgba(255,255,255,0.55)';
+    const handles = {};
+    for (const corner of ['nw', 'ne', 'sw', 'se']) {
+      const handle = doc.createElement('button');
+      handle.type = 'button';
+      handle.className = '__phase7_resize_handle';
+      handle.dataset.editorRuntime = '1';
+      handle.dataset.resizeCorner = corner;
+      handle.style.cssText = 'position:fixed;width:12px;height:12px;border-radius:999px;border:2px solid #fff;background:#0ea5e9;z-index:999999;display:none;padding:0;cursor:nwse-resize';
+      if (corner === 'ne' || corner === 'sw') handle.style.cursor = 'nesw-resize';
+      handles[corner] = handle;
+    }
+    doc.body.append(marquee, lineX, lineY, resizeBox, handles.nw, handles.ne, handles.sw, handles.se);
+    overlayNodes = { marquee, lineX, lineY, resizeBox, handles };
     return overlayNodes;
   }
 
@@ -1597,6 +1613,45 @@ function createFrameEditor({
     nodes.lineY.style.display = 'none';
     doc.documentElement.classList.remove('__phase6_dragging_cursor');
     doc.body.classList.remove('__phase6_dragging_cursor');
+  }
+
+  function hideResizeOverlay() {
+    const nodes = ensureOverlayNodes();
+    nodes.resizeBox.style.display = 'none';
+    for (const handle of Object.values(nodes.handles)) handle.style.display = 'none';
+  }
+
+  function updateResizeOverlay() {
+    const target = selectedElement;
+    if (!target || !target.isConnected || selectedElements.length !== 1 || editingTextElement || isHiddenElement(target)) {
+      hideResizeOverlay();
+      return;
+    }
+    const rect = target.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) {
+      hideResizeOverlay();
+      return;
+    }
+    const nodes = ensureOverlayNodes();
+    const box = nodes.resizeBox;
+    box.style.display = 'block';
+    box.style.left = `${rect.left}px`;
+    box.style.top = `${rect.top}px`;
+    box.style.width = `${rect.width}px`;
+    box.style.height = `${rect.height}px`;
+
+    const map = {
+      nw: { x: rect.left, y: rect.top },
+      ne: { x: rect.right, y: rect.top },
+      sw: { x: rect.left, y: rect.bottom },
+      se: { x: rect.right, y: rect.bottom },
+    };
+    for (const [corner, handle] of Object.entries(nodes.handles)) {
+      const point = map[corner];
+      handle.style.display = 'block';
+      handle.style.left = `${point.x - 6}px`;
+      handle.style.top = `${point.y - 6}px`;
+    }
   }
 
   function showMarqueeRect(rect) {
@@ -1825,6 +1880,7 @@ function createFrameEditor({
   }
 
   function emitState() {
+    updateResizeOverlay();
     onStateChange(getDerivedMeta());
   }
 
@@ -2298,13 +2354,28 @@ function createFrameEditor({
 
   function readTransformState(element) {
     if (!element.dataset.editorBaseTransform) {
-      element.dataset.editorBaseTransform = encodeData(element.style.transform || '');
+      const current = element.style.transform || '';
+      const parsed = parseTranslateFromTransform(current);
+      element.dataset.editorBaseTransform = encodeData(parsed.base);
+      element.dataset.editorTx = String(parsed.tx);
+      element.dataset.editorTy = String(parsed.ty);
     }
     return {
       base: decodeData(element.dataset.editorBaseTransform || ''),
       tx: Number.parseFloat(element.dataset.editorTx || '0') || 0,
       ty: Number.parseFloat(element.dataset.editorTy || '0') || 0,
     };
+  }
+
+  function parseTranslateFromTransform(transformText) {
+    const value = String(transformText || '').trim();
+    if (!value || value === 'none') return { base: '', tx: 0, ty: 0 };
+    const match = value.match(/translate\(\s*([-+]?\d*\.?\d+)px\s*,\s*([-+]?\d*\.?\d+)px\s*\)\s*$/i);
+    if (!match) return { base: value, tx: 0, ty: 0 };
+    const tx = Number.parseFloat(match[1]) || 0;
+    const ty = Number.parseFloat(match[2]) || 0;
+    const base = value.slice(0, match.index).trim();
+    return { base, tx, ty };
   }
 
   function writeTransformState(element, tx, ty) {
@@ -2322,6 +2393,136 @@ function createFrameEditor({
     const state = readTransformState(element);
     writeTransformState(element, state.tx + dx, state.ty + dy);
     if (element.dataset.nodeUid) modifiedSlots.add(element.dataset.nodeUid);
+  }
+
+  function elementGeometry(element) {
+    if (!element) return null;
+    const rect = element.getBoundingClientRect();
+    const state = readTransformState(element);
+    return {
+      x: Math.round(state.tx),
+      y: Math.round(state.ty),
+      w: Math.max(1, Math.round(rect.width)),
+      h: Math.max(1, Math.round(rect.height)),
+    };
+  }
+
+  function applyGeometryPatch(patch = {}) {
+    const target = selectedElement;
+    if (!target) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
+    if (isLockedElement(target)) return { ok: false, message: '잠긴 요소는 편집할 수 없습니다.' };
+    if (Number.isFinite(patch.w) || Number.isFinite(patch.h)) {
+      const stylePatch = {};
+      if (Number.isFinite(patch.w)) stylePatch.width = `${Math.max(8, patch.w)}px`;
+      if (Number.isFinite(patch.h)) stylePatch.height = `${Math.max(8, patch.h)}px`;
+      setInlineStyle(target, stylePatch);
+    }
+    const state = readTransformState(target);
+    const nextX = Number.isFinite(patch.x) ? patch.x : state.tx;
+    const nextY = Number.isFinite(patch.y) ? patch.y : state.ty;
+    writeTransformState(target, nextX, nextY);
+    target.dataset.editorModified = '1';
+    if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
+    emitState();
+    emitMutation('geometry-patch');
+    return { ok: true, message: '선택 요소의 XYWH를 적용했습니다.' };
+  }
+
+  function duplicateSelected() {
+    const target = selectedElement;
+    if (!target) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
+    const clone = target.cloneNode(true);
+    clone.dataset.nodeUid = nextId('node');
+    clone.removeAttribute('id');
+    target.after(clone);
+    const state = readTransformState(target);
+    writeTransformState(clone, state.tx + 20, state.ty + 20);
+    clone.dataset.editorModified = '1';
+    modifiedSlots.add(clone.dataset.nodeUid);
+    redetect({ preserveSelectionUids: [clone.dataset.nodeUid] });
+    emitMutation('duplicate');
+    return { ok: true, message: '선택 요소를 복제했습니다.' };
+  }
+
+  function deleteSelected() {
+    const targets = uniqueConnectedElements(selectedElements);
+    if (!targets.length) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
+    let removed = 0;
+    for (const element of targets) {
+      if (!element.isConnected || element === doc.body || element.tagName === 'HTML' || element.tagName === 'BODY') continue;
+      element.remove();
+      removed += 1;
+    }
+    if (!removed) return { ok: false, message: '삭제할 수 있는 요소가 없습니다.' };
+    redetect({ preserveSelectionUids: [] });
+    emitMutation('delete');
+    return { ok: true, message: `선택 요소 ${removed}개를 삭제했습니다.` };
+  }
+
+  function addElement(kind) {
+    const parent = selectedElement?.parentElement || doc.querySelector('.page') || doc.body;
+    if (!parent) return { ok: false, message: '요소를 추가할 위치를 찾지 못했습니다.' };
+    const element = doc.createElement(kind === 'text' ? 'p' : 'div');
+    element.dataset.nodeUid = nextId('node');
+    if (kind === 'text') {
+      element.textContent = '새 텍스트';
+      element.className = 'editor-added-text';
+      setInlineStyle(element, { minHeight: '32px', padding: '6px 8px', background: 'rgba(255,255,255,0.5)' });
+    } else if (kind === 'box') {
+      element.className = 'editor-added-box';
+      setInlineStyle(element, { width: '220px', height: '120px', border: '2px solid #93c5fd', background: 'rgba(147,197,253,0.2)' });
+    } else {
+      element.className = 'editor-added-slot';
+      element.dataset.manualSlot = '1';
+      element.dataset.imageSlot = 'new-slot';
+      element.dataset.slotLabel = '새 슬롯';
+      element.textContent = '[이미지 삽입부]';
+      setInlineStyle(element, { width: '240px', height: '160px', border: '2px dashed #22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center' });
+    }
+    parent.appendChild(element);
+    writeTransformState(element, 24, 24);
+    element.dataset.editorModified = '1';
+    modifiedSlots.add(element.dataset.nodeUid);
+    redetect({ preserveSelectionUids: [element.dataset.nodeUid] });
+    emitMutation(`add-${kind}`);
+    return { ok: true, message: `${kind === 'text' ? '텍스트' : kind === 'box' ? '박스' : '이미지 슬롯'}를 추가했습니다.` };
+  }
+
+  function reorderSelected(direction = 'forward') {
+    const target = selectedElement;
+    if (!target || !target.parentElement) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
+    if (direction === 'forward') {
+      const next = target.nextElementSibling;
+      if (next) next.after(target);
+      else return { ok: false, message: '이미 가장 앞 레이어입니다.' };
+    } else {
+      const prev = target.previousElementSibling;
+      if (prev) prev.before(target);
+      else return { ok: false, message: '이미 가장 뒤 레이어입니다.' };
+    }
+    target.dataset.editorModified = '1';
+    if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
+    emitState();
+    emitMutation(`z-${direction}`);
+    return { ok: true, message: direction === 'forward' ? '선택 요소를 앞으로 보냈습니다.' : '선택 요소를 뒤로 보냈습니다.' };
+  }
+
+  function nudgeImagePosition(dx = 0, dy = 0) {
+    const slot = getSelectedSlotElement();
+    if (!slot) return { ok: false, message: '먼저 이미지 슬롯을 선택해 주세요.' };
+    const img = slot.querySelector('img');
+    if (!img) return { ok: false, message: '슬롯 안에 이미지가 없습니다.' };
+    const style = win.getComputedStyle(img);
+    const [oxRaw = '50%', oyRaw = '50%'] = String(style.objectPosition || '50% 50%').split(/\s+/);
+    const ox = Number.parseFloat(oxRaw) || 50;
+    const oy = Number.parseFloat(oyRaw) || 50;
+    const nextX = Math.max(0, Math.min(100, ox + dx));
+    const nextY = Math.max(0, Math.min(100, oy + dy));
+    setInlineStyle(img, { objectPosition: `${nextX}% ${nextY}%` });
+    if (img.dataset.nodeUid) modifiedSlots.add(img.dataset.nodeUid);
+    emitState();
+    emitMutation('image-nudge');
+    return { ok: true, message: `이미지 위치를 ${dx || 0}, ${dy || 0}만큼 미세 조정했습니다.` };
   }
 
   function applyBatchLayout(action) {
@@ -2699,6 +2900,42 @@ function createFrameEditor({
     return await canvasToBlob(canvas, 'image/png');
   }
 
+  async function exportFullJpgBlob(scale = 1.5, quality = 0.92) {
+    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: false });
+    await rewriteBlobRefsToPortableUrls(exportDoc);
+    const metrics = measureExportRoot();
+    const canvas = await renderHtmlToCanvas(createDoctypeHtml(exportDoc), {
+      fullWidth: metrics.fullWidth,
+      fullHeight: metrics.fullHeight,
+      crop: { x: metrics.x, y: metrics.y, width: metrics.width, height: metrics.height },
+      scale,
+    });
+    return await canvasToBlob(canvas, 'image/jpeg', quality);
+  }
+
+  async function exportSelectionPngBlob(scale = 1.5) {
+    const target = selectedElement;
+    if (!target) throw new Error('먼저 요소를 선택해 주세요.');
+    const rect = target.getBoundingClientRect();
+    const docRect = doc.documentElement.getBoundingClientRect();
+    const crop = {
+      x: Math.max(0, Math.round(rect.left - docRect.left)),
+      y: Math.max(0, Math.round(rect.top - docRect.top)),
+      width: Math.max(1, Math.ceil(rect.width)),
+      height: Math.max(1, Math.ceil(rect.height)),
+    };
+    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: false });
+    await rewriteBlobRefsToPortableUrls(exportDoc);
+    const metrics = measureExportRoot();
+    const canvas = await renderHtmlToCanvas(createDoctypeHtml(exportDoc), {
+      fullWidth: metrics.fullWidth,
+      fullHeight: metrics.fullHeight,
+      crop,
+      scale,
+    });
+    return await canvasToBlob(canvas, 'image/png');
+  }
+
   function collectSectionRects() {
     const metrics = measureExportRoot();
     const docRect = doc.documentElement.getBoundingClientRect();
@@ -2907,8 +3144,77 @@ function createFrameEditor({
     doc.body.classList.add('__phase6_dragging_cursor');
   }
 
+  function beginResizeDrag(event, corner) {
+    const target = selectedElement;
+    if (!target || isLockedElement(target)) return false;
+    const rect = target.getBoundingClientRect();
+    const transform = readTransformState(target);
+    const width = Number.parseFloat(win.getComputedStyle(target).width || String(rect.width)) || rect.width;
+    const height = Number.parseFloat(win.getComputedStyle(target).height || String(rect.height)) || rect.height;
+    resizeState = {
+      pointerId: event.pointerId,
+      corner,
+      target,
+      startX: event.clientX,
+      startY: event.clientY,
+      startWidth: width,
+      startHeight: height,
+      startTx: transform.tx,
+      startTy: transform.ty,
+      moved: false,
+    };
+    return true;
+  }
+
+  function updateResizeDrag(event) {
+    if (!resizeState || resizeState.pointerId !== event.pointerId) return;
+    const dx = event.clientX - resizeState.startX;
+    const dy = event.clientY - resizeState.startY;
+    if (!resizeState.moved && Math.hypot(dx, dy) < 2) return;
+    resizeState.moved = true;
+    const { corner, target } = resizeState;
+    let width = resizeState.startWidth;
+    let height = resizeState.startHeight;
+    let tx = resizeState.startTx;
+    let ty = resizeState.startTy;
+    if (corner.includes('e')) width += dx;
+    if (corner.includes('s')) height += dy;
+    if (corner.includes('w')) {
+      width -= dx;
+      tx += dx;
+    }
+    if (corner.includes('n')) {
+      height -= dy;
+      ty += dy;
+    }
+    width = Math.max(8, width);
+    height = Math.max(8, height);
+    setInlineStyle(target, { width: `${Math.round(width)}px`, height: `${Math.round(height)}px` });
+    writeTransformState(target, tx, ty);
+    target.dataset.editorModified = '1';
+    if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
+    updateResizeOverlay();
+  }
+
+  function finishResizeDrag(event) {
+    if (!resizeState || (event && resizeState.pointerId !== event.pointerId)) return;
+    const done = resizeState;
+    resizeState = null;
+    if (!done.moved) return;
+    emitState();
+    emitMutation('resize-drag');
+    onStatus('선택 요소 크기를 조절했습니다.');
+  }
+
   function handlePointerDown(event) {
     if (event.button !== 0 || editingTextElement) return;
+    const resizeHandle = closestElement(event.target)?.closest?.('[data-resize-corner]');
+    if (resizeHandle) {
+      event.preventDefault();
+      event.stopPropagation();
+      beginResizeDrag(event, resizeHandle.dataset.resizeCorner || 'se');
+      return;
+    }
     const target = resolveSelectionTarget(event.target);
     if (event.shiftKey && !target) {
       beginMarqueeDrag(event);
@@ -2927,6 +3233,11 @@ function createFrameEditor({
   }
 
   function handlePointerMove(event) {
+    if (resizeState && resizeState.pointerId === event.pointerId) {
+      event.preventDefault();
+      updateResizeDrag(event);
+      return;
+    }
     if (!dragState || dragState.pointerId !== event.pointerId) return;
     const dx = event.clientX - dragState.startX;
     const dy = event.clientY - dragState.startY;
@@ -2938,6 +3249,10 @@ function createFrameEditor({
   }
 
   function finishPointerDrag(event) {
+    if (resizeState && (!event || resizeState.pointerId === event.pointerId)) {
+      finishResizeDrag(event);
+      return;
+    }
     if (!dragState || (event && dragState.pointerId !== event.pointerId)) return;
     const finished = dragState;
     dragState = null;
@@ -3002,6 +3317,16 @@ function createFrameEditor({
         onShortcut('save-edited');
         return;
       }
+      if (key === 'd') {
+        event.preventDefault();
+        onStatus(duplicateSelected().message);
+        return;
+      }
+    }
+    if (!withModifier && !editingTextElement && (event.key === 'Delete' || event.key === 'Backspace')) {
+      event.preventDefault();
+      onStatus(deleteSelected().message);
+      return;
     }
     if (!editingTextElement) return;
     if (event.key === 'Escape') {
@@ -3056,6 +3381,7 @@ function createFrameEditor({
 
   rehydratePersistentState();
   hideInteractionOverlay();
+  hideResizeOverlay();
   redetect({ preserveSelectionUids: initialSnapshot?.selectedUids || [] });
 
   return {
@@ -3091,6 +3417,16 @@ function createFrameEditor({
     toggleTextEdit,
     applyTextStyle,
     applyBatchLayout,
+    duplicateSelected,
+    deleteSelected,
+    addTextElement: () => addElement('text'),
+    addBoxElement: () => addElement('box'),
+    addSlotElement: () => addElement('slot'),
+    applyGeometryPatch,
+    getSelectionGeometry: () => elementGeometry(selectedElement),
+    bringSelectedForward: () => reorderSelected('forward'),
+    sendSelectedBackward: () => reorderSelected('backward'),
+    nudgeSelectedImage: ({ dx = 0, dy = 0 } = {}) => nudgeImagePosition(dx, dy),
     getEditedHtml: serializeEditedHtml,
     getCurrentPortableHtml: async () => {
       const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
@@ -3102,6 +3438,12 @@ function createFrameEditor({
     },
     async exportFullPngBlob(scale = 1.5) {
       return await exportFullPngBlob(scale);
+    },
+    async exportFullJpgBlob(scale = 1.5, quality = 0.92) {
+      return await exportFullJpgBlob(scale, quality);
+    },
+    async exportSelectionPngBlob(scale = 1.5) {
+      return await exportSelectionPngBlob(scale);
     },
     async exportSectionPngEntries(scale = 1.5) {
       return await exportSectionPngEntries(scale);
@@ -3128,6 +3470,7 @@ function createFrameEditor({
       doc.removeEventListener('dragleave', handleDragLeave, true);
       clearHover();
       hideInteractionOverlay();
+      hideResizeOverlay();
       clearSelectionClasses();
     },
   };
@@ -3440,6 +3783,11 @@ const elements = {
   toggleLockButton: document.getElementById('toggleLockButton'),
   redetectButton: document.getElementById('redetectButton'),
   textEditButton: document.getElementById('textEditButton'),
+  duplicateButton: document.getElementById('duplicateButton'),
+  deleteButton: document.getElementById('deleteButton'),
+  addTextButton: document.getElementById('addTextButton'),
+  addBoxButton: document.getElementById('addBoxButton'),
+  addSlotButton: document.getElementById('addSlotButton'),
   undoButton: document.getElementById('undoButton'),
   redoButton: document.getElementById('redoButton'),
   restoreAutosaveButton: document.getElementById('restoreAutosaveButton'),
@@ -3447,7 +3795,9 @@ const elements = {
   downloadNormalizedButton: document.getElementById('downloadNormalizedButton'),
   downloadLinkedZipButton: document.getElementById('downloadLinkedZipButton'),
   exportPngButton: document.getElementById('exportPngButton'),
+  exportJpgButton: document.getElementById('exportJpgButton'),
   exportSectionsZipButton: document.getElementById('exportSectionsZipButton'),
+  exportSelectionPngButton: document.getElementById('exportSelectionPngButton'),
   exportPresetSelect: document.getElementById('exportPresetSelect'),
   exportScaleSelect: document.getElementById('exportScaleSelect'),
   exportPresetPackageButton: document.getElementById('exportPresetPackageButton'),
@@ -3484,6 +3834,17 @@ const elements = {
   applyTextStyleButton: document.getElementById('applyTextStyleButton'),
   clearTextStyleButton: document.getElementById('clearTextStyleButton'),
   batchSelectionSummary: document.getElementById('batchSelectionSummary'),
+  geometryXInput: document.getElementById('geometryXInput'),
+  geometryYInput: document.getElementById('geometryYInput'),
+  geometryWInput: document.getElementById('geometryWInput'),
+  geometryHInput: document.getElementById('geometryHInput'),
+  applyGeometryButton: document.getElementById('applyGeometryButton'),
+  bringForwardButton: document.getElementById('bringForwardButton'),
+  sendBackwardButton: document.getElementById('sendBackwardButton'),
+  imageNudgeLeftButton: document.getElementById('imageNudgeLeftButton'),
+  imageNudgeRightButton: document.getElementById('imageNudgeRightButton'),
+  imageNudgeUpButton: document.getElementById('imageNudgeUpButton'),
+  imageNudgeDownButton: document.getElementById('imageNudgeDownButton'),
   toggleLeftSidebarButton: document.getElementById('toggleLeftSidebarButton'),
   toggleRightSidebarButton: document.getElementById('toggleRightSidebarButton'),
   focusModeButton: document.getElementById('focusModeButton'),
@@ -3836,6 +4197,33 @@ function syncBatchSummary(editorMeta) {
   elements.batchSelectionSummary.textContent = count > 1 ? `${count}개 동시 선택` : '1개 이하 선택';
 }
 
+function syncGeometryControls() {
+  const geometry = activeEditor?.getSelectionGeometry?.() || null;
+  const enabled = !!geometry;
+  const controls = [
+    elements.geometryXInput,
+    elements.geometryYInput,
+    elements.geometryWInput,
+    elements.geometryHInput,
+    elements.applyGeometryButton,
+    elements.bringForwardButton,
+    elements.sendBackwardButton,
+    elements.imageNudgeLeftButton,
+    elements.imageNudgeRightButton,
+    elements.imageNudgeUpButton,
+    elements.imageNudgeDownButton,
+  ];
+  for (const control of controls) {
+    if (!control) continue;
+    control.disabled = !enabled;
+  }
+  if (!enabled) return;
+  elements.geometryXInput.value = String(geometry.x ?? 0);
+  elements.geometryYInput.value = String(geometry.y ?? 0);
+  elements.geometryWInput.value = String(geometry.w ?? 0);
+  elements.geometryHInput.value = String(geometry.h ?? 0);
+}
+
 function renderShell(state) {
   renderViewButtons(state.currentView);
   renderSelectionModeButtons(state.selectionMode);
@@ -3861,6 +4249,7 @@ function renderShell(state) {
   renderAssetTable(elements.assetTableWrap, state.project, elements.assetFilterInput.value);
   syncTextStyleControls(state.editorMeta);
   syncBatchSummary(state.editorMeta);
+  syncGeometryControls();
   elements.statusText.textContent = state.statusText;
   refreshComputedViews(state);
 
@@ -3883,7 +4272,9 @@ function renderShell(state) {
   elements.downloadNormalizedButton.disabled = !hasProject;
   elements.downloadLinkedZipButton.disabled = !hasEditor;
   elements.exportPngButton.disabled = !hasEditor;
+  elements.exportJpgButton.disabled = !hasEditor;
   elements.exportSectionsZipButton.disabled = !hasEditor;
+  elements.exportSelectionPngButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
   elements.exportPresetPackageButton.disabled = !hasEditor;
   elements.downloadReportButton.disabled = !hasProject;
   if (elements.applyCodeToEditorButton) elements.applyCodeToEditorButton.disabled = !hasProject || currentCodeSource === 'report';
@@ -4066,6 +4457,25 @@ async function exportFullPng() {
   const fileName = `${projectBaseName(project)}__full.png`;
   downloadBlob(fileName, blob);
   setStatus(`전체 PNG를 저장했습니다: ${fileName}`);
+}
+
+async function exportFullJpg() {
+  const project = store.getState().project;
+  if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
+  if (!ensurePreflightBeforeExport('전체 JPG 저장')) return;
+  const blob = await activeEditor.exportFullJpgBlob(exportScale(), 0.92);
+  const fileName = `${projectBaseName(project)}__full.jpg`;
+  downloadBlob(fileName, blob);
+  setStatus(`전체 JPG를 저장했습니다: ${fileName}`);
+}
+
+async function exportSelectionPng() {
+  const project = store.getState().project;
+  if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
+  const blob = await activeEditor.exportSelectionPngBlob(exportScale());
+  const fileName = `${projectBaseName(project)}__selection.png`;
+  downloadBlob(fileName, blob);
+  setStatus(`선택 영역 PNG를 저장했습니다: ${fileName}`);
 }
 
 async function exportSectionsZip() {
@@ -4301,6 +4711,58 @@ elements.textEditButton.addEventListener('click', () => {
   setStatus(result.message);
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
+elements.duplicateButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.duplicateSelected();
+  setStatus(result.message);
+  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+});
+elements.deleteButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.deleteSelected();
+  setStatus(result.message);
+  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+});
+elements.addTextButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.addTextElement();
+  setStatus(result.message);
+});
+elements.addBoxButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.addBoxElement();
+  setStatus(result.message);
+});
+elements.addSlotButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.addSlotElement();
+  setStatus(result.message);
+});
+elements.applyGeometryButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const patch = {
+    x: Number.parseFloat(elements.geometryXInput.value),
+    y: Number.parseFloat(elements.geometryYInput.value),
+    w: Number.parseFloat(elements.geometryWInput.value),
+    h: Number.parseFloat(elements.geometryHInput.value),
+  };
+  const result = activeEditor.applyGeometryPatch(patch);
+  setStatus(result.message);
+});
+elements.bringForwardButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.bringSelectedForward();
+  setStatus(result.message);
+});
+elements.sendBackwardButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.sendSelectedBackward();
+  setStatus(result.message);
+});
+elements.imageNudgeLeftButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: -2, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeRightButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 2, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeUpButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: -2 })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeDownButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: 2 })?.message || '먼저 미리보기를 로드해 주세요.'));
 elements.preflightRefreshButton.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   activeEditor.refreshDerivedMeta();
@@ -4315,7 +4777,9 @@ elements.downloadEditedButton.addEventListener('click', downloadEditedHtml);
 elements.downloadNormalizedButton.addEventListener('click', downloadNormalizedHtml);
 elements.downloadLinkedZipButton.addEventListener('click', () => { downloadLinkedZip().catch((error) => setStatus(`ZIP 저장 중 오류: ${error?.message || error}`)); });
 elements.exportPngButton.addEventListener('click', () => { exportFullPng().catch((error) => setStatus(`PNG 저장 중 오류: ${error?.message || error}`)); });
+elements.exportJpgButton?.addEventListener('click', () => { exportFullJpg().catch((error) => setStatus(`JPG 저장 중 오류: ${error?.message || error}`)); });
 elements.exportSectionsZipButton.addEventListener('click', () => { exportSectionsZip().catch((error) => setStatus(`섹션 PNG ZIP 저장 중 오류: ${error?.message || error}`)); });
+elements.exportSelectionPngButton?.addEventListener('click', () => { exportSelectionPng().catch((error) => setStatus(`선택 PNG 저장 중 오류: ${error?.message || error}`)); });
 elements.exportPresetPackageButton.addEventListener('click', () => { downloadExportPresetPackage().catch((error) => setStatus(`Preset 패키지 저장 중 오류: ${error?.message || error}`)); });
 elements.downloadReportButton.addEventListener('click', downloadReportJson);
 elements.exportPresetSelect.addEventListener('change', () => {
