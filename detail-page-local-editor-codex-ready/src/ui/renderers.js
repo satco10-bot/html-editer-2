@@ -119,7 +119,7 @@ export function renderSlotList(container, editorMeta) {
         <span class="slot-badge" data-kind="${escapeHtml(slot.type)}">${escapeHtml(slot.type)}</span>
       </div>
       <div class="slot-list-item__meta">score ${escapeHtml(String(slot.score ?? '-'))} · ${escapeHtml(truncate(slot.groupKey || '', 48))}</div>
-    </div>
+    </button>
   `).join('');
 }
 

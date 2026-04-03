@@ -363,8 +363,8 @@ function selectionExportBackground() {
   return raw === 'opaque' ? 'opaque' : 'transparent';
 }
 
-function setStatus(text) {
-  store.setStatus(text);
+function setStatus(text, options = undefined) {
+  store.setStatus(text, options);
 }
 
 function extractErrorMessage(error) {
@@ -378,7 +378,7 @@ function setStatusWithError(prefix, error, { logTag = 'APP_ERROR' } = {}) {
   const detail = extractErrorMessage(error);
   if (logTag) console.error(`[${logTag}]`, error);
   store.setLastError(detail);
-  setStatus(detail ? `${prefix} (${detail})` : prefix);
+  setStatus(prefix, { preserveLastError: true });
 }
 
 function isTypingInputTarget(target) {
@@ -1254,11 +1254,14 @@ function loadFixture(fixtureId) {
 
 async function openHtmlFile(file) {
   if (!file) return;
+  const requestId = importRequestSequence += 1;
   try {
     const html = await file.text();
+    if (requestId !== importRequestSequence) return;
     const fileIndex = createImportFileIndex([file], 'html-file');
     pendingMountOptions = { snapshot: null, preserveHistory: false };
     const project = normalizeProject({ html, sourceName: file.name, sourceType: 'html-file', fileIndex, htmlEntryPath: file.name });
+    if (requestId !== importRequestSequence) return;
     store.setProject(project);
     setStatus(`HTML 파일 ${file.name}을 불러왔습니다. 미해결 자산 ${project.summary.assetsUnresolved}개입니다.`);
   } catch (error) {
@@ -1267,31 +1270,38 @@ async function openHtmlFile(file) {
 }
 
 async function handleFolderImport(files) {
-  const fileIndex = createImportFileIndex(files, 'folder-import');
-  const htmlEntry = choosePrimaryHtmlEntry(fileIndex);
-  if (!htmlEntry) {
-    setStatus('선택한 폴더에 HTML 파일이 없습니다.');
-    return;
-  }
-  const html = await htmlEntry.file.text();
-  pendingMountOptions = { snapshot: null, preserveHistory: false };
-  const project = normalizeProject({
-    html,
-    sourceName: htmlEntry.relativePath,
-    sourceType: 'folder-import',
-    fileIndex,
-    htmlEntryPath: htmlEntry.relativePath,
-  });
-  if (fileIndex.htmlEntries.length > 1) {
-    project.issues.unshift({
-      id: `issue_multi_html_${Date.now()}`,
-      level: 'info',
-      code: 'MULTI_HTML',
-      message: `HTML 파일이 ${fileIndex.htmlEntries.length}개라서 ${htmlEntry.relativePath}를 우선 사용했습니다.`,
+  const requestId = importRequestSequence += 1;
+  try {
+    const fileIndex = createImportFileIndex(files, 'folder-import');
+    const htmlEntry = choosePrimaryHtmlEntry(fileIndex);
+    if (!htmlEntry) {
+      setStatus('선택한 폴더에 HTML 파일이 없습니다.');
+      return;
+    }
+    const html = await htmlEntry.file.text();
+    if (requestId !== importRequestSequence) return;
+    pendingMountOptions = { snapshot: null, preserveHistory: false };
+    const project = normalizeProject({
+      html,
+      sourceName: htmlEntry.relativePath,
+      sourceType: 'folder-import',
+      fileIndex,
+      htmlEntryPath: htmlEntry.relativePath,
     });
+    if (fileIndex.htmlEntries.length > 1) {
+      project.issues.unshift({
+        id: `issue_multi_html_${Date.now()}`,
+        level: 'info',
+        code: 'MULTI_HTML',
+        message: `HTML 파일이 ${fileIndex.htmlEntries.length}개라서 ${htmlEntry.relativePath}를 우선 사용했습니다.`,
+      });
+    }
+    if (requestId !== importRequestSequence) return;
+    store.setProject(project);
+    setStatus(`프로젝트 폴더 import 완료: ${htmlEntry.relativePath}. resolved ${project.summary.assetsResolved}개, unresolved ${project.summary.assetsUnresolved}개입니다.`);
+  } catch (error) {
+    setStatusWithError('폴더 import 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'FOLDER_IMPORT_ERROR' });
   }
-  store.setProject(project);
-  setStatus(`프로젝트 폴더 import 완료: ${htmlEntry.relativePath}. resolved ${project.summary.assetsResolved}개, unresolved ${project.summary.assetsUnresolved}개입니다.`);
 }
 
 function applyPastedHtml() {
@@ -1812,24 +1822,35 @@ elements.applyAdvancedSettingsButton?.addEventListener('click', () => {
 
 elements.htmlFileInput.addEventListener('change', async (event) => {
   const [file] = event.target.files || [];
-  await openHtmlFile(file);
-  event.target.value = '';
+  try {
+    await openHtmlFile(file);
+  } finally {
+    event.target.value = '';
+  }
 });
 
 elements.folderInput.addEventListener('change', async (event) => {
   const files = Array.from(event.target.files || []);
-  if (files.length) await handleFolderImport(files);
-  event.target.value = '';
+  try {
+    if (files.length) await handleFolderImport(files);
+  } finally {
+    event.target.value = '';
+  }
 });
 
 elements.replaceImageInput.addEventListener('change', async (event) => {
   const files = Array.from(event.target.files || []);
-  if (!files.length) return;
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const applied = await activeEditor.applyFiles(files);
-  setStatus(applied ? `${applied}개 이미지를 적용했습니다.` : '이미지를 적용하지 못했습니다.');
-  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
-  event.target.value = '';
+  try {
+    if (!files.length) return;
+    if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+    const applied = await activeEditor.applyFiles(files);
+    setStatus(applied ? `${applied}개 이미지를 적용했습니다.` : '이미지를 적용하지 못했습니다.');
+    if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+  } catch (error) {
+    setStatus(`이미지 적용 중 오류: ${error?.message || error}`);
+  } finally {
+    event.target.value = '';
+  }
 });
 
 elements.assetFilterInput.addEventListener('input', () => renderAssetTable(elements.assetTableWrap, store.getState().project, elements.assetFilterInput.value));
@@ -1856,6 +1877,15 @@ elements.layerTree.addEventListener('click', (event) => {
   const button = event.target.closest('[data-layer-uid]');
   if (!button || !activeEditor) return;
   const ok = activeEditor.selectNodeByUid(button.dataset.layerUid, { additive: event.ctrlKey || event.metaKey || event.shiftKey, toggle: event.ctrlKey || event.metaKey, scroll: true });
+  if (ok) setStatus('레이어를 선택했습니다.');
+});
+elements.layerTree.addEventListener('keydown', (event) => {
+  const key = String(event.key || '');
+  if (key !== 'Enter' && key !== ' ') return;
+  const row = event.target.closest?.('[data-layer-uid]');
+  if (!row || !activeEditor) return;
+  event.preventDefault();
+  const ok = activeEditor.selectNodeByUid(row.dataset.layerUid, { additive: event.ctrlKey || event.metaKey || event.shiftKey, toggle: event.ctrlKey || event.metaKey, scroll: true });
   if (ok) setStatus('레이어를 선택했습니다.');
 });
 for (const button of elements.sidebarTabButtons) {

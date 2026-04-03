@@ -167,15 +167,33 @@ export function removeEditorCssClasses(value) {
 }
 
 export function parseSrcsetCandidates(value) {
-  return String(value || '')
-    .split(',')
-    .map((raw) => raw.trim())
-    .filter(Boolean)
-    .map((item) => {
-      const tokens = item.split(/\s+/);
-      if (tokens.length <= 1) return { url: item, descriptor: '' };
-      return { url: tokens.slice(0, -1).join(' '), descriptor: tokens.at(-1) };
-    });
+  const input = String(value || '').trim();
+  if (!input) return [];
+  const chunks = [];
+  let current = '';
+  let sawWhitespace = false;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    if (char === ',') {
+      const startsWithData = current.trimStart().toLowerCase().startsWith('data:');
+      if (!sawWhitespace && startsWithData) {
+        current += char;
+        continue;
+      }
+      if (current.trim()) chunks.push(current.trim());
+      current = '';
+      sawWhitespace = false;
+      continue;
+    }
+    current += char;
+    if (!sawWhitespace && /\s/.test(char)) sawWhitespace = true;
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.map((item) => {
+    const tokens = item.split(/\s+/);
+    if (tokens.length <= 1) return { url: item, descriptor: '' };
+    return { url: tokens.slice(0, -1).join(' '), descriptor: tokens.at(-1) };
+  });
 }
 
 export function serializeSrcsetCandidates(items) {

@@ -378,15 +378,33 @@ function removeEditorCssClasses(value) {
     .join(' ');
 }
 function parseSrcsetCandidates(value) {
-  return String(value || '')
-    .split(',')
-    .map((raw) => raw.trim())
-    .filter(Boolean)
-    .map((item) => {
-      const tokens = item.split(/\s+/);
-      if (tokens.length <= 1) return { url: item, descriptor: '' };
-      return { url: tokens.slice(0, -1).join(' '), descriptor: tokens.at(-1) };
-    });
+  const input = String(value || '').trim();
+  if (!input) return [];
+  const chunks = [];
+  let current = '';
+  let sawWhitespace = false;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    if (char === ',') {
+      const startsWithData = current.trimStart().toLowerCase().startsWith('data:');
+      if (!sawWhitespace && startsWithData) {
+        current += char;
+        continue;
+      }
+      if (current.trim()) chunks.push(current.trim());
+      current = '';
+      sawWhitespace = false;
+      continue;
+    }
+    current += char;
+    if (!sawWhitespace && /\s/.test(char)) sawWhitespace = true;
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.map((item) => {
+    const tokens = item.split(/\s+/);
+    if (tokens.length <= 1) return { url: item, descriptor: '' };
+    return { url: tokens.slice(0, -1).join(' '), descriptor: tokens.at(-1) };
+  });
 }
 function serializeSrcsetCandidates(items) {
   return (items || [])
@@ -909,17 +927,35 @@ function mapCssUrls(text, mapper) {
 }
 
 function parseSrcsetCandidates(value) {
-  return String(value || '')
-    .split(',')
-    .map((raw) => raw.trim())
-    .filter(Boolean)
-    .map((item) => {
-      const tokens = item.split(/\s+/);
-      if (tokens.length <= 1) return { url: item, descriptor: '' };
-      const descriptor = tokens.at(-1);
-      const url = tokens.slice(0, -1).join(' ');
-      return { url, descriptor };
-    });
+  const input = String(value || '').trim();
+  if (!input) return [];
+  const chunks = [];
+  let current = '';
+  let sawWhitespace = false;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    if (char === ',') {
+      const startsWithData = current.trimStart().toLowerCase().startsWith('data:');
+      if (!sawWhitespace && startsWithData) {
+        current += char;
+        continue;
+      }
+      if (current.trim()) chunks.push(current.trim());
+      current = '';
+      sawWhitespace = false;
+      continue;
+    }
+    current += char;
+    if (!sawWhitespace && /\s/.test(char)) sawWhitespace = true;
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.map((item) => {
+    const tokens = item.split(/\s+/);
+    if (tokens.length <= 1) return { url: item, descriptor: '' };
+    const descriptor = tokens.at(-1);
+    const url = tokens.slice(0, -1).join(' ');
+    return { url, descriptor };
+  });
 }
 
 function serializeSrcsetCandidates(items) {
@@ -952,6 +988,17 @@ function removeScripts(doc, issues) {
   for (const script of scripts) script.remove();
   if (scripts.length) {
     issues.push(createIssue('warning', 'SCRIPT_REMOVED', `미리보기 안전성을 위해 script ${scripts.length}개를 제거했습니다.`));
+  }
+  let inlineHandlerCount = 0;
+  for (const element of Array.from(doc.querySelectorAll('*'))) {
+    for (const attr of Array.from(element.attributes || [])) {
+      if (!/^on/i.test(attr.name)) continue;
+      element.removeAttribute(attr.name);
+      inlineHandlerCount += 1;
+    }
+  }
+  if (inlineHandlerCount) {
+    issues.push(createIssue('warning', 'INLINE_HANDLER_REMOVED', `미리보기/재오픈 안전성을 위해 inline 이벤트 핸들러 ${inlineHandlerCount}개를 제거했습니다.`));
   }
   return scripts.length;
 }
@@ -4218,7 +4265,11 @@ function createFrameEditor({
     if (!slot || isLockedElement(slot)) return;
     event.preventDefault();
     clearHover();
-    await applyFilesStartingAtSlot(slot, Array.from(event.dataTransfer.files));
+    try {
+      await applyFilesStartingAtSlot(slot, Array.from(event.dataTransfer.files));
+    } catch (error) {
+      onStatus(`드롭 이미지 적용 중 오류: ${error?.message || error}`);
+    }
   }
 
   function handleDragLeave() {
@@ -4469,7 +4520,7 @@ function renderSlotList(container, editorMeta) {
         <span class="slot-badge" data-kind="${escapeHtml(slot.type)}">${escapeHtml(slot.type)}</span>
       </div>
       <div class="slot-list-item__meta">score ${escapeHtml(String(slot.score ?? '-'))} · ${escapeHtml(truncate(slot.groupKey || '', 48))}</div>
-    </div>
+    </button>
   `).join('');
 }
 function renderLayerTree(container, editorMeta, filterText = '') {
@@ -5895,31 +5946,38 @@ async function openHtmlFile(file) {
 }
 
 async function handleFolderImport(files) {
-  const fileIndex = createImportFileIndex(files, 'folder-import');
-  const htmlEntry = choosePrimaryHtmlEntry(fileIndex);
-  if (!htmlEntry) {
-    setStatus('선택한 폴더에 HTML 파일이 없습니다.');
-    return;
-  }
-  const html = await htmlEntry.file.text();
-  pendingMountOptions = { snapshot: null, preserveHistory: false };
-  const project = normalizeProject({
-    html,
-    sourceName: htmlEntry.relativePath,
-    sourceType: 'folder-import',
-    fileIndex,
-    htmlEntryPath: htmlEntry.relativePath,
-  });
-  if (fileIndex.htmlEntries.length > 1) {
-    project.issues.unshift({
-      id: `issue_multi_html_${Date.now()}`,
-      level: 'info',
-      code: 'MULTI_HTML',
-      message: `HTML 파일이 ${fileIndex.htmlEntries.length}개라서 ${htmlEntry.relativePath}를 우선 사용했습니다.`,
+  const requestId = importRequestSequence += 1;
+  try {
+    const fileIndex = createImportFileIndex(files, 'folder-import');
+    const htmlEntry = choosePrimaryHtmlEntry(fileIndex);
+    if (!htmlEntry) {
+      setStatus('선택한 폴더에 HTML 파일이 없습니다.');
+      return;
+    }
+    const html = await htmlEntry.file.text();
+    if (requestId !== importRequestSequence) return;
+    pendingMountOptions = { snapshot: null, preserveHistory: false };
+    const project = normalizeProject({
+      html,
+      sourceName: htmlEntry.relativePath,
+      sourceType: 'folder-import',
+      fileIndex,
+      htmlEntryPath: htmlEntry.relativePath,
     });
+    if (fileIndex.htmlEntries.length > 1) {
+      project.issues.unshift({
+        id: `issue_multi_html_${Date.now()}`,
+        level: 'info',
+        code: 'MULTI_HTML',
+        message: `HTML 파일이 ${fileIndex.htmlEntries.length}개라서 ${htmlEntry.relativePath}를 우선 사용했습니다.`,
+      });
+    }
+    if (requestId !== importRequestSequence) return;
+    store.setProject(project);
+    setStatus(`프로젝트 폴더 import 완료: ${htmlEntry.relativePath}. resolved ${project.summary.assetsResolved}개, unresolved ${project.summary.assetsUnresolved}개입니다.`);
+  } catch (error) {
+    setStatusWithError('폴더 import 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'FOLDER_IMPORT_ERROR' });
   }
-  store.setProject(project);
-  setStatus(`프로젝트 폴더 import 완료: ${htmlEntry.relativePath}. resolved ${project.summary.assetsResolved}개, unresolved ${project.summary.assetsUnresolved}개입니다.`);
 }
 
 function applyPastedHtml() {
@@ -6446,18 +6504,26 @@ elements.htmlFileInput.addEventListener('change', async (event) => {
 
 elements.folderInput.addEventListener('change', async (event) => {
   const files = Array.from(event.target.files || []);
-  if (files.length) await handleFolderImport(files);
-  event.target.value = '';
+  try {
+    if (files.length) await handleFolderImport(files);
+  } finally {
+    event.target.value = '';
+  }
 });
 
 elements.replaceImageInput.addEventListener('change', async (event) => {
   const files = Array.from(event.target.files || []);
-  if (!files.length) return;
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const applied = await activeEditor.applyFiles(files);
-  setStatus(applied ? `${applied}개 이미지를 적용했습니다.` : '이미지를 적용하지 못했습니다.');
-  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
-  event.target.value = '';
+  try {
+    if (!files.length) return;
+    if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+    const applied = await activeEditor.applyFiles(files);
+    setStatus(applied ? `${applied}개 이미지를 적용했습니다.` : '이미지를 적용하지 못했습니다.');
+    if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+  } catch (error) {
+    setStatus(`이미지 적용 중 오류: ${error?.message || error}`);
+  } finally {
+    event.target.value = '';
+  }
 });
 
 elements.assetFilterInput.addEventListener('input', () => renderAssetTable(elements.assetTableWrap, store.getState().project, elements.assetFilterInput.value));
@@ -6484,6 +6550,15 @@ elements.layerTree.addEventListener('click', (event) => {
   const button = event.target.closest('[data-layer-uid]');
   if (!button || !activeEditor) return;
   const ok = activeEditor.selectNodeByUid(button.dataset.layerUid, { additive: event.ctrlKey || event.metaKey || event.shiftKey, toggle: event.ctrlKey || event.metaKey, scroll: true });
+  if (ok) setStatus('레이어를 선택했습니다.');
+});
+elements.layerTree.addEventListener('keydown', (event) => {
+  const key = String(event.key || '');
+  if (key !== 'Enter' && key !== ' ') return;
+  const row = event.target.closest?.('[data-layer-uid]');
+  if (!row || !activeEditor) return;
+  event.preventDefault();
+  const ok = activeEditor.selectNodeByUid(row.dataset.layerUid, { additive: event.ctrlKey || event.metaKey || event.shiftKey, toggle: event.ctrlKey || event.metaKey, scroll: true });
   if (ok) setStatus('레이어를 선택했습니다.');
 });
 for (const button of elements.sidebarTabButtons) {
