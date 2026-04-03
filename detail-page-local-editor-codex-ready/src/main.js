@@ -41,7 +41,7 @@ const viewFeatureFlags = {
 const WORKFLOW_STEP_GUIDES = Object.freeze({
   load: 'HTML 파일이나 폴더를 먼저 불러오세요.',
   edit: '요소를 클릭한 뒤 드래그하세요.',
-  save: '결과를 확인한 뒤 저장/출력을 실행하세요.',
+  save: '결과를 확인한 뒤 [저장/출력 열기] 버튼을 눌러 실행하세요.',
 });
 const BOOT_LOCAL_POLICY = Object.freeze({
   requiresStartupFetch: false,
