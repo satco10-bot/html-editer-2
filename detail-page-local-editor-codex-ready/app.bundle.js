@@ -4487,9 +4487,14 @@ let currentCodeSource = 'edited';
 let codeEditorDirty = false;
 let geometryCoordMode = 'relative';
 let currentSaveFormat = 'linked';
+let currentWorkflowStep = 'load';
 let lastSaveConversion = null;
 const zoomState = { mode: 'fit', value: 1 };
-const PANEL_LAYOUT_STORAGE_KEY = 'detail-editor:attribute-panel-layout:v1';
+const WORKFLOW_STEP_GUIDES = Object.freeze({
+  load: 'HTML 파일이나 폴더를 먼저 불러오세요.',
+  edit: '요소를 클릭한 뒤 드래그하세요.',
+  save: '결과를 확인한 뒤 저장/출력을 실행하세요.',
+});
 const BOOT_LOCAL_POLICY = Object.freeze({
   requiresStartupFetch: false,
   requiresFileSystemAccessApi: false,
@@ -4605,6 +4610,9 @@ const elements = {
   toggleLeftSidebarButton: document.getElementById('toggleLeftSidebarButton'),
   toggleRightSidebarButton: document.getElementById('toggleRightSidebarButton'),
   focusModeButton: document.getElementById('focusModeButton'),
+  workflowGuideLine: document.getElementById('workflowGuideLine'),
+  workflowStepButtons: Array.from(document.querySelectorAll('[data-workflow-step]')),
+  workflowPanels: Array.from(document.querySelectorAll('[data-workflow-panel]')),
   zoomOutButton: document.getElementById('zoomOutButton'),
   zoomInButton: document.getElementById('zoomInButton'),
   zoomResetButton: document.getElementById('zoomResetButton'),
@@ -4642,17 +4650,48 @@ const elements = {
   shortcutHelpCloseButton: document.getElementById('shortcutHelpCloseButton'),
 };
 
-const SHORTCUT_TOOLTIP_MAP = Object.freeze({
-  '[data-selection-mode="smart"]': '선택 도구 (V)',
-  '[data-selection-mode="text"]': '텍스트 도구 (T)',
-  '[data-selection-mode="box"]': '박스 도구 (R)',
-  '#addTextButton': '텍스트 추가 (T)',
-  '#addBoxButton': '박스 추가 (R)',
-  '#groupButton': '그룹 묶기 (Ctrl/Cmd+G)',
-  '#ungroupButton': '그룹 해제 (Shift+Ctrl/Cmd+G)',
-  '[data-canvas-action="duplicate"]': '복제 (Ctrl/Cmd+D)',
-  '[data-canvas-action="delete"]': '삭제 (Delete)',
-});
+function evaluateWorkflowStepReadiness(step, state) {
+  const hasProject = !!state?.project;
+  const hasEditor = !!activeEditor;
+  const selectionCount = Number(state?.editorMeta?.selectionCount || 0);
+  if (step === 'edit' && !hasProject) {
+    return { ok: false, message: '[단계 안내] 2) 편집으로 가기 전, 1) 불러오기에서 HTML/폴더를 먼저 열어 주세요.' };
+  }
+  if (step === 'save' && (!hasProject || !hasEditor)) {
+    return { ok: false, message: '[단계 안내] 3) 저장/출력 전, 1) 불러오기와 2) 편집 준비가 필요합니다.' };
+  }
+  if (step === 'save' && selectionCount < 1) {
+    return { ok: true, message: '[단계 안내] 선택 요소가 없습니다. 전체 저장/출력은 가능하며, 선택 PNG는 요소를 선택한 뒤 사용하세요.' };
+  }
+  return { ok: true, message: '' };
+}
+
+function syncWorkflowUi(state, { announce = false } = {}) {
+  for (const button of elements.workflowStepButtons) {
+    const active = button.dataset.workflowStep === currentWorkflowStep;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+  }
+  for (const panel of elements.workflowPanels) {
+    const scope = String(panel.dataset.workflowPanel || '').trim();
+    const steps = scope.split(/\s+/).filter(Boolean);
+    const visible = steps.length < 1 || steps.includes(currentWorkflowStep);
+    panel.classList.toggle('is-hidden', !visible);
+  }
+  if (elements.workflowGuideLine) {
+    elements.workflowGuideLine.textContent = WORKFLOW_STEP_GUIDES[currentWorkflowStep] || WORKFLOW_STEP_GUIDES.load;
+  }
+  if (announce) {
+    const check = evaluateWorkflowStepReadiness(currentWorkflowStep, state);
+    if (check.message) setStatus(check.message);
+  }
+}
+
+function setWorkflowStep(step) {
+  const normalized = step === 'edit' || step === 'save' ? step : 'load';
+  currentWorkflowStep = normalized;
+  syncWorkflowUi(store.getState(), { announce: true });
+}
 
 function projectBaseName(project) {
   return sanitizeFilename((project?.sourceName || 'detail-page').replace(/\.html?$/i, '') || 'detail-page');
@@ -5297,6 +5336,7 @@ function renderShell(state) {
   syncExportPresetUi();
   syncSaveFormatUi();
   syncWorkspaceButtons();
+  syncWorkflowUi(state);
   applyPreviewZoom();
   refreshHistoryButtons();
 }
@@ -5315,7 +5355,6 @@ function handleEditorShortcut(action) {
   if (action === 'undo') return undoHistory();
   if (action === 'redo') return redoHistory();
   if (action === 'save-edited') return downloadEditedHtml().catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`));
-  if (action === 'toggle-shortcut-help') return toggleShortcutHelp();
 }
 
 function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
@@ -5730,9 +5769,13 @@ if (bootEnvironmentReport.errorCount || bootEnvironmentReport.warningCount) {
   setStatus(`환경 점검: 오류 ${bootEnvironmentReport.errorCount}개 · 경고 ${bootEnvironmentReport.warningCount}개`);
 }
 renderEmptyPreview();
+syncWorkflowUi(store.getState());
 
 for (const button of elements.viewButtons) button.addEventListener('click', () => setView(button.dataset.view));
 for (const button of elements.selectionModeButtons) button.addEventListener('click', () => setSelectionMode(button.dataset.selectionMode));
+for (const button of elements.workflowStepButtons) {
+  button.addEventListener('click', () => setWorkflowStep(button.dataset.workflowStep));
+}
 for (const button of elements.presetButtons) {
   button.addEventListener('click', () => {
     if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
