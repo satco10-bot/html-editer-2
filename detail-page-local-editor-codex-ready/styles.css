@@ -136,6 +136,10 @@ button { transition: transform 120ms ease, opacity 120ms ease; }
   border-color: #9ab4ef;
   background: #f0f6ff;
 }
+.launcher-card[data-available="false"] {
+  opacity: 0.72;
+  border-style: dashed;
+}
 
 .app-shell {
   flex: 1;

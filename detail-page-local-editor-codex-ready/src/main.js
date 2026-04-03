@@ -75,6 +75,7 @@ const APP_STATES = Object.freeze({
   launch: 'launch',
   editor: 'editor',
 });
+let currentAppState = APP_STATES.launch;
 const BEGINNER_MODE_STORAGE_KEY = 'detail_editor_beginner_mode_v1';
 const ONBOARDING_COMPLETED_STORAGE_KEY = 'detail_editor_onboarding_completed_v1';
 const ONBOARDING_SAMPLE_CHECKED_STORAGE_KEY = 'detail_editor_onboarding_sample_checked_v1';
@@ -343,6 +344,7 @@ const elements = {
   tidyHorizontalButton: document.getElementById('tidyHorizontalButton'),
   tidyVerticalButton: document.getElementById('tidyVerticalButton'),
   beginnerModeToggle: document.getElementById('beginnerModeToggle'),
+  beginnerMoreItems: Array.from(document.querySelectorAll('[data-beginner-more-item]')),
   advancedTopbarPanel: document.getElementById('advancedTopbarPanel'),
   beginnerTutorialTooltip: document.getElementById('beginnerTutorialTooltip'),
   beginnerTutorialTitle: document.getElementById('beginnerTutorialTitle'),
@@ -359,12 +361,12 @@ const elements = {
 
 const beginnerMoreItemAnchors = new WeakMap();
 
-elements.beginnerMoreItems.forEach((item) => {
+for (const item of elements.beginnerMoreItems || []) {
   beginnerMoreItemAnchors.set(item, {
     parent: item.parentElement,
     nextSibling: item.nextSibling,
   });
-});
+}
 
 function readFromLocalStorage(key, fallback = null) {
   try {
@@ -574,7 +576,9 @@ function setAppState(nextState) {
 function refreshLauncherRecentButton() {
   if (!elements.launcherRecentButton) return;
   const payload = readAutosavePayload();
-  elements.launcherRecentButton.disabled = !payload?.snapshot?.html;
+  const hasSnapshot = !!payload?.snapshot?.html;
+  elements.launcherRecentButton.disabled = false;
+  elements.launcherRecentButton.dataset.available = hasSnapshot ? 'true' : 'false';
 }
 
 function extractErrorMessage(error) {
