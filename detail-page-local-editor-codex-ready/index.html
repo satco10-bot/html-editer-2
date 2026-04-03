@@ -60,49 +60,58 @@
 <body>
   <div class="app-shell">
     <header class="topbar">
-      <div class="topbar__brand">
-        <div class="brand__eyebrow">LOCAL DETAIL PAGE EDITOR · UX REBOOT</div>
-        <h1>상세페이지 로컬 웹앱</h1>
-        <div class="topbar__sub">버튼 나열형 인터페이스를 줄이고, 캔버스·코드·속성 패널 중심으로 다시 묶은 리부트 셸입니다.</div>
+      <div class="topbar__left">
+        <div class="topbar__brand">
+          <div class="brand__eyebrow">LOCAL DETAIL PAGE EDITOR · UX REBOOT</div>
+          <h1>상세페이지 로컬 웹앱</h1>
+          <div class="topbar__sub">버튼 나열형 인터페이스를 줄이고, 캔버스·코드·속성 패널 중심으로 다시 묶은 리부트 셸입니다.</div>
+        </div>
       </div>
 
-      <div class="workflow-tabs" role="tablist" aria-label="작업 단계">
-        <button class="workflow-tab is-active" data-workflow-step="load" role="tab" aria-selected="true">1) 불러오기</button>
-        <button class="workflow-tab" data-workflow-step="edit" role="tab" aria-selected="false">2) 편집</button>
-        <button class="workflow-tab" data-workflow-step="save" role="tab" aria-selected="false">3) 저장/출력</button>
-      </div>
-      <p id="workflowGuideLine" class="workflow-guide">HTML 파일이나 폴더를 먼저 불러오세요.</p>
-      <button id="beginnerModeToggle" class="button button--secondary" type="button" aria-pressed="false">초보 모드: OFF</button>
-
-      <div class="topbar__group" data-workflow-panel="load">
-        <span class="topbar__label">열기</span>
-        <button id="openHtmlButton" class="button">HTML 열기</button>
-        <button id="openFolderButton" class="button button--secondary">폴더 열기</button>
-        <label class="mini-control">
-          <span>Fixture</span>
-          <select id="fixtureSelect"></select>
+      <div class="topbar__center">
+        <label class="workflow-guide-picker" for="workflowGuideSelect">
+          <span>진행 안내</span>
+          <select id="workflowGuideSelect">
+            <option value="load">1) 불러오기</option>
+            <option value="edit">2) 편집</option>
+            <option value="save">3) 저장/출력</option>
+          </select>
         </label>
-        <button id="loadFixtureButton" class="button button--secondary">불러오기</button>
+        <p id="workflowGuideLine" class="workflow-guide">HTML 파일이나 폴더를 먼저 불러오세요.</p>
       </div>
 
-      <div class="topbar__group" data-workflow-panel="save">
-        <span class="topbar__label">저장 / 출력 (기본)</span>
-        <button id="downloadEditedButton" class="button button--ghost">문서 저장</button>
-        <button id="exportPngButton" class="button button--ghost">PNG</button>
-        <button id="exportJpgButton" class="button button--ghost">JPG</button>
+      <div class="topbar__right">
+        <button id="beginnerModeToggle" class="button button--secondary" type="button" aria-pressed="false">초보 모드: OFF</button>
+        <div class="topbar__group">
+          <span class="topbar__label">열기</span>
+          <button id="openHtmlButton" class="button">HTML 열기</button>
+          <button id="openFolderButton" class="button button--secondary">폴더 열기</button>
+          <label class="mini-control">
+            <span>Fixture</span>
+            <select id="fixtureSelect"></select>
+          </label>
+          <button id="loadFixtureButton" class="button button--secondary">불러오기</button>
+        </div>
+
+        <div class="topbar__group">
+          <span class="topbar__label">저장 / 출력 (기본)</span>
+          <button id="downloadEditedButton" class="button button--ghost">문서 저장</button>
+          <button id="exportPngButton" class="button button--ghost">PNG</button>
+          <button id="exportJpgButton" class="button button--ghost">JPG</button>
+        </div>
+
+        <div class="topbar__group topbar__group--workspace">
+          <span class="topbar__label">작업</span>
+          <button id="undoButton" class="button button--ghost" data-beginner-advanced>되돌리기</button>
+          <button id="redoButton" class="button button--ghost" data-beginner-advanced>다시하기</button>
+          <button id="restoreAutosaveButton" class="button button--ghost" data-beginner-advanced>자동저장 복구</button>
+          <button id="toggleLeftSidebarButton" class="button button--ghost" data-beginner-advanced>왼쪽 패널</button>
+          <button id="toggleRightSidebarButton" class="button button--ghost" data-beginner-advanced>오른쪽 패널</button>
+          <button id="focusModeButton" class="button button--ghost" data-beginner-advanced>캔버스 집중</button>
+        </div>
       </div>
 
-      <div class="topbar__group topbar__group--workspace" data-workflow-panel="edit">
-        <span class="topbar__label">작업</span>
-        <button id="undoButton" class="button button--ghost" data-beginner-advanced>되돌리기</button>
-        <button id="redoButton" class="button button--ghost" data-beginner-advanced>다시하기</button>
-        <button id="restoreAutosaveButton" class="button button--ghost" data-beginner-advanced>자동저장 복구</button>
-        <button id="toggleLeftSidebarButton" class="button button--ghost" data-beginner-advanced>왼쪽 패널</button>
-        <button id="toggleRightSidebarButton" class="button button--ghost" data-beginner-advanced>오른쪽 패널</button>
-        <button id="focusModeButton" class="button button--ghost" data-beginner-advanced>캔버스 집중</button>
-      </div>
-
-      <details id="advancedTopbarPanel" class="topbar-advanced" data-workflow-panel="edit save" data-beginner-advanced>
+      <details id="advancedTopbarPanel" class="topbar-advanced" data-beginner-advanced>
         <summary>고급 펼치기</summary>
         <div class="topbar__group">
           <span class="topbar__label">고급 저장 / 출력</span>
@@ -534,6 +543,7 @@
   </div>
 
   <footer class="statusbar">
+    <div id="documentStatusChip" class="status-chip status-chip--document" data-status="idle">문서 없음</div>
     <div id="statusText">대기 중</div>
   </footer>
 
