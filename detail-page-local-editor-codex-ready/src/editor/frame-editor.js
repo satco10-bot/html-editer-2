@@ -1608,6 +1608,34 @@ export function createFrameEditor({
     };
   }
 
+  function normalizeExportScale(scale = 1) {
+    const value = Number.parseFloat(String(scale));
+    if (!Number.isFinite(value) || value <= 0) return 1;
+    if (value >= 2.5) return 3;
+    if (value >= 1.5) return 2;
+    return 1;
+  }
+
+  function elementRectToCrop(rect, docRect) {
+    return {
+      x: Math.max(0, Math.round(rect.left - docRect.left)),
+      y: Math.max(0, Math.round(rect.top - docRect.top)),
+      width: Math.max(1, Math.ceil(rect.width)),
+      height: Math.max(1, Math.ceil(rect.height)),
+    };
+  }
+
+  function computeSelectionBoundingCrop() {
+    const targets = uniqueConnectedElements(selectedElements).filter((element) => isElement(element) && element.isConnected);
+    if (!targets.length) return null;
+    const rects = targets.map((element) => element.getBoundingClientRect()).filter((rect) => rect.width > 0 && rect.height > 0);
+    if (!rects.length) return null;
+    const bounds = unionRect(rects);
+    if (!bounds) return null;
+    const docRect = doc.documentElement.getBoundingClientRect();
+    return elementRectToCrop(bounds, docRect);
+  }
+
   async function renderHtmlToCanvas(html, { fullWidth, fullHeight, crop, scale = 1 }) {
     const parsed = new DOMParser().parseFromString(html, 'text/html');
     parsed.documentElement.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
@@ -1633,53 +1661,46 @@ export function createFrameEditor({
     return canvas;
   }
 
-  async function exportFullPngBlob(scale = 1.5) {
+  async function buildExportRenderContext() {
     const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: false });
     await rewriteBlobRefsToPortableUrls(exportDoc);
-    const metrics = measureExportRoot();
-    const canvas = await renderHtmlToCanvas(createDoctypeHtml(exportDoc), {
-      fullWidth: metrics.fullWidth,
-      fullHeight: metrics.fullHeight,
-      crop: { x: metrics.x, y: metrics.y, width: metrics.width, height: metrics.height },
-      scale,
+    return {
+      html: createDoctypeHtml(exportDoc),
+      metrics: measureExportRoot(),
+      exportDoc,
+    };
+  }
+
+  async function renderExportBlob({ area = null, scale = 1, format = 'png', quality = 0.92, context = null } = {}) {
+    const renderContext = context || (await buildExportRenderContext());
+    const resolvedArea = area || {
+      x: renderContext.metrics.x,
+      y: renderContext.metrics.y,
+      width: renderContext.metrics.width,
+      height: renderContext.metrics.height,
+    };
+    const canvas = await renderHtmlToCanvas(renderContext.html, {
+      fullWidth: renderContext.metrics.fullWidth,
+      fullHeight: renderContext.metrics.fullHeight,
+      crop: resolvedArea,
+      scale: normalizeExportScale(scale),
     });
-    return await canvasToBlob(canvas, 'image/png');
+    const mime = format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : 'image/png';
+    return await canvasToBlob(canvas, mime, mime === 'image/jpeg' ? quality : undefined);
+  }
+
+  async function exportFullPngBlob(scale = 1.5) {
+    return await renderExportBlob({ format: 'png', scale });
   }
 
   async function exportFullJpgBlob(scale = 1.5, quality = 0.92) {
-    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: false });
-    await rewriteBlobRefsToPortableUrls(exportDoc);
-    const metrics = measureExportRoot();
-    const canvas = await renderHtmlToCanvas(createDoctypeHtml(exportDoc), {
-      fullWidth: metrics.fullWidth,
-      fullHeight: metrics.fullHeight,
-      crop: { x: metrics.x, y: metrics.y, width: metrics.width, height: metrics.height },
-      scale,
-    });
-    return await canvasToBlob(canvas, 'image/jpeg', quality);
+    return await renderExportBlob({ format: 'jpg', scale, quality });
   }
 
   async function exportSelectionPngBlob(scale = 1.5) {
-    const target = selectedElement;
-    if (!target) throw new Error('먼저 요소를 선택해 주세요.');
-    const rect = target.getBoundingClientRect();
-    const docRect = doc.documentElement.getBoundingClientRect();
-    const crop = {
-      x: Math.max(0, Math.round(rect.left - docRect.left)),
-      y: Math.max(0, Math.round(rect.top - docRect.top)),
-      width: Math.max(1, Math.ceil(rect.width)),
-      height: Math.max(1, Math.ceil(rect.height)),
-    };
-    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: false });
-    await rewriteBlobRefsToPortableUrls(exportDoc);
-    const metrics = measureExportRoot();
-    const canvas = await renderHtmlToCanvas(createDoctypeHtml(exportDoc), {
-      fullWidth: metrics.fullWidth,
-      fullHeight: metrics.fullHeight,
-      crop,
-      scale,
-    });
-    return await canvasToBlob(canvas, 'image/png');
+    const crop = computeSelectionBoundingCrop();
+    if (!crop) throw new Error('먼저 요소를 선택해 주세요.');
+    return await renderExportBlob({ format: 'png', area: crop, scale });
   }
 
   function collectSectionRects() {
@@ -1696,12 +1717,7 @@ export function createFrameEditor({
     }
     return candidates.map((element, index) => {
       const rect = element.getBoundingClientRect();
-      const crop = {
-        x: Math.max(0, Math.round(rect.left - docRect.left)),
-        y: Math.max(0, Math.round(rect.top - docRect.top)),
-        width: Math.max(1, Math.ceil(rect.width)),
-        height: Math.max(1, Math.ceil(rect.height)),
-      };
+      const crop = elementRectToCrop(rect, docRect);
       const rawName = buildLabel(element) || element.id || element.className || element.tagName.toLowerCase();
       return {
         crop,
@@ -1711,26 +1727,56 @@ export function createFrameEditor({
   }
 
   async function exportSectionPngEntries(scale = 1.5) {
-    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: false });
-    await rewriteBlobRefsToPortableUrls(exportDoc);
-    const metrics = measureExportRoot();
-    const html = createDoctypeHtml(exportDoc);
+    const context = await buildExportRenderContext();
     const sections = collectSectionRects();
     const entries = [];
     for (const section of sections) {
       // eslint-disable-next-line no-await-in-loop
-      const canvas = await renderHtmlToCanvas(html, {
-        fullWidth: metrics.fullWidth,
-        fullHeight: metrics.fullHeight,
-        crop: section.crop,
-        scale,
-      });
-      // eslint-disable-next-line no-await-in-loop
-      const blob = await canvasToBlob(canvas, 'image/png');
+      const blob = await renderExportBlob({ format: 'png', area: section.crop, scale, context });
       // eslint-disable-next-line no-await-in-loop
       entries.push({ name: section.name, data: new Uint8Array(await blob.arrayBuffer()) });
     }
     return entries;
+  }
+
+  async function exportFixtureIntegrityReport() {
+    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: false });
+    const fixtureContract = project?.fixtureMeta?.slot_contract || null;
+    let placeholderOnlySlots = 0;
+    let unresolvedImages = 0;
+    for (const slotRecord of detection.candidates) {
+      const slot = exportDoc.querySelector(`[data-node-uid="${slotRecord.uid}"]`);
+      if (!slot || slot.dataset.slotIgnore === '1') continue;
+      const hasPlaceholder = PLACEHOLDER_TEXT_RE.test(placeholderTextValue(slot));
+      const target = findSlotMediaTarget(slot);
+      let hasMedia = false;
+      let unresolved = false;
+      if (target.kind === 'background') {
+        const styleValue = (target.element || slot).getAttribute('style') || '';
+        hasMedia = /url\(/i.test(styleValue);
+        unresolved = /%EB%AF%B8%ED%95%B4%EA%B2%B0|미해결/i.test(styleValue);
+      } else {
+        const img = target.element || slot.querySelector('img');
+        const src = img?.getAttribute('src') || '';
+        hasMedia = !!src;
+        unresolved = /%EB%AF%B8%ED%95%B4%EA%B2%B0|미해결/i.test(src);
+      }
+      if (hasPlaceholder && !hasMedia) placeholderOnlySlots += 1;
+      if (unresolved) unresolvedImages += 1;
+    }
+    const issues = [];
+    if (placeholderOnlySlots > 0) issues.push(`placeholder-only 슬롯 ${placeholderOnlySlots}개`);
+    if (unresolvedImages > 0) issues.push(`미해결 이미지 ${unresolvedImages}개`);
+    if (fixtureContract?.required_exact_count != null && detection.summary.totalCount !== fixtureContract.required_exact_count) {
+      issues.push(`fixture 슬롯 수 불일치(${detection.summary.totalCount}/${fixtureContract.required_exact_count})`);
+    }
+    return {
+      ok: issues.length === 0,
+      fixtureId: project?.fixtureId || '',
+      placeholderOnlySlots,
+      unresolvedImages,
+      issues,
+    };
   }
 
   async function buildLinkedPackageEntries() {
@@ -2193,6 +2239,9 @@ export function createFrameEditor({
     },
     async exportSectionPngEntries(scale = 1.5) {
       return await exportSectionPngEntries(scale);
+    },
+    async getExportFixtureIntegrityReport() {
+      return await exportFixtureIntegrityReport();
     },
     captureSnapshot,
     getReport: buildReport,
