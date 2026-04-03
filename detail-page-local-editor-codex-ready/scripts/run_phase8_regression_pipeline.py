@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from datetime import datetime, timezone
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 REPORTS_DIR = ROOT / 'reports'
 DAILY_PIPELINE_REPORT = REPORTS_DIR / f"WEBAPP_PHASE8_PIPELINE_RESULTS_{datetime.now(timezone.utc).date().isoformat()}.json"
 REQUIREMENTS_FILE = ROOT / 'requirements-regression.txt'
+INSTALL_SCRIPT = ROOT / 'scripts' / 'install_regression_dependencies.py'
+PIPELINE_SCRIPT = ROOT / 'scripts' / 'run_phase8_regression_pipeline.py'
 DAILY_RESULT_FILE = REPORTS_DIR / f"WEBAPP_PHASE8_PIPELINE_RESULT_{datetime.now(timezone.utc).date().isoformat()}.json"
 HISTORY_FILE = REPORTS_DIR / 'WEBAPP_PHASE8_PIPELINE_HISTORY.json'
 DASHBOARD_FILE = REPORTS_DIR / 'WEBAPP_PHASE8_PIPELINE_DASHBOARD.md'
@@ -24,7 +27,11 @@ DEPENDENCY_MODULES = [
 
 
 def get_single_install_command() -> str:
-    return f"python3 -m pip install -r {REQUIREMENTS_FILE.relative_to(ROOT)}"
+    return f"{sys.executable} {INSTALL_SCRIPT.relative_to(ROOT)}"
+
+
+def get_retry_command() -> str:
+    return f"{sys.executable} {PIPELINE_SCRIPT.relative_to(ROOT)}"
 
 
 def check_dependencies() -> dict[str, Any]:
@@ -81,8 +88,24 @@ def explain_install_guide(dependency: dict[str, Any]) -> None:
     missing = dependency.get('missing', [])
     print('[DEPENDENCY] ❌ dependency precheck 실패')
     print(f"[DEPENDENCY] missing_packages: {', '.join(missing) if missing else 'unknown'}")
-    print('[DEPENDENCY] 아래 명령 1줄만 실행한 뒤 파이프라인을 다시 실행하세요:')
-    print(f"[DEPENDENCY] {get_single_install_command()}")
+    print('[DEPENDENCY] 아래 순서대로 실행하세요:')
+    print(f"[DEPENDENCY] 1) 설치: {get_single_install_command()}")
+    print(f"[DEPENDENCY] 2) 재시도: {get_retry_command()}")
+
+
+def collect_environment_info() -> dict[str, Any]:
+    packages: dict[str, str] = {}
+    for package_name, _module_name in DEPENDENCY_MODULES:
+        try:
+            packages[package_name] = metadata.version(package_name)
+        except metadata.PackageNotFoundError:
+            packages[package_name] = 'not_installed'
+    return {
+        'python_version': sys.version.replace('\n', ' ').strip(),
+        'python_executable': sys.executable,
+        'platform': sys.platform,
+        'packages': packages,
+    }
 
 
 def run_json_script(script_rel_path: str) -> dict[str, Any]:
@@ -199,6 +222,8 @@ def _step_failure_label(step: dict[str, Any]) -> str:
 
 def generate_dashboard(run_payload: dict[str, Any]) -> None:
     run_date = datetime.now(timezone.utc).date().isoformat()
+    fail_steps = sum(1 for step in run_payload['steps'] if step.get('status') == 'FAIL')
+    not_run_steps = sum(1 for step in run_payload['steps'] if step.get('status') == 'NOT_RUN')
     dependency_failures = sum(1 for step in run_payload['steps'] if step.get('error_type') == 'dependency_missing')
     scenario_failures = sum(1 for step in run_payload['steps'] if step.get('error_type') == 'scenario_failed')
     runtime_failures = sum(1 for step in run_payload['steps'] if step.get('error_type') == 'runtime_error')
@@ -214,6 +239,8 @@ def generate_dashboard(run_payload: dict[str, Any]) -> None:
         f'- run_date: {run_date}',
         f"- overall_status: {run_payload['summary']['overall_status']}",
         f"- quality_confidence: {run_payload['quality_confidence']}",
+        f'- fail_steps: {fail_steps} (실패)',
+        f'- not_run_steps: {not_run_steps} (미실행)',
         f'- dependency_failures: {dependency_failures} (🟠)',
         f'- scenario_failures: {scenario_failures} (🔴)',
         f'- runtime_failures: {runtime_failures} (🟣)',
@@ -272,12 +299,14 @@ def main() -> None:
     started_at = datetime.now(timezone.utc).isoformat()
 
     dependency = check_dependencies()
+    environment = collect_environment_info()
     steps: list[dict[str, Any]] = []
     explain_install_guide(dependency)
     dependency_section = {
         'status': 'pass' if dependency['ok'] else 'fail',
         'missing_packages': dependency.get('missing', []),
         'install_command': get_single_install_command(),
+        'retry_command': get_retry_command(),
     }
     scenario_section: dict[str, Any]
 
@@ -355,6 +384,7 @@ def main() -> None:
         'started_at': started_at,
         'finished_at': datetime.now(timezone.utc).isoformat(),
         'requirements_file': str(REQUIREMENTS_FILE.relative_to(ROOT)),
+        'environment': environment,
         'dependency': dependency,
         'dependency_precheck': dependency_section,
         'scenario_execution': scenario_section,
@@ -367,7 +397,8 @@ def main() -> None:
         'summary': {
             'overall_status': 'PASS' if overall_ok else 'FAIL',
             'step_pass': sum(1 for step in steps if step['status'] == 'PASS'),
-            'step_fail': sum(1 for step in steps if step['status'] != 'PASS'),
+            'step_fail': sum(1 for step in steps if step['status'] == 'FAIL'),
+            'step_not_run': sum(1 for step in steps if step['status'] == 'NOT_RUN'),
             'dependency_failures': dependency_failures,
             'scenario_failures': scenario_failures,
             'runtime_failures': runtime_failures,
