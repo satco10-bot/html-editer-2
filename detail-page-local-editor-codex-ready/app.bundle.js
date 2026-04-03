@@ -2745,66 +2745,6 @@ function createFrameEditor({
     };
   }
 
-  function groupSelected() {
-    const targets = filterTopLevelSelection(selectedElements).filter((element) => !isLockedElement(element));
-    if (targets.length < 2) return { ok: false, message: '그룹은 2개 이상 선택해야 합니다.' };
-    const parent = targets[0]?.parentElement;
-    if (!parent || parent === doc.body || ['HTML', 'BODY'].includes(parent.tagName)) {
-      return { ok: false, message: '그룹을 만들 공통 부모를 찾지 못했습니다.' };
-    }
-    if (!targets.every((element) => element.parentElement === parent)) {
-      return { ok: false, message: '같은 부모 레벨의 요소만 그룹으로 묶을 수 있습니다.' };
-    }
-    const siblingOrder = Array.from(parent.children || []);
-    const orderedTargets = targets.slice().sort((a, b) => siblingOrder.indexOf(a) - siblingOrder.indexOf(b));
-    const group = doc.createElement('div');
-    group.dataset.nodeRole = 'group';
-    group.dataset.nodeUid = nextId('node');
-    group.dataset.groupLabel = `그룹 ${orderedTargets.length}`;
-    group.setAttribute('aria-label', group.dataset.groupLabel);
-    parent.insertBefore(group, orderedTargets[0]);
-    for (const target of orderedTargets) group.appendChild(target);
-    group.dataset.editorModified = '1';
-    modifiedSlots.add(group.dataset.nodeUid);
-    redetect({ preserveSelectionUids: [group.dataset.nodeUid] });
-    emitMutation('group-selection');
-    return { ok: true, message: `선택 요소 ${orderedTargets.length}개를 그룹으로 묶었습니다.` };
-  }
-
-  function ungroupSelected() {
-    const targets = filterTopLevelSelection(selectedElements);
-    if (!targets.length) return { ok: false, message: '먼저 그룹(또는 그룹 안 요소)을 선택해 주세요.' };
-    const groups = [];
-    const seen = new Set();
-    const pushGroup = (group) => {
-      if (!isGroupElement(group) || !group.isConnected || isLockedElement(group)) return;
-      const uid = group.dataset.nodeUid || nextId('node');
-      group.dataset.nodeUid = uid;
-      if (seen.has(uid)) return;
-      seen.add(uid);
-      groups.push(group);
-    };
-    for (const target of targets) {
-      if (isGroupElement(target)) pushGroup(target);
-      else pushGroup(target.parentElement);
-    }
-    if (!groups.length) return { ok: false, message: '해제할 그룹을 찾지 못했습니다.' };
-    const keepSelectionUids = [];
-    for (const group of groups) {
-      const parent = group.parentElement;
-      if (!parent) continue;
-      const children = Array.from(group.children || []).filter((child) => isElement(child));
-      for (const child of children) {
-        parent.insertBefore(child, group);
-        if (child.dataset.nodeUid) keepSelectionUids.push(child.dataset.nodeUid);
-      }
-      group.remove();
-    }
-    redetect({ preserveSelectionUids: keepSelectionUids });
-    emitMutation('ungroup-selection');
-    return { ok: true, message: `그룹 ${groups.length}개를 해제했습니다.` };
-  }
-
   function deleteSelected() {
     return deleteSelection({
       selectedElements: () => uniqueConnectedElements(selectedElements),
@@ -3205,15 +3145,36 @@ function createFrameEditor({
 
   async function rewriteBlobRefsToPortableUrls(exportDoc) {
     const cache = new Map();
+    const stats = {
+      blobConvertedToDataUrl: 0,
+      blobConversionFailed: 0,
+      touchedImgSrc: 0,
+      touchedSrcset: 0,
+      touchedInlineStyleUrl: 0,
+      touchedStyleBlockUrl: 0,
+    };
+
+    function trackBlobRewrite(original, replacement, key) {
+      if (!String(original || '').startsWith('blob:')) return;
+      if (String(replacement || '').startsWith('data:')) stats.blobConvertedToDataUrl += 1;
+      else stats.blobConversionFailed += 1;
+      if (key && Object.prototype.hasOwnProperty.call(stats, key)) stats[key] += 1;
+    }
 
     for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
       const src = img.getAttribute('src') || '';
-      if (src) img.setAttribute('src', await resolvePortableUrl(src, cache));
+      if (src) {
+        const replacement = await resolvePortableUrl(src, cache);
+        trackBlobRewrite(src, replacement, 'touchedImgSrc');
+        img.setAttribute('src', replacement);
+      }
       const srcset = img.getAttribute('srcset') || '';
       if (srcset) {
         const rewritten = [];
         for (const item of parseSrcsetCandidates(srcset)) {
-          rewritten.push({ ...item, url: await resolvePortableUrl(item.url, cache) });
+          const replacement = await resolvePortableUrl(item.url, cache);
+          trackBlobRewrite(item.url, replacement, 'touchedSrcset');
+          rewritten.push({ ...item, url: replacement });
         }
         img.setAttribute('srcset', serializeSrcsetCandidates(rewritten));
       }
@@ -3222,7 +3183,9 @@ function createFrameEditor({
     for (const source of Array.from(exportDoc.querySelectorAll('source[srcset]'))) {
       const items = [];
       for (const item of parseSrcsetCandidates(source.getAttribute('srcset') || '')) {
-        items.push({ ...item, url: await resolvePortableUrl(item.url, cache) });
+        const replacement = await resolvePortableUrl(item.url, cache);
+        trackBlobRewrite(item.url, replacement, 'touchedSrcset');
+        items.push({ ...item, url: replacement });
       }
       source.setAttribute('srcset', serializeSrcsetCandidates(items));
     }
@@ -3234,6 +3197,7 @@ function createFrameEditor({
       let nextStyle = styleValue;
       for (const match of matches) {
         const replacement = await resolvePortableUrl(match[2], cache);
+        trackBlobRewrite(match[2], replacement, 'touchedInlineStyleUrl');
         nextStyle = nextStyle.replace(match[2], replacement);
       }
       element.setAttribute('style', nextStyle);
@@ -3246,10 +3210,31 @@ function createFrameEditor({
       let nextCss = css;
       for (const match of matches) {
         const replacement = await resolvePortableUrl(match[2], cache);
+        trackBlobRewrite(match[2], replacement, 'touchedStyleBlockUrl');
         nextCss = nextCss.replace(match[2], replacement);
       }
       styleBlock.textContent = nextCss;
     }
+    return stats;
+  }
+
+  function collectLinkedPathWarnings(exportDoc) {
+    const warnings = [];
+    const unresolvedTokenRe = /%EB%AF%B8%ED%95%B4%EA%B2%B0|미해결/i;
+    for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
+      const src = img.getAttribute('src') || '';
+      const kind = classifyAssetPath(src);
+      if (!['relative', 'uploaded'].includes(kind)) continue;
+      const unresolved = img.dataset.normalizedUnresolvedImage === '1' || unresolvedTokenRe.test(src);
+      if (!unresolved) continue;
+      warnings.push({
+        code: 'BROKEN_LINKED_PATH',
+        kind,
+        uid: img.dataset.nodeUid || '',
+        ref: src,
+      });
+    }
+    return warnings;
   }
 
   function measureExportRoot() {
@@ -3438,11 +3423,15 @@ function createFrameEditor({
     };
   }
 
-  async function buildLinkedPackageEntries() {
-    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
-    await rewriteBlobRefsToPortableUrls(exportDoc);
+  async function convertEmbeddedToLinked(exportDoc) {
     const assetEntries = [];
     const assetPathMap = new Map();
+    const stats = {
+      format: 'linked',
+      convertedDataUrlCount: 0,
+      generatedAssetCount: 0,
+      brokenLinkedPathWarnings: [],
+    };
 
     async function materializeUrl(url, hint = 'asset') {
       const value = String(url || '').trim();
@@ -3455,6 +3444,7 @@ function createFrameEditor({
       const name = `assets/${String(assetEntries.length + 1).padStart(3, '0')}_${sanitizeFilename(slugify(hint) || 'asset')}${ext}`;
       assetEntries.push({ name, data: bytes });
       assetPathMap.set(value, name);
+      stats.convertedDataUrlCount += 1;
       return name;
     }
 
@@ -3505,12 +3495,44 @@ function createFrameEditor({
       styleBlock.textContent = nextCss;
     }
 
+    stats.generatedAssetCount = assetEntries.length;
+    stats.brokenLinkedPathWarnings = collectLinkedPathWarnings(exportDoc);
+    return { exportDoc, assetEntries, stats };
+  }
+
+  async function buildSavePackageEntries(format = 'linked') {
+    const saveFormat = format === 'embedded' ? 'embedded' : 'linked';
     const baseName = sanitizeFilename(project?.sourceName?.replace(/\.html?$/i, '') || 'detail-page');
-    const html = createDoctypeHtml(exportDoc);
-    return [
-      { name: `${baseName}__linked.html`, data: new TextEncoder().encode(html) },
-      ...assetEntries,
-    ];
+    if (saveFormat === 'embedded') {
+      const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
+      const rewriteStats = await rewriteBlobRefsToPortableUrls(exportDoc);
+      const html = createDoctypeHtml(exportDoc);
+      return {
+        format: 'embedded',
+        entries: [{ name: `${baseName}__embedded.html`, data: new TextEncoder().encode(html) }],
+        conversion: {
+          format: 'embedded',
+          portableRewrite: rewriteStats,
+          generatedAssetCount: 0,
+          brokenLinkedPathWarnings: [],
+        },
+      };
+    }
+    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
+    const rewriteStats = await rewriteBlobRefsToPortableUrls(exportDoc);
+    const converted = await convertEmbeddedToLinked(exportDoc);
+    const html = createDoctypeHtml(converted.exportDoc);
+    return {
+      format: 'linked',
+      entries: [
+        { name: `${baseName}__linked.html`, data: new TextEncoder().encode(html) },
+        ...converted.assetEntries,
+      ],
+      conversion: {
+        ...converted.stats,
+        portableRewrite: rewriteStats,
+      },
+    };
   }
 
   function captureSnapshot(label = 'snapshot') {
@@ -3736,8 +3758,6 @@ function createFrameEditor({
   function executeCommand(command, payload = {}) {
     if (command === 'duplicate') return duplicateSelected();
     if (command === 'delete') return deleteSelected();
-    if (command === 'group-selection') return groupSelected();
-    if (command === 'ungroup-selection') return ungroupSelected();
     if (command === 'nudge-selection') return nudgeSelectedElements(payload.dx || 0, payload.dy || 0);
     if (command === 'undo' || command === 'redo' || command === 'save-edited') {
       onShortcut(command);
@@ -3768,11 +3788,6 @@ function createFrameEditor({
       if (key === 'd') {
         event.preventDefault();
         onStatus(executeCommand('duplicate').message);
-        return;
-      }
-      if (key === 'g') {
-        event.preventDefault();
-        onStatus(executeCommand(event.shiftKey ? 'ungroup-selection' : 'group-selection').message);
         return;
       }
     }
@@ -3899,7 +3914,16 @@ function createFrameEditor({
       return createDoctypeHtml(exportDoc);
     },
     async getLinkedPackageEntries() {
-      return await buildLinkedPackageEntries();
+      const result = await buildSavePackageEntries('linked');
+      return result.entries;
+    },
+    async getSavePackageEntries(format = 'linked') {
+      return await buildSavePackageEntries(format);
+    },
+    async convertEmbeddedToLinked() {
+      const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
+      await rewriteBlobRefsToPortableUrls(exportDoc);
+      return await convertEmbeddedToLinked(exportDoc);
     },
     async exportFullPngBlob(scale = 1.5) {
       return await exportFullPngBlob(scale);
@@ -4247,6 +4271,8 @@ let currentExportPresetId = 'market';
 let currentCodeSource = 'edited';
 let codeEditorDirty = false;
 let geometryCoordMode = 'relative';
+let currentSaveFormat = 'linked';
+let lastSaveConversion = null;
 const zoomState = { mode: 'fit', value: 1 };
 const BOOT_LOCAL_POLICY = Object.freeze({
   requiresStartupFetch: false,
@@ -4284,6 +4310,8 @@ const elements = {
   redoButton: document.getElementById('redoButton'),
   restoreAutosaveButton: document.getElementById('restoreAutosaveButton'),
   downloadEditedButton: document.getElementById('downloadEditedButton'),
+  saveFormatSelect: document.getElementById('saveFormatSelect'),
+  saveFormatStatus: document.getElementById('saveFormatStatus'),
   downloadNormalizedButton: document.getElementById('downloadNormalizedButton'),
   downloadLinkedZipButton: document.getElementById('downloadLinkedZipButton'),
   exportPngButton: document.getElementById('exportPngButton'),
@@ -4457,6 +4485,21 @@ function populateExportPresetSelect() {
 
 function currentExportPreset() {
   return getExportPresetById(currentExportPresetId);
+}
+
+function normalizeSaveFormat(value) {
+  return value === 'embedded' ? 'embedded' : 'linked';
+}
+
+function syncSaveFormatUi() {
+  currentSaveFormat = normalizeSaveFormat(elements.saveFormatSelect?.value || currentSaveFormat);
+  if (elements.saveFormatSelect && elements.saveFormatSelect.value !== currentSaveFormat) {
+    elements.saveFormatSelect.value = currentSaveFormat;
+  }
+  if (elements.saveFormatStatus) {
+    const modeLabel = currentSaveFormat === 'embedded' ? 'embedded (data URL 내장)' : 'linked (경로 유지)';
+    elements.saveFormatStatus.textContent = `현재 저장 포맷: ${modeLabel}`;
+  }
 }
 
 function setSidebarTab(panelId) {
@@ -4683,6 +4726,10 @@ function buildReportPayload(project, report) {
     issues: project.issues,
     assets: project.assets,
     preflight: report.preflight || null,
+    save: {
+      selectedFormat: currentSaveFormat,
+      lastConversion: lastSaveConversion,
+    },
   };
 }
 
@@ -4885,7 +4932,9 @@ function renderShell(state) {
   elements.downloadReportButton.disabled = !hasProject;
   if (elements.applyCodeToEditorButton) elements.applyCodeToEditorButton.disabled = !hasProject || currentCodeSource === 'report';
   if (elements.reloadCodeFromEditorButton) elements.reloadCodeFromEditorButton.disabled = !hasProject;
+  if (elements.saveFormatSelect) elements.saveFormatSelect.disabled = !hasProject;
   syncExportPresetUi();
+  syncSaveFormatUi();
   syncWorkspaceButtons();
   applyPreviewZoom();
   refreshHistoryButtons();
@@ -4904,7 +4953,22 @@ function renderEmptyPreview() {
 function handleEditorShortcut(action) {
   if (action === 'undo') return undoHistory();
   if (action === 'redo') return redoHistory();
-  if (action === 'save-edited') return downloadEditedHtml();
+  if (action === 'save-edited') return downloadEditedHtml().catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`));
+}
+
+function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
+  if (!activeEditor) {
+    setStatus('먼저 미리보기를 로드해 주세요.');
+    return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
+  }
+  const fallback = {
+    duplicate: () => activeEditor.duplicateSelected(),
+    delete: () => activeEditor.deleteSelected(),
+  };
+  const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
+  setStatus(result.message);
+  if (refresh && (store.getState().currentView === 'edited' || store.getState().currentView === 'report')) refreshComputedViews(store.getState());
+  return result;
 }
 
 function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
@@ -5041,13 +5105,16 @@ function downloadNormalizedHtml() {
   setStatus(`정규화 HTML을 저장했습니다: ${fileName}`);
 }
 
-function downloadEditedHtml() {
+async function downloadEditedHtml() {
   const project = store.getState().project;
   if (!project) return setStatus('먼저 프로젝트를 불러와 주세요.');
-  const editedHtml = activeEditor ? activeEditor.getEditedHtml({ persistDetectedSlots: true }) : project.normalizedHtml;
-  const fileName = `${projectBaseName(project)}__edited_working.html`;
-  downloadTextFile(fileName, editedHtml, 'text/html;charset=utf-8');
-  setStatus(`편집 HTML을 저장했습니다: ${fileName}`);
+  if (!activeEditor) {
+    const fileName = `${projectBaseName(project)}__edited_working.html`;
+    downloadTextFile(fileName, project.normalizedHtml, 'text/html;charset=utf-8');
+    setStatus(`편집 HTML을 저장했습니다: ${fileName}`);
+    return;
+  }
+  await downloadByFormat(currentSaveFormat);
 }
 
 function ensurePreflightBeforeExport(kind) {
@@ -5079,11 +5146,34 @@ async function downloadLinkedZip() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
   if (!ensurePreflightBeforeExport('링크형 ZIP 저장')) return;
-  const entries = await activeEditor.getLinkedPackageEntries();
-  const zipBlob = await buildZipBlob(entries);
-  const fileName = `${projectBaseName(project)}__linked_package.zip`;
+  await downloadByFormat('linked', { forceZip: true });
+}
+
+async function downloadByFormat(format, { forceZip = false } = {}) {
+  const project = store.getState().project;
+  if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
+  const saveFormat = normalizeSaveFormat(format);
+  const result = await activeEditor.getSavePackageEntries(saveFormat);
+  lastSaveConversion = {
+    ...result.conversion,
+    savedAt: new Date().toISOString(),
+  };
+
+  if (saveFormat === 'embedded' && !forceZip) {
+    const entry = result.entries[0];
+    const text = new TextDecoder().decode(entry.data);
+    downloadTextFile(entry.name, text, 'text/html;charset=utf-8');
+    setStatus(`embedded HTML을 저장했습니다: ${entry.name} (blob→data ${result.conversion?.portableRewrite?.blobConvertedToDataUrl || 0}개)`);
+    return;
+  }
+
+  const zipBlob = await buildZipBlob(result.entries);
+  const suffix = saveFormat === 'embedded' ? '__embedded_package.zip' : '__linked_package.zip';
+  const fileName = `${projectBaseName(project)}${suffix}`;
   downloadBlob(fileName, zipBlob);
-  setStatus(`링크형 HTML + assets ZIP을 저장했습니다: ${fileName}`);
+  const warningCount = Number(result.conversion?.brokenLinkedPathWarnings?.length || 0);
+  const warningText = warningCount > 0 ? ` · 경고 ${warningCount}건(BROKEN_LINKED_PATH)` : '';
+  setStatus(`${saveFormat} 패키지를 저장했습니다: ${fileName}${warningText}`);
 }
 
 async function exportFullPng() {
@@ -5359,8 +5449,6 @@ elements.textEditButton.addEventListener('click', () => {
 });
 elements.duplicateButton?.addEventListener('click', () => { executeEditorCommand('duplicate'); });
 elements.deleteButton?.addEventListener('click', () => { executeEditorCommand('delete'); });
-elements.groupButton?.addEventListener('click', () => { executeEditorCommand('group-selection'); });
-elements.ungroupButton?.addEventListener('click', () => { executeEditorCommand('ungroup-selection'); });
 elements.addTextButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.addTextElement();
@@ -5426,9 +5514,14 @@ elements.clearTextStyleButton.addEventListener('click', () => applyTextStyleFrom
 elements.undoButton.addEventListener('click', undoHistory);
 elements.redoButton.addEventListener('click', redoHistory);
 elements.restoreAutosaveButton.addEventListener('click', restoreAutosave);
-elements.downloadEditedButton.addEventListener('click', downloadEditedHtml);
+elements.downloadEditedButton.addEventListener('click', () => { downloadEditedHtml().catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`)); });
 elements.downloadNormalizedButton.addEventListener('click', downloadNormalizedHtml);
 elements.downloadLinkedZipButton.addEventListener('click', () => { downloadLinkedZip().catch((error) => setStatus(`ZIP 저장 중 오류: ${error?.message || error}`)); });
+elements.saveFormatSelect?.addEventListener('change', () => {
+  currentSaveFormat = normalizeSaveFormat(elements.saveFormatSelect.value || 'linked');
+  syncSaveFormatUi();
+  setStatus(`저장 포맷을 ${currentSaveFormat}로 변경했습니다.`);
+});
 elements.exportPngButton.addEventListener('click', () => { exportFullPng().catch((error) => setStatus(`PNG 저장 중 오류: ${error?.message || error}`)); });
 elements.exportJpgButton?.addEventListener('click', () => { exportFullJpg().catch((error) => setStatus(`JPG 저장 중 오류: ${error?.message || error}`)); });
 elements.exportSectionsZipButton.addEventListener('click', () => { exportSectionsZip().catch((error) => setStatus(`섹션 PNG ZIP 저장 중 오류: ${error?.message || error}`)); });
@@ -5549,7 +5642,7 @@ window.addEventListener('keydown', (event) => {
   }
   if (key === 's') {
     event.preventDefault();
-    return downloadEditedHtml();
+    return downloadEditedHtml().catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`));
   }
   if (key === '=') {
     event.preventDefault();
@@ -5590,6 +5683,7 @@ window.addEventListener('keydown', (event) => {
 setSidebarTab('left-import');
 setSidebarTab('right-inspect');
 setCodeSource('edited', { preserveDraft: false });
+syncSaveFormatUi();
 syncWorkspaceButtons();
 loadFixture('F05');
 
