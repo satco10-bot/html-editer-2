@@ -5036,8 +5036,8 @@ const BEGINNER_TUTORIAL_STEPS = Object.freeze([
   {
     id: 'slot-select',
     title: '1) 슬롯 선택',
-    body: '먼저 [선택] 버튼을 눌러 작업할 슬롯을 고르세요.',
-    targetElementKey: 'selectionSmartButton',
+    body: '먼저 [슬롯 지정] 버튼을 눌러 선택한 요소를 슬롯으로 지정하세요.',
+    targetElementKey: 'manualSlotButton',
   },
   {
     id: 'replace-image',
@@ -5358,14 +5358,12 @@ function applyBeginnerModeUi() {
     elements.beginnerModeToggle.setAttribute('aria-pressed', isBeginnerMode ? 'true' : 'false');
   }
   if (isBeginnerMode && elements.advancedTopbarPanel) elements.advancedTopbarPanel.open = false;
-  if (!isBeginnerMode && elements.beginnerTutorialTooltip) elements.beginnerTutorialTooltip.hidden = true;
 }
 
 function setBeginnerMode(next, { silent = false } = {}) {
   isBeginnerMode = !!next;
   applyBeginnerModeUi();
   writeToLocalStorage(BEGINNER_MODE_STORAGE_KEY, isBeginnerMode ? '1' : '0');
-  if (isBeginnerMode) openBeginnerTutorialIfNeeded();
   if (!silent) setStatus(`초보 모드를 ${isBeginnerMode ? '켰습니다' : '껐습니다'}.`);
 }
 
@@ -6916,7 +6914,6 @@ function bindEvents() {
 
 for (const button of elements.selectionModeButtons) button.addEventListener('click', () => {
   setSelectionMode(button.dataset.selectionMode);
-  if (button.dataset.selectionMode === 'smart') advanceOnboardingByAction('slot-select');
 });
 if (elements.workflowGuideSelect) elements.workflowGuideSelect.addEventListener('change', () => syncWorkflowGuide(store.getState(), { announce: true }));
 for (const button of elements.presetButtons) {
@@ -6987,6 +6984,7 @@ elements.manualSlotButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.markSelectedAsSlot();
   setStatus(result.message);
+  if (result?.ok !== false) advanceOnboardingByAction('slot-select');
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
 elements.toggleHideButton?.addEventListener('click', () => {
@@ -7469,6 +7467,7 @@ syncViewFeatureButtons();
 syncWorkspaceButtons();
 applyShortcutTooltips();
 setBeginnerMode(readFromLocalStorage(BEGINNER_MODE_STORAGE_KEY, '0') === '1', { silent: true });
+openBeginnerTutorialIfNeeded();
 
 
 })();
