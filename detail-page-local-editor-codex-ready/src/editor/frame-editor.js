@@ -1153,6 +1153,20 @@ export function createFrameEditor({
     };
   }
 
+  function selectionHudState() {
+    const geometry = elementGeometry(selectedElement);
+    if (!selectedElement || !geometry) return null;
+    const siblings = selectedElement.parentElement
+      ? Array.from(selectedElement.parentElement.children).filter((node) => node.nodeType === 1)
+      : [];
+    const index = siblings.indexOf(selectedElement);
+    return {
+      ...geometry,
+      layerIndexFromBack: index >= 0 ? index + 1 : 0,
+      layerTotal: siblings.length,
+    };
+  }
+
   function applyGeometryPatch(patch = {}) {
     const target = selectedElement;
     if (!target) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
@@ -2170,6 +2184,7 @@ export function createFrameEditor({
     addSlotElement: () => addElement('slot'),
     applyGeometryPatch,
     getSelectionGeometry: () => elementGeometry(selectedElement),
+    getSelectionHud: selectionHudState,
     bringSelectedForward: () => reorderSelected('forward'),
     sendSelectedBackward: () => reorderSelected('backward'),
     nudgeSelectedImage: ({ dx = 0, dy = 0 } = {}) => nudgeImagePosition(dx, dy),
