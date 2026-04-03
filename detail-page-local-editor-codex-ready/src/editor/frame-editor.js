@@ -1145,33 +1145,91 @@ export function createFrameEditor({
     if (!element) return null;
     const rect = element.getBoundingClientRect();
     const state = readTransformState(element);
+    const scrollX = Number(win.scrollX || win.pageXOffset || 0);
+    const scrollY = Number(win.scrollY || win.pageYOffset || 0);
     return {
-      x: Math.round(state.tx),
-      y: Math.round(state.ty),
+      relative: {
+        x: Math.round(state.tx),
+        y: Math.round(state.ty),
+      },
+      absolute: {
+        x: Math.round(rect.left + scrollX),
+        y: Math.round(rect.top + scrollY),
+      },
       w: Math.max(1, Math.round(rect.width)),
       h: Math.max(1, Math.round(rect.height)),
     };
   }
 
-  function applyGeometryPatch(patch = {}) {
-    const target = selectedElement;
-    if (!target) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
-    if (isLockedElement(target)) return { ok: false, message: '잠긴 요소는 편집할 수 없습니다.' };
-    if (Number.isFinite(patch.w) || Number.isFinite(patch.h)) {
-      const stylePatch = {};
-      if (Number.isFinite(patch.w)) stylePatch.width = `${Math.max(8, patch.w)}px`;
-      if (Number.isFinite(patch.h)) stylePatch.height = `${Math.max(8, patch.h)}px`;
-      setInlineStyle(target, stylePatch);
+  function summarizeGeometryForSelection(elements) {
+    const rows = uniqueConnectedElements(elements).map((element) => elementGeometry(element)).filter(Boolean);
+    if (!rows.length) return null;
+    const same = (getter) => rows.every((row) => getter(row) === getter(rows[0]));
+    const pick = (getter) => (same(getter) ? getter(rows[0]) : null);
+    const buildMode = (mode) => ({
+      x: pick((row) => row[mode].x),
+      y: pick((row) => row[mode].y),
+      w: pick((row) => row.w),
+      h: pick((row) => row.h),
+      mixed: {
+        x: !same((row) => row[mode].x),
+        y: !same((row) => row[mode].y),
+        w: !same((row) => row.w),
+        h: !same((row) => row.h),
+      },
+    });
+    return {
+      count: rows.length,
+      relative: buildMode('relative'),
+      absolute: buildMode('absolute'),
+    };
+  }
+
+  function applyGeometryPatch(patch = {}, { coordinateSpace = 'relative' } = {}) {
+    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
+    if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
+    const scrollX = Number(win.scrollX || win.pageXOffset || 0);
+    const scrollY = Number(win.scrollY || win.pageYOffset || 0);
+    let changed = 0;
+
+    for (const target of targets) {
+      if (Number.isFinite(patch.w) || Number.isFinite(patch.h)) {
+        const stylePatch = {};
+        if (Number.isFinite(patch.w)) stylePatch.width = `${Math.max(8, patch.w)}px`;
+        if (Number.isFinite(patch.h)) stylePatch.height = `${Math.max(8, patch.h)}px`;
+        setInlineStyle(target, stylePatch);
+      }
+      const state = readTransformState(target);
+      let nextX = state.tx;
+      let nextY = state.ty;
+      if (coordinateSpace === 'absolute') {
+        const rect = target.getBoundingClientRect();
+        const absX = rect.left + scrollX;
+        const absY = rect.top + scrollY;
+        if (Number.isFinite(patch.x)) nextX = state.tx + (patch.x - absX);
+        if (Number.isFinite(patch.y)) nextY = state.ty + (patch.y - absY);
+      } else {
+        if (Number.isFinite(patch.x)) nextX = patch.x;
+        if (Number.isFinite(patch.y)) nextY = patch.y;
+      }
+      writeTransformState(target, nextX, nextY);
+      target.dataset.editorModified = '1';
+      if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
+      changed += 1;
     }
-    const state = readTransformState(target);
-    const nextX = Number.isFinite(patch.x) ? patch.x : state.tx;
-    const nextY = Number.isFinite(patch.y) ? patch.y : state.ty;
-    writeTransformState(target, nextX, nextY);
-    target.dataset.editorModified = '1';
-    if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
+
     emitState();
     emitMutation('geometry-patch');
-    return { ok: true, message: '선택 요소의 XYWH를 적용했습니다.' };
+    return { ok: true, message: `선택 요소 ${changed}개에 XYWH를 적용했습니다.` };
+  }
+
+  function nudgeSelectedElements(dx = 0, dy = 0) {
+    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
+    if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
+    for (const element of targets) shiftElementBy(element, dx, dy);
+    emitState();
+    emitMutation('nudge');
+    return { ok: true, message: `선택 요소 ${targets.length}개를 (${dx}, ${dy})만큼 이동했습니다.` };
   }
 
   function duplicateSelected() {
@@ -2074,6 +2132,14 @@ export function createFrameEditor({
       onStatus(deleteSelected().message);
       return;
     }
+    if (!withModifier && !editingTextElement && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+      event.preventDefault();
+      const unit = event.altKey ? 1 : event.shiftKey ? 10 : 2;
+      const dx = event.key === 'ArrowLeft' ? -unit : event.key === 'ArrowRight' ? unit : 0;
+      const dy = event.key === 'ArrowUp' ? -unit : event.key === 'ArrowDown' ? unit : 0;
+      onStatus(nudgeSelectedElements(dx, dy).message);
+      return;
+    }
     if (!editingTextElement) return;
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -2169,7 +2235,8 @@ export function createFrameEditor({
     addBoxElement: () => addElement('box'),
     addSlotElement: () => addElement('slot'),
     applyGeometryPatch,
-    getSelectionGeometry: () => elementGeometry(selectedElement),
+    nudgeSelectedElements,
+    getSelectionGeometry: () => summarizeGeometryForSelection(selectedElements),
     bringSelectedForward: () => reorderSelected('forward'),
     sendSelectedBackward: () => reorderSelected('backward'),
     nudgeSelectedImage: ({ dx = 0, dy = 0 } = {}) => nudgeImagePosition(dx, dy),

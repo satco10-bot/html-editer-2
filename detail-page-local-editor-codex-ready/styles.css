@@ -752,6 +752,10 @@ body.layout--focus-stage #rightSidebar {
 .panel input[type="number"] {
   background: #fbfcff;
 }
+.panel input[data-mixed="1"] {
+  border-style: dashed;
+  color: #64748b;
+}
 
 .statusbar {
   position: fixed;
