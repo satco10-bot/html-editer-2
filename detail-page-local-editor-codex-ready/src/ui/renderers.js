@@ -115,7 +115,7 @@ export function renderNormalizeStats(container, project) {
   `).join('');
 }
 
-export function renderSelectionInspector(container, editorMeta) {
+export function renderSelectionInspector(container, editorMeta, imageDiagnostic = null) {
   if (!container) return;
   if (!editorMeta) {
     container.innerHTML = '<div class="asset-empty">미리보기를 로드하면 선택/슬롯 진단이 표시됩니다.</div>';
@@ -142,6 +142,47 @@ export function renderSelectionInspector(container, editorMeta) {
         ${selectedItemsHtml}
         <div class="inspector-reasons">${(selected.reasons || []).length ? selected.reasons.map((item) => `<div>${escapeHtml(item)}</div>`).join('') : '감지 이유가 없습니다.'}</div>
       </div>`;
+  const failure = imageDiagnostic?.status === 'failed' ? imageDiagnostic : null;
+  const hasFailure = !!failure;
+  const diagnosticItems = [
+    {
+      key: 'slotUnselected',
+      label: '슬롯 미선택',
+      action: 'select-first-slot',
+      actionLabel: '첫 슬롯 선택',
+      active: !!failure?.reasons?.slotUnselected,
+      detail: failure?.details?.slotUnselected || '이미지를 넣으려면 슬롯을 먼저 선택해야 합니다.',
+    },
+    {
+      key: 'filenameMismatch',
+      label: '파일명 미매칭',
+      action: 'show-filename-rule',
+      actionLabel: '파일명 규칙 보기',
+      active: !!failure?.reasons?.filenameMismatch,
+      detail: failure?.details?.filenameMismatch || '파일명에 슬롯 이름(또는 uid) 일부를 포함하면 자동 매칭이 쉬워집니다.',
+    },
+    {
+      key: 'unsupportedFormat',
+      label: '지원 형식 아님',
+      action: 'show-supported-extensions',
+      actionLabel: '지원 확장자 보기',
+      active: !!failure?.reasons?.unsupportedFormat,
+      detail: failure?.details?.unsupportedFormat || '이미지 파일만 업로드할 수 있습니다.',
+    },
+  ];
+  const diagnosticListHtml = diagnosticItems.map((item) => `
+    <li class="${item.active ? 'is-active' : ''}">
+      <div><strong>${escapeHtml(item.label)}</strong><div class="asset-ref">${escapeHtml(item.detail)}</div></div>
+      <button type="button" data-image-diagnostic-action="${escapeHtml(item.action)}">${escapeHtml(item.actionLabel)}</button>
+    </li>
+  `).join('');
+  const diagnosticHtml = `
+    <article class="slot-card">
+      <h3>이미지 진단</h3>
+      ${hasFailure ? `<div class="asset-ref" style="margin-bottom:8px;">${escapeHtml(failure.message || '이미지 적용 실패 원인을 확인해 주세요.')}</div>` : '<div class="asset-empty">최근 이미지 적용 실패가 없습니다.</div>'}
+      <ul class="upload-list">${diagnosticListHtml}</ul>
+    </article>
+  `;
   container.innerHTML = `
     <article class="slot-card">
       <h3>현재 선택</h3>
@@ -157,6 +198,7 @@ export function renderSelectionInspector(container, editorMeta) {
         <li>selection mode ${escapeHtml(editorMeta.selectionMode || 'smart')}</li>
       </ul>
     </article>
+    ${diagnosticHtml}
   `;
 }
 
