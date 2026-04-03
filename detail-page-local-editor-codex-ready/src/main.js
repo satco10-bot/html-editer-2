@@ -119,6 +119,12 @@ const EXPORT_NEXT_ACTION_HINTS = Object.freeze({
   'export-sections-zip': '다음: ZIP을 풀어 섹션 파일 순서와 누락 여부를 확인해 주세요.',
   'download-export-preset-package': '다음: ZIP을 풀고 목적(업로드/검수/보관)에 맞게 전달해 주세요.',
 });
+const IMPORT_FAILURE_GUIDES = Object.freeze({
+  htmlOpen: '안내: HTML 파일(.html/.htm)인지 확인하고 다시 선택해 주세요.',
+  folderNoHtml: '안내: 폴더 안에 대표 HTML 파일(예: index.html)을 넣어 주세요.',
+  folderImport: '안내: HTML과 assets 폴더를 같은 루트에서 다시 선택해 주세요.',
+  pasteMalformed: '안내: 닫히지 않은 태그(예: </div>)를 확인한 뒤 다시 붙여넣어 주세요.',
+});
 
 const elements = {
   appLauncher: document.getElementById('appLauncher'),
@@ -1710,7 +1716,7 @@ async function openHtmlFile(file) {
     setAppState(APP_STATES.editor);
     setStatus(`HTML 파일 ${file.name}을 불러왔습니다. 미해결 자산 ${project.summary.assetsUnresolved}개입니다.`);
   } catch (error) {
-    setStatusWithError('HTML 파일 열기 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'OPEN_HTML_FILE_ERROR' });
+    setStatusWithError(`HTML 파일 열기 중 오류가 발생했습니다. ${IMPORT_FAILURE_GUIDES.htmlOpen}`, error, { logTag: 'OPEN_HTML_FILE_ERROR' });
   }
 }
 
@@ -1720,7 +1726,7 @@ async function handleFolderImport(files) {
     const fileIndex = createImportFileIndex(files, 'folder-import');
     const htmlEntry = choosePrimaryHtmlEntry(fileIndex);
     if (!htmlEntry) {
-      setStatus('선택한 폴더에 HTML 파일이 없습니다.');
+      setStatus(`선택한 폴더에 HTML 파일이 없습니다. ${IMPORT_FAILURE_GUIDES.folderNoHtml}`);
       return;
     }
     const html = await htmlEntry.file.text();
@@ -1746,7 +1752,7 @@ async function handleFolderImport(files) {
     setAppState(APP_STATES.editor);
     setStatus(`프로젝트 폴더 import 완료: ${htmlEntry.relativePath}. resolved ${project.summary.assetsResolved}개, unresolved ${project.summary.assetsUnresolved}개입니다.`);
   } catch (error) {
-    setStatusWithError('폴더 import 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'FOLDER_IMPORT_ERROR' });
+    setStatusWithError(`폴더 import 중 오류가 발생했습니다. ${IMPORT_FAILURE_GUIDES.folderImport}`, error, { logTag: 'FOLDER_IMPORT_ERROR' });
   }
 }
 
@@ -1763,7 +1769,7 @@ function applyPastedHtml() {
     setAppState(APP_STATES.editor);
     setStatus(`붙여넣기 HTML을 정규화했습니다. 슬롯 후보 ${project.summary.totalSlotCandidates}개를 찾았습니다.`);
   } catch (error) {
-    setStatusWithError('붙여넣기 적용 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'APPLY_PASTED_HTML_ERROR' });
+    setStatusWithError(`붙여넣기 적용 중 오류가 발생했습니다. ${IMPORT_FAILURE_GUIDES.pasteMalformed}`, error, { logTag: 'APPLY_PASTED_HTML_ERROR' });
   }
 }
 
