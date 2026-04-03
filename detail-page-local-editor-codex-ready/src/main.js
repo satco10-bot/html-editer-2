@@ -976,6 +976,8 @@ function executeCanvasContextAction(action) {
   if (action === 'duplicate' || action === 'delete') return executeEditorCommand(action);
   if (action === 'layer-index-forward') return executeEditorCommand('layer-index-forward');
   if (action === 'layer-index-backward') return executeEditorCommand('layer-index-backward');
+  if (action === 'layer-index-front') return executeEditorCommand('layer-index-front');
+  if (action === 'layer-index-back') return executeEditorCommand('layer-index-back');
   if (action === 'toggle-text-edit') return executeEditorCommand('toggle-text-edit');
   if (action === 'image-cover') return activeEditor.applyImagePreset('cover');
   if (action === 'image-contain') return activeEditor.applyImagePreset('contain');

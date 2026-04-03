@@ -2982,7 +2982,7 @@ function createFrameEditor({
     return true;
   }
 
-  function applyLayerIndexCommand(direction = 'forward') {
+  function applyLayerIndexCommand(command = 'forward') {
     const target = selectedElement;
     if (!target || !target.parentElement) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
     const siblings = Array.from(target.parentElement.children);
@@ -2994,26 +2994,42 @@ function createFrameEditor({
       front: siblings.length - 1,
       back: 0,
     };
-    if (!Object.prototype.hasOwnProperty.call(directionToIndex, direction)) {
+    if (!Object.prototype.hasOwnProperty.call(directionToIndex, command)) {
       return { ok: false, message: '지원하지 않는 레이어 명령입니다.' };
     }
-    const moved = moveElementToLayerIndex(target, directionToIndex[direction]);
+    const moved = moveElementToLayerIndex(target, directionToIndex[command]);
     if (!moved) {
       const isFront = currentIndex === siblings.length - 1;
-      const blockedByEdge = (direction === 'forward' || direction === 'front') ? isFront : currentIndex === 0;
-      return { ok: false, message: blockedByEdge ? ((direction === 'forward' || direction === 'front') ? '이미 가장 앞 레이어입니다.' : '이미 가장 뒤 레이어입니다.') : '레이어 순서를 변경하지 못했습니다.' };
+      const blockedByEdge = (command === 'forward' || command === 'front') ? isFront : currentIndex === 0;
+      return { ok: false, message: blockedByEdge ? ((command === 'forward' || command === 'front') ? '이미 가장 앞 레이어입니다.' : '이미 가장 뒤 레이어입니다.') : '레이어 순서를 변경하지 못했습니다.' };
     }
     target.dataset.editorModified = '1';
     if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
     emitState();
-    emitMutation(`layer-index-${direction}`);
+    emitMutation(`layer-index-${command}`);
     const messageMap = {
       forward: '선택 요소를 한 단계 앞으로 보냈습니다.',
       backward: '선택 요소를 한 단계 뒤로 보냈습니다.',
       front: '선택 요소를 맨 앞으로 보냈습니다.',
       back: '선택 요소를 맨 뒤로 보냈습니다.',
     };
-    return { ok: true, message: messageMap[direction] || '레이어 순서를 변경했습니다.' };
+    return { ok: true, message: messageMap[command] || '레이어 순서를 변경했습니다.' };
+  }
+
+  function bringSelectedForward() {
+    return applyLayerIndexCommand('forward');
+  }
+
+  function sendSelectedBackward() {
+    return applyLayerIndexCommand('backward');
+  }
+
+  function bringSelectedToFront() {
+    return applyLayerIndexCommand('front');
+  }
+
+  function sendSelectedToBack() {
+    return applyLayerIndexCommand('back');
   }
 
   function bringSelectedForward() {
@@ -5586,6 +5602,8 @@ function executeCanvasContextAction(action) {
   if (action === 'duplicate' || action === 'delete') return executeEditorCommand(action);
   if (action === 'layer-index-forward') return executeEditorCommand('layer-index-forward');
   if (action === 'layer-index-backward') return executeEditorCommand('layer-index-backward');
+  if (action === 'layer-index-front') return executeEditorCommand('layer-index-front');
+  if (action === 'layer-index-back') return executeEditorCommand('layer-index-back');
   if (action === 'toggle-text-edit') return executeEditorCommand('toggle-text-edit');
   if (action === 'image-cover') return activeEditor.applyImagePreset('cover');
   if (action === 'image-contain') return activeEditor.applyImagePreset('contain');
