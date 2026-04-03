@@ -49,12 +49,29 @@ node --check app.bundle.js
 python3 scripts/validate_phase6.py
 ```
 
-## Phase8 파이프라인 실행 가이드 (CI/로컬 5줄 요약)
-1. `python3 -m pip install -r requirements-regression.txt` 로 공통 의존성을 먼저 설치합니다.
-2. Playwright는 패키지 설치만으로 끝나지 않으므로 `python3 -m playwright install chromium` 를 추가 실행합니다.
-3. 로컬/CI 모두 동일하게 `python3 scripts/run_phase8_regression_pipeline.py` 를 실행하면 JSON + Dashboard 리포트가 생성됩니다.
-4. 대시보드에서 🟠(의존성 실패)와 🔴(시나리오 실패)를 분리해서 보고, F05 경고의 실패 원인 라벨을 먼저 확인합니다.
-5. `quality_confidence` 가 `high` 인 실행만 “신뢰 가능한 결과”로 판단하고 배포/병합 의사결정에 사용합니다.
+## Phase8 파이프라인 실행 가이드 (처음 실행도 바로 동작)
+1. 먼저 아래 **한 줄**만 실행합니다.
+   ```bash
+   python3 -m pip install -r requirements-regression.txt
+   ```
+2. 이후 로컬/CI 모두 동일하게 아래 명령을 실행합니다.
+   ```bash
+   python3 scripts/run_phase8_regression_pipeline.py
+   ```
+3. 파이프라인은 시작 전에 dependency precheck를 먼저 수행합니다.
+   - 누락 패키지가 있으면 목록을 명확히 출력합니다.
+   - 같은 화면에 설치 명령 1줄(`python3 -m pip install -r requirements-regression.txt`)만 다시 안내합니다.
+4. 결과 JSON/대시보드는 **dependency 실패**와 **scenario 실패**를 분리 기록합니다.
+   - `dependency_precheck.status`: 의존성 상태
+   - `scenario_execution.status`: 시나리오 실행/미실행 상태
+5. F05 gate 표시는 다음처럼 구분됩니다.
+   - `passed`: 통과
+   - `failed`: 실행은 되었지만 실패
+   - `not_run`: 의존성 문제 등으로 미실행
+
+### quality_confidence가 low로 떨어지는 조건
+- dependency precheck 실패(필수 패키지 누락)
+- F05 gate가 `not_run`인 경우(즉, 게이트 자체가 미실행)
 
 ## 왜 zip 하나만 올리면 안 되나요?
 Codex는 저장소 안의 **실제 파일들**을 읽고 바꾸는 방식입니다.
