@@ -7,6 +7,7 @@ import { createFrameEditor } from './editor/frame-editor.js';
 import {
   renderAssetTable,
   renderIssueList,
+  renderLeftTabStepGuide,
   renderLayerTree,
   renderLocalModeNotice,
   renderNormalizeStats,
@@ -45,11 +46,27 @@ const WORKFLOW_STEP_GUIDES = Object.freeze({
   edit: '요소를 클릭한 뒤 드래그하세요.',
   save: `결과를 확인한 뒤 [${OPEN_DOWNLOAD_MODAL_BUTTON_LABEL}] 버튼을 눌러 실행하세요.`,
 });
+const LEFT_TAB_TO_WORKFLOW_STEP = Object.freeze({
+  'left-start': 'load',
+  'left-image': 'edit',
+  'left-text': 'edit',
+  'left-layers': 'edit',
+  'left-export': 'save',
+});
+const WORKFLOW_STEP_TO_LEFT_TAB = Object.freeze({
+  load: 'left-start',
+  edit: 'left-image',
+  save: 'left-export',
+});
 const SHORTCUT_TOOLTIP_MAP = Object.freeze({});
 const BOOT_LOCAL_POLICY = Object.freeze({
   requiresStartupFetch: false,
   requiresFileSystemAccessApi: false,
   requiresServerEndpoint: false,
+});
+const APP_STATES = Object.freeze({
+  launch: 'launch',
+  editor: 'editor',
 });
 const BEGINNER_MODE_STORAGE_KEY = 'detail_editor_beginner_mode_v1';
 const ONBOARDING_COMPLETED_STORAGE_KEY = 'detail_editor_onboarding_completed_v1';
@@ -83,6 +100,8 @@ const historyState = {
   undoStack: [],
   redoStack: [],
 };
+const HISTORY_MERGE_WINDOW_MS = 700;
+const LIVE_HISTORY_LABELS = new Set(['geometry-patch', 'apply-text-style', 'clear-text-style']);
 
 const advancedSettings = {
   geometryCoordMode: 'relative',
@@ -93,8 +112,22 @@ const advancedSettings = {
 };
 
 const EXPORT_SCALE_OPTIONS = Object.freeze([1, 2, 3]);
+const EXPORT_NEXT_ACTION_HINTS = Object.freeze({
+  'export-full-png': '다음: 업로드 화면에서 비율(권장 860px 기준)을 확인해 주세요.',
+  'export-full-jpg': '다음: 톤/압축 품질을 확인한 뒤 공유하세요.',
+  'export-selection-png': '다음: 선택 범위 경계가 맞는지 바로 확인해 주세요.',
+  'export-sections-zip': '다음: ZIP을 풀어 섹션 파일 순서와 누락 여부를 확인해 주세요.',
+  'download-export-preset-package': '다음: ZIP을 풀고 목적(업로드/검수/보관)에 맞게 전달해 주세요.',
+});
 
 const elements = {
+  appLauncher: document.getElementById('appLauncher'),
+  appShell: document.getElementById('appShell'),
+  appStatusbar: document.getElementById('appStatusbar'),
+  launcherNewButton: document.getElementById('launcherNewButton'),
+  launcherUploadButton: document.getElementById('launcherUploadButton'),
+  launcherRecentButton: document.getElementById('launcherRecentButton'),
+  launcherFixtureButtons: Array.from(document.querySelectorAll('[data-launch-fixture]')),
   fixtureSelect: document.getElementById('fixtureSelect'),
   openHtmlButton: document.getElementById('openHtmlButton'),
   openFolderButton: document.getElementById('openFolderButton'),
@@ -168,6 +201,7 @@ const elements = {
   sectionMoveDownButton: document.getElementById('sectionMoveDownButton'),
   sectionDeleteButton: document.getElementById('sectionDeleteButton'),
   sectionAddButton: document.getElementById('sectionAddButton'),
+  selectionEmptyState: document.getElementById('selectionEmptyState'),
   layerTree: document.getElementById('layerTree'),
   layerFilterInput: document.getElementById('layerFilterInput'),
   preflightContainer: document.getElementById('preflightContainer'),
@@ -268,6 +302,15 @@ const elements = {
   onboardingChecklistItem: document.getElementById('onboardingChecklistItem'),
   onboardingChecklistDoneButton: document.getElementById('onboardingChecklistDoneButton'),
 };
+
+const beginnerMoreItemAnchors = new WeakMap();
+
+elements.beginnerMoreItems.forEach((item) => {
+  beginnerMoreItemAnchors.set(item, {
+    parent: item.parentElement,
+    nextSibling: item.nextSibling,
+  });
+});
 
 function readFromLocalStorage(key, fallback = null) {
   try {
@@ -416,6 +459,15 @@ function syncWorkflowGuide(state, { announce = false } = {}) {
   }
 }
 
+function syncWorkflowGuideStepByLeftTab(leftTabId, { announce = false } = {}) {
+  const mappedStep = LEFT_TAB_TO_WORKFLOW_STEP[String(leftTabId || '')];
+  if (!mappedStep) return;
+  if (elements.workflowGuideSelect && elements.workflowGuideSelect.value !== mappedStep) {
+    elements.workflowGuideSelect.value = mappedStep;
+  }
+  syncWorkflowGuide(store.getState(), { announce });
+}
+
 function resolveDocumentStatus(state) {
   if (!state?.project || !activeEditor) return { status: 'idle', text: '문서 없음' };
   if (state.lastError) return { status: 'error', text: '오류 있음' };
@@ -454,6 +506,21 @@ function selectionExportBackground() {
 
 function setStatus(text, options = undefined) {
   store.setStatus(text, options);
+}
+
+function setAppState(nextState) {
+  const normalized = nextState === APP_STATES.editor ? APP_STATES.editor : APP_STATES.launch;
+  currentAppState = normalized;
+  const isEditor = normalized === APP_STATES.editor;
+  if (elements.appLauncher) elements.appLauncher.hidden = isEditor;
+  if (elements.appShell) elements.appShell.hidden = !isEditor;
+  if (elements.appStatusbar) elements.appStatusbar.hidden = !isEditor;
+}
+
+function refreshLauncherRecentButton() {
+  if (!elements.launcherRecentButton) return;
+  const payload = readAutosavePayload();
+  elements.launcherRecentButton.disabled = !payload?.snapshot?.html;
 }
 
 function extractErrorMessage(error) {
@@ -608,6 +675,15 @@ function formatByteSize(bytes) {
   if (safeBytes < 1024) return `${Math.round(safeBytes)} B`;
   if (safeBytes < 1024 * 1024) return `${(safeBytes / 1024).toFixed(1)} KB`;
   return `${(safeBytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function nextActionHint(kind) {
+  return EXPORT_NEXT_ACTION_HINTS[kind] || '다음: 결과물을 열어 품질과 경로를 확인해 주세요.';
+}
+
+function notifySavedWithGuide(kind, fileName, detail = '') {
+  const detailText = detail ? ` (${detail})` : '';
+  setStatus(`저장 완료: ${fileName}${detailText} · ${nextActionHint(kind)}`);
 }
 
 function estimateSavePreview(project, format) {
@@ -772,7 +848,7 @@ function resolveSidebarTab(panelId) {
   return fallback?.dataset.sidebarTab || '';
 }
 
-function setSidebarTab(panelId) {
+function setSidebarTab(panelId, { syncWorkflow = true } = {}) {
   const targetPanelId = resolveSidebarTab(panelId);
   const scope = String(targetPanelId || '').startsWith('left-')
     ? 'left'
@@ -792,6 +868,7 @@ function setSidebarTab(panelId) {
     if (panelScope !== scope) continue;
     panel.classList.toggle('is-active', panel.dataset.sidebarPanel === targetPanelId);
   }
+  if (scope === 'left' && syncWorkflow) syncWorkflowGuideStepByLeftTab(targetPanelId);
 }
 
 function getSlotRuntimeMeta(slotUid) {
@@ -948,6 +1025,9 @@ function syncExportPresetUi({ forceScale = false } = {}) {
     markAdvancedSettingsDirty(true);
   }
   if (elements.exportPresetSelect) elements.exportPresetSelect.title = preset.description || '';
+  for (const button of elements.downloadPresetButtons) {
+    button?.classList.toggle('is-active', (button?.dataset?.downloadPreset || '') === preset.id);
+  }
 }
 
 function setSelectionMode(nextMode) {
@@ -1020,6 +1100,7 @@ function refreshHistoryButtons() {
   if (elements.undoButton) elements.undoButton.disabled = !hasProject || historyState.undoStack.length === 0;
   if (elements.redoButton) elements.redoButton.disabled = !hasProject || historyState.redoStack.length === 0;
   if (elements.restoreAutosaveButton) elements.restoreAutosaveButton.disabled = !readAutosavePayload();
+  refreshLauncherRecentButton();
 }
 
 function resetHistory(baseSnapshot = null) {
@@ -1033,9 +1114,26 @@ function latestHistorySnapshot() {
   return historyState.undoStack.at(-1)?.after || historyState.baseSnapshot;
 }
 
+function shouldMergeHistoryCommand(previous, next) {
+  if (!previous || !next) return false;
+  if (previous.label !== next.label) return false;
+  if (!LIVE_HISTORY_LABELS.has(next.label)) return false;
+  const prevAt = new Date(previous.at || 0).getTime();
+  const nextAt = new Date(next.at || 0).getTime();
+  if (!Number.isFinite(prevAt) || !Number.isFinite(nextAt)) return false;
+  return Math.max(0, nextAt - prevAt) <= HISTORY_MERGE_WINDOW_MS;
+}
+
 function recordHistoryCommand(command, { clearRedo = true } = {}) {
   if (!command?.after?.html || !command?.before?.html) return;
   const last = historyState.undoStack.at(-1);
+  if (shouldMergeHistoryCommand(last, command)) {
+    last.after = command.after;
+    last.at = command.at;
+    persistAutosave(command.after);
+    refreshHistoryButtons();
+    return;
+  }
   if (last?.after?.html === command.after.html) {
     persistAutosave(command.after);
     refreshHistoryButtons();
@@ -1170,6 +1268,39 @@ function syncTextStyleControls(editorMeta) {
 function syncBatchSummary(editorMeta) {
   const count = Number(editorMeta?.selectionCount || 0);
   elements.batchSelectionSummary.textContent = count > 1 ? `${count}개 동시 선택` : '1개 이하 선택';
+}
+
+function resolvePrimarySelectionType(editorMeta) {
+  const count = Number(editorMeta?.selectionCount || 0);
+  if (count !== 1) return '';
+  const selectedType = editorMeta?.selectedItems?.[0]?.type || editorMeta?.selected?.type || '';
+  if (selectedType === 'slot') return 'image';
+  if (selectedType === 'text') return 'text';
+  if (selectedType === 'box') return 'box';
+  return '';
+}
+
+function syncRightPanelBySelection(editorMeta) {
+  const count = Number(editorMeta?.selectionCount || 0);
+  const hasSelection = count > 0;
+  if (elements.selectionEmptyState) elements.selectionEmptyState.hidden = hasSelection;
+  if (!hasSelection) {
+    if (elements.basicAttributeSection) elements.basicAttributeSection.open = false;
+    if (elements.advancedAttributeSection) elements.advancedAttributeSection.open = false;
+    return;
+  }
+  const type = resolvePrimarySelectionType(editorMeta);
+  if (type === 'text') {
+    setSidebarTab('right-text');
+    if (elements.basicAttributeSection) elements.basicAttributeSection.open = false;
+    if (elements.advancedAttributeSection) elements.advancedAttributeSection.open = false;
+    return;
+  }
+  setSidebarTab('right-arrange');
+  if (elements.basicAttributeSection) elements.basicAttributeSection.open = true;
+  if (elements.advancedAttributeSection) {
+    elements.advancedAttributeSection.open = type === 'image';
+  }
 }
 
 function syncGeometryControls() {
@@ -1326,7 +1457,7 @@ function renderShell(state) {
   }
   renderPreflight(elements.preflightContainer, state.editorMeta);
   if (elements.selectionInspector) {
-    renderSelectionInspector(elements.selectionInspector, state.editorMeta);
+    renderSelectionInspector(elements.selectionInspector, state.editorMeta, state.imageApplyDiagnostic);
   }
   renderSectionFilmstrip(elements.sectionList, state.editorMeta);
   renderSlotList(elements.slotList, state.editorMeta);
@@ -1349,6 +1480,7 @@ function renderShell(state) {
   }
   syncTextStyleControls(state.editorMeta);
   syncBatchSummary(state.editorMeta);
+  syncRightPanelBySelection(state.editorMeta);
   syncGeometryControls();
   syncCanvasDirectUi(state.editorMeta);
   const errorSuffix = state.lastError ? ` · 최근 오류: ${state.lastError}` : '';
@@ -1419,6 +1551,67 @@ function renderEmptyPreview() {
         HTML 파일, 프로젝트 폴더, 붙여넣기, fixture 중 하나를 불러와 주세요.
       </div>
     </div>`;
+}
+
+function applyNumberStep(input, direction) {
+  if (!input || input.disabled) return;
+  try {
+    if (direction > 0) input.stepUp();
+    else input.stepDown();
+  } catch {
+    const stepRaw = Number.parseFloat(input.step);
+    const step = Number.isFinite(stepRaw) && stepRaw > 0 ? stepRaw : 1;
+    const current = Number.parseFloat(input.value);
+    const base = Number.isFinite(current) ? current : 0;
+    input.value = String(base + (direction > 0 ? step : -step));
+  }
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function attachNumberStepper(input) {
+  if (!input || input.dataset.stepperReady === '1') return;
+  const wrapper = document.createElement('div');
+  wrapper.className = 'number-stepper';
+  input.parentNode?.insertBefore(wrapper, input);
+  wrapper.appendChild(input);
+
+  const buttonWrap = document.createElement('div');
+  buttonWrap.className = 'number-stepper__buttons';
+  const plusButton = document.createElement('button');
+  plusButton.type = 'button';
+  plusButton.className = 'number-stepper__btn';
+  plusButton.textContent = '+';
+  plusButton.title = '값 증가';
+  const minusButton = document.createElement('button');
+  minusButton.type = 'button';
+  minusButton.className = 'number-stepper__btn';
+  minusButton.textContent = '−';
+  minusButton.title = '값 감소';
+
+  plusButton.addEventListener('click', () => applyNumberStep(input, 1));
+  minusButton.addEventListener('click', () => applyNumberStep(input, -1));
+  buttonWrap.append(plusButton, minusButton);
+  wrapper.append(buttonWrap);
+
+  input.dataset.stepperReady = '1';
+}
+
+function initNumericSteppers() {
+  const targets = [
+    elements.textFontSizeInput,
+    elements.textLineHeightInput,
+    elements.textLetterSpacingInput,
+    elements.geometryXInput,
+    elements.geometryYInput,
+    elements.geometryWInput,
+    elements.geometryHInput,
+    elements.canvasGeometryXInput,
+    elements.canvasGeometryYInput,
+    elements.canvasGeometryWInput,
+    elements.canvasGeometryHInput,
+  ];
+  for (const input of targets) attachNumberStepper(input);
 }
 
 function handleEditorShortcut(action) {
@@ -1496,6 +1689,7 @@ function loadFixture(fixtureId) {
     pendingMountOptions = { snapshot: null, preserveHistory: false };
     const project = normalizeProject({ html, sourceName: fixtureMeta.name, sourceType: 'fixture', fixtureMeta });
     store.setProject(project);
+    setAppState(APP_STATES.editor);
     setStatus(`Fixture ${fixtureId}를 불러왔습니다. 슬롯 후보 ${project.summary.totalSlotCandidates}개, 자산 ${project.summary.assetsTotal}개입니다.`);
   } catch (error) {
     setStatusWithError('초기 로딩 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'LOAD_FIXTURE_ERROR' });
@@ -1513,6 +1707,7 @@ async function openHtmlFile(file) {
     const project = normalizeProject({ html, sourceName: file.name, sourceType: 'html-file', fileIndex, htmlEntryPath: file.name });
     if (requestId !== importRequestSequence) return;
     store.setProject(project);
+    setAppState(APP_STATES.editor);
     setStatus(`HTML 파일 ${file.name}을 불러왔습니다. 미해결 자산 ${project.summary.assetsUnresolved}개입니다.`);
   } catch (error) {
     setStatusWithError('HTML 파일 열기 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'OPEN_HTML_FILE_ERROR' });
@@ -1548,6 +1743,7 @@ async function handleFolderImport(files) {
     }
     if (requestId !== importRequestSequence) return;
     store.setProject(project);
+    setAppState(APP_STATES.editor);
     setStatus(`프로젝트 폴더 import 완료: ${htmlEntry.relativePath}. resolved ${project.summary.assetsResolved}개, unresolved ${project.summary.assetsUnresolved}개입니다.`);
   } catch (error) {
     setStatusWithError('폴더 import 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'FOLDER_IMPORT_ERROR' });
@@ -1564,6 +1760,7 @@ function applyPastedHtml() {
     pendingMountOptions = { snapshot: null, preserveHistory: false };
     const project = normalizeProject({ html, sourceName: 'pasted-html', sourceType: 'paste' });
     store.setProject(project);
+    setAppState(APP_STATES.editor);
     setStatus(`붙여넣기 HTML을 정규화했습니다. 슬롯 후보 ${project.summary.totalSlotCandidates}개를 찾았습니다.`);
   } catch (error) {
     setStatusWithError('붙여넣기 적용 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'APPLY_PASTED_HTML_ERROR' });
@@ -1672,7 +1869,7 @@ async function exportFullPng() {
   const blob = await activeEditor.exportFullPngBlob(exportScale());
   const fileName = `${projectBaseName(project)}__full.png`;
   downloadBlob(fileName, blob);
-  setStatus(`전체 PNG를 저장했습니다: ${fileName} (${exportScale()}x)${autoApplied ? ' · 변경된 고급값 자동 반영' : ''}`);
+  notifySavedWithGuide('export-full-png', fileName, `${exportScale()}x${autoApplied ? ', 고급값 자동 반영' : ''}`);
 }
 
 async function exportFullJpg() {
@@ -1685,7 +1882,7 @@ async function exportFullJpg() {
   const blob = await activeEditor.exportFullJpgBlob(exportScale(), quality);
   const fileName = `${projectBaseName(project)}__full.jpg`;
   downloadBlob(fileName, blob);
-  setStatus(`전체 JPG를 저장했습니다: ${fileName} (${exportScale()}x, 품질 ${quality.toFixed(2)})${autoApplied ? ' · 변경된 고급값 자동 반영' : ''}`);
+  notifySavedWithGuide('export-full-jpg', fileName, `${exportScale()}x, 품질 ${quality.toFixed(2)}${autoApplied ? ', 고급값 자동 반영' : ''}`);
 }
 
 async function exportSelectionPng() {
@@ -1702,9 +1899,7 @@ async function exportSelectionPng() {
   downloadBlob(fileName, blob);
   const skipped = meta?.policy?.skippedHidden + meta?.policy?.skippedLocked || 0;
   const bgLabel = options.background === 'opaque' ? '불투명(흰색)' : '투명';
-  setStatus(
-    `선택 영역 PNG를 저장했습니다: ${fileName} (${exportScale()}x, union bbox, 여백 ${options.padding}px, 배경 ${bgLabel}, 포함 ${meta?.targetCount || 0}개, 제외 ${skipped}개·숨김 제외 ${meta?.policy?.excludeHidden ? 'ON' : 'OFF'}·잠금 제외 ${meta?.policy?.excludeLocked ? 'ON' : 'OFF'})${autoApplied ? ' · 변경된 고급값 자동 반영' : ''}`,
-  );
+  notifySavedWithGuide('export-selection-png', fileName, `${exportScale()}x, 여백 ${options.padding}px, 배경 ${bgLabel}, 포함 ${meta?.targetCount || 0}개, 제외 ${skipped}개${autoApplied ? ', 고급값 자동 반영' : ''}`);
 }
 
 async function exportSectionsZip() {
@@ -1717,7 +1912,7 @@ async function exportSectionsZip() {
   const zipBlob = await buildZipBlob(entries);
   const fileName = `${projectBaseName(project)}__sections_png.zip`;
   downloadBlob(fileName, zipBlob);
-  setStatus(`섹션 PNG ZIP을 저장했습니다: ${fileName}${autoApplied ? ' · 변경된 고급값 자동 반영' : ''}`);
+  notifySavedWithGuide('export-sections-zip', fileName, `${exportScale()}x, 섹션 ${entries.length}개${autoApplied ? ', 고급값 자동 반영' : ''}`);
 }
 
 function downloadReportJson() {
@@ -1765,8 +1960,9 @@ async function downloadExportPresetPackage() {
   }
 
   const zip = await buildZipBlob(entries);
-  downloadBlob(`${baseName}__${preset.id}-preset.zip`, zip);
-  setStatus(`Export preset 패키지를 저장했습니다: ${preset.label}`);
+  const fileName = `${baseName}__${preset.id}-preset.zip`;
+  downloadBlob(fileName, zip);
+  notifySavedWithGuide('download-export-preset-package', fileName, `${preset.label}, 항목 ${entries.length}개`);
 }
 
 function restoreAutosave() {
@@ -1779,6 +1975,7 @@ function restoreAutosave() {
     sourceType: 'autosave',
   });
   store.setProject(project);
+  setAppState(APP_STATES.editor);
   setStatus(`자동저장본을 복구했습니다. 저장 시각: ${payload.savedAt || '-'}`);
 }
 
@@ -1806,6 +2003,21 @@ function applyTextStyleFromControls({ clear = false } = {}) {
   })();
   const result = activeEditor.applyTextStyle(patch, { clear });
   setStatus(result.message);
+  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+}
+
+function applyTextStyleLive(event) {
+  if (!activeEditor) return;
+  const sourceControl = event?.currentTarget || null;
+  const patch = {};
+  if (sourceControl === elements.textFontSizeInput) patch.fontSize = elements.textFontSizeInput?.value?.trim() || '';
+  if (sourceControl === elements.textLineHeightInput) patch.lineHeight = elements.textLineHeightInput?.value?.trim() || '';
+  if (sourceControl === elements.textLetterSpacingInput) patch.letterSpacing = elements.textLetterSpacingInput?.value?.trim() || '';
+  if (sourceControl === elements.textWeightSelect) patch.fontWeight = elements.textWeightSelect?.value || '';
+  if (sourceControl === elements.textColorInput) patch.color = elements.textColorInput?.value || '';
+  if (!Object.keys(patch).length) return;
+  const result = activeEditor.applyTextStyle(patch);
+  if (result?.ok) setStatus('텍스트 스타일을 실시간 반영했습니다.');
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 }
 
@@ -1868,9 +2080,11 @@ store.subscribe((state) => {
 
 function safeBoot() {
   try {
+    setAppState(APP_STATES.launch);
     populateFixtureSelect();
     populateExportPresetSelect();
     syncExportPresetUi({ forceScale: true });
+    refreshLauncherRecentButton();
     const bootEnvironmentReport = evaluateLocalBootEnvironment();
     renderLocalModeNotice(elements.localModeNotice, bootEnvironmentReport);
     if (bootEnvironmentReport.errorCount || bootEnvironmentReport.warningCount) {
@@ -1878,7 +2092,6 @@ function safeBoot() {
     }
     renderEmptyPreview();
     syncWorkflowGuide(store.getState());
-    loadFixture('F05');
   } catch (error) {
     console.error('[BOOT_ERROR]', error);
     setStatusWithError('초기 로딩 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: '' });
@@ -1890,6 +2103,7 @@ onboardingCompleted = hasCompletedOnboarding();
 renderOnboardingChecklist();
 
 function bindEvents() {
+  initNumericSteppers();
   const logMissingElement = (elementName, context) => {
     console.warn(`[${context}] 필수 요소 누락: #${elementName}`);
   };
@@ -1972,6 +2186,16 @@ for (const button of elements.textAlignButtons) {
     if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
   });
 }
+for (const control of [
+  elements.textFontSizeInput,
+  elements.textLineHeightInput,
+  elements.textLetterSpacingInput,
+  elements.textWeightSelect,
+  elements.textColorInput,
+]) {
+  const eventName = control?.tagName === 'SELECT' ? 'change' : 'input';
+  control?.addEventListener(eventName, applyTextStyleLive);
+}
 elements.applyCanvasGeometryButton?.addEventListener('click', () => {
   if (elements.geometryXInput) elements.geometryXInput.value = elements.canvasGeometryXInput?.value || '';
   if (elements.geometryYInput) elements.geometryYInput.value = elements.canvasGeometryYInput?.value || '';
@@ -1995,6 +2219,23 @@ for (const [canvasInput, sourceInput] of [
 }
 
 elements.openHtmlButton?.addEventListener('click', () => elements.htmlFileInput?.click());
+elements.launcherUploadButton?.addEventListener('click', () => elements.htmlFileInput?.click());
+elements.launcherRecentButton?.addEventListener('click', () => {
+  const payload = readAutosavePayload();
+  if (!payload?.snapshot?.html) {
+    refreshLauncherRecentButton();
+    setStatus('복구할 자동저장본이 없습니다.');
+    return;
+  }
+  restoreAutosave();
+});
+for (const button of elements.launcherFixtureButtons) {
+  button.addEventListener('click', () => {
+    const fixtureId = button.dataset.launchFixture || '';
+    if (!fixtureId) return;
+    loadFixture(fixtureId);
+  });
+}
 elements.openFolderButton?.addEventListener('click', () => elements.folderInput?.click());
 elements.loadFixtureButton?.addEventListener('click', () => loadFixture(elements.fixtureSelect?.value));
 elements.applyPasteButton?.addEventListener('click', applyPastedHtml);
@@ -2124,9 +2365,11 @@ elements.exportPresetPackageButton?.addEventListener('click', () => { runDownloa
 for (const button of elements.downloadPresetButtons) {
   button?.addEventListener('click', () => {
     const presetId = button.dataset.downloadPreset || 'market';
+    const recommendedChoice = button.dataset.downloadChoice || '';
     currentExportPresetId = presetId;
+    if (recommendedChoice && elements.downloadChoiceSelect) elements.downloadChoiceSelect.value = recommendedChoice;
     syncExportPresetUi({ forceScale: true });
-    setStatus(`Export preset: ${currentExportPreset().label} (배율은 고급값 적용 버튼으로 반영)`);
+    setStatus(`목적 카드 선택: ${currentExportPreset().label} · 실행할 작업은 ${elements.downloadChoiceSelect?.value || 'save-edited'}로 맞췄습니다.`);
   });
 }
 elements.saveFormatSelect?.addEventListener('change', () => {
@@ -2184,12 +2427,26 @@ elements.replaceImageInput?.addEventListener('change', async (event) => {
   const files = Array.from(event.target.files || []);
   try {
     if (!files.length) return;
-    if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+    if (!activeEditor) {
+      const message = '먼저 미리보기를 로드해 주세요.';
+      setStatus(message);
+      setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
+      return;
+    }
     const applied = await activeEditor.applyFiles(files);
-    setStatus(applied ? `${applied}개 이미지를 적용했습니다.` : '이미지를 적용하지 못했습니다.');
+    if (applied) {
+      setStatus(`${applied}개 이미지를 적용했습니다.`);
+      setImageApplyDiagnostic(null);
+    } else {
+      const message = '이미지를 적용하지 못했습니다.';
+      setStatus(message);
+      setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
+    }
     if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
   } catch (error) {
-    setStatus(`이미지 적용 중 오류: ${error?.message || error}`);
+    const message = `이미지 적용 중 오류: ${error?.message || error}`;
+    setStatus(message);
+    setImageApplyDiagnostic(buildImageFailureDiagnostic({ files, editorMeta: store.getState().editorMeta, statusMessage: message }));
   } finally {
     event.target.value = '';
   }
@@ -2214,6 +2471,24 @@ elements.sectionList?.addEventListener('click', (event) => {
   if (!button || !activeEditor) return;
   const ok = activeEditor.selectNodeByUid(button.dataset.sectionUid, { scroll: true });
   if (ok) setStatus('섹션으로 이동했습니다.');
+});
+elements.selectionInspector?.addEventListener('click', (event) => {
+  const actionButton = event.target.closest('[data-image-diagnostic-action]');
+  if (!actionButton) return;
+  const action = actionButton.dataset.imageDiagnosticAction || '';
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  if (action === 'select-first-slot') {
+    const firstSlotUid = store.getState().editorMeta?.slots?.[0]?.uid || '';
+    if (!firstSlotUid) return setStatus('선택할 슬롯이 없습니다.');
+    const ok = activeEditor.selectSlotByUid(firstSlotUid);
+    return setStatus(ok ? '첫 슬롯을 선택했습니다. 이제 이미지를 다시 넣어보세요.' : '첫 슬롯 선택에 실패했습니다.');
+  }
+  if (action === 'show-filename-rule') {
+    return setStatus('파일명 규칙: 슬롯 라벨(또는 uid) 일부를 파일명에 넣어 주세요. 예) hero-slot.jpg');
+  }
+  if (action === 'show-supported-extensions') {
+    return setStatus(`지원 확장자: ${SUPPORTED_IMAGE_EXTENSIONS_TEXT}`);
+  }
 });
 elements.sectionDuplicateButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
@@ -2433,7 +2708,9 @@ window.addEventListener('keydown', (event) => {
   }
   if (key === 'k') {
     event.preventDefault();
-    setSidebarTab('left-advanced');
+    setSidebarTab('left-start');
+    const advancedDetails = document.querySelector('[data-sidebar-panel="left-start"] details.left-accordion');
+    if (advancedDetails) advancedDetails.open = true;
     elements.codeSearchInput?.focus();
     return;
   }
@@ -2479,7 +2756,10 @@ elements.viewRulerToggleButton?.addEventListener('click', () => toggleViewFeatur
 
 bindEvents();
 
-setSidebarTab('left-upload');
+for (const guideContainer of document.querySelectorAll('[data-left-tab-guide-for]')) {
+  renderLeftTabStepGuide(guideContainer, guideContainer.getAttribute('data-left-tab-guide-for') || '');
+}
+setSidebarTab('left-start');
 setSidebarTab('right-inspect');
 setCodeSource('edited', { preserveDraft: false });
 syncSaveFormatUi();

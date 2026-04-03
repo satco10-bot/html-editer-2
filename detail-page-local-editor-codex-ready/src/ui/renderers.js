@@ -1,5 +1,60 @@
 import { escapeHtml, formatDateTime, formatNumber, truncate } from '../utils.js';
 
+const LEFT_TAB_STEP_GUIDES = Object.freeze({
+  'left-start': Object.freeze({
+    title: '이번 단계에서 할 일',
+    todos: Object.freeze([
+      'HTML 파일/폴더를 불러와 편집할 문서를 준비하세요.',
+      '불러온 뒤 깨진 자산이 있는지 빠르게 확인하세요.',
+    ]),
+  }),
+  'left-image': Object.freeze({
+    title: '이번 단계에서 할 일',
+    todos: Object.freeze([
+      '이미지 슬롯/섹션을 선택하고 필요한 컷을 채우세요.',
+      '순서가 어색하면 섹션을 위/아래로 이동하세요.',
+    ]),
+  }),
+  'left-text': Object.freeze({
+    title: '이번 단계에서 할 일',
+    todos: Object.freeze([
+      '캔버스에서 텍스트를 선택한 뒤 내용을 수정하세요.',
+      '오른쪽 텍스트 탭에서 글꼴/크기를 맞춰 통일감을 만드세요.',
+    ]),
+  }),
+  'left-layers': Object.freeze({
+    title: '이번 단계에서 할 일',
+    todos: Object.freeze([
+      '레이어 겹침 순서(앞/뒤)를 확인하세요.',
+      '실수 방지를 위해 필요한 레이어만 잠그거나 숨기세요.',
+    ]),
+  }),
+  'left-export': Object.freeze({
+    title: '이번 단계에서 할 일',
+    todos: Object.freeze([
+      '저장 형식(HTML/PNG/JPG/ZIP)을 먼저 고르세요.',
+      '내보내기 전에 최종 미리보기와 검수 상태를 확인하세요.',
+    ]),
+  }),
+});
+
+export function renderLeftTabStepGuide(container, tabId) {
+  if (!container) return;
+  const guide = LEFT_TAB_STEP_GUIDES[String(tabId || '')];
+  if (!guide) {
+    container.innerHTML = '';
+    return;
+  }
+  container.innerHTML = `
+    <article class="workflow-step-card">
+      <strong>${escapeHtml(guide.title)}</strong>
+      <ol>
+        ${guide.todos.map((todo) => `<li>${escapeHtml(todo)}</li>`).join('')}
+      </ol>
+    </article>
+  `;
+}
+
 export function renderSummaryCards(container, project, editorMeta = null) {
   if (!container) return;
   if (!project) {
@@ -60,7 +115,7 @@ export function renderNormalizeStats(container, project) {
   `).join('');
 }
 
-export function renderSelectionInspector(container, editorMeta) {
+export function renderSelectionInspector(container, editorMeta, imageDiagnostic = null) {
   if (!container) return;
   if (!editorMeta) {
     container.innerHTML = '<div class="asset-empty">미리보기를 로드하면 선택/슬롯 진단이 표시됩니다.</div>';
@@ -87,6 +142,47 @@ export function renderSelectionInspector(container, editorMeta) {
         ${selectedItemsHtml}
         <div class="inspector-reasons">${(selected.reasons || []).length ? selected.reasons.map((item) => `<div>${escapeHtml(item)}</div>`).join('') : '감지 이유가 없습니다.'}</div>
       </div>`;
+  const failure = imageDiagnostic?.status === 'failed' ? imageDiagnostic : null;
+  const hasFailure = !!failure;
+  const diagnosticItems = [
+    {
+      key: 'slotUnselected',
+      label: '슬롯 미선택',
+      action: 'select-first-slot',
+      actionLabel: '첫 슬롯 선택',
+      active: !!failure?.reasons?.slotUnselected,
+      detail: failure?.details?.slotUnselected || '이미지를 넣으려면 슬롯을 먼저 선택해야 합니다.',
+    },
+    {
+      key: 'filenameMismatch',
+      label: '파일명 미매칭',
+      action: 'show-filename-rule',
+      actionLabel: '파일명 규칙 보기',
+      active: !!failure?.reasons?.filenameMismatch,
+      detail: failure?.details?.filenameMismatch || '파일명에 슬롯 이름(또는 uid) 일부를 포함하면 자동 매칭이 쉬워집니다.',
+    },
+    {
+      key: 'unsupportedFormat',
+      label: '지원 형식 아님',
+      action: 'show-supported-extensions',
+      actionLabel: '지원 확장자 보기',
+      active: !!failure?.reasons?.unsupportedFormat,
+      detail: failure?.details?.unsupportedFormat || '이미지 파일만 업로드할 수 있습니다.',
+    },
+  ];
+  const diagnosticListHtml = diagnosticItems.map((item) => `
+    <li class="${item.active ? 'is-active' : ''}">
+      <div><strong>${escapeHtml(item.label)}</strong><div class="asset-ref">${escapeHtml(item.detail)}</div></div>
+      <button type="button" data-image-diagnostic-action="${escapeHtml(item.action)}">${escapeHtml(item.actionLabel)}</button>
+    </li>
+  `).join('');
+  const diagnosticHtml = `
+    <article class="slot-card">
+      <h3>이미지 진단</h3>
+      ${hasFailure ? `<div class="asset-ref" style="margin-bottom:8px;">${escapeHtml(failure.message || '이미지 적용 실패 원인을 확인해 주세요.')}</div>` : '<div class="asset-empty">최근 이미지 적용 실패가 없습니다.</div>'}
+      <ul class="upload-list">${diagnosticListHtml}</ul>
+    </article>
+  `;
   container.innerHTML = `
     <article class="slot-card">
       <h3>현재 선택</h3>
@@ -102,6 +198,7 @@ export function renderSelectionInspector(container, editorMeta) {
         <li>selection mode ${escapeHtml(editorMeta.selectionMode || 'smart')}</li>
       </ul>
     </article>
+    ${diagnosticHtml}
   `;
 }
 
