@@ -635,24 +635,40 @@ function restorePanelLayoutState() {
   if (elements.advancedAttributeSection) elements.advancedAttributeSection.open = saved.advancedOpen;
 }
 
-function setSidebarTab(panelId) {
-  const scope = String(panelId || '').startsWith('left-')
+function resolveSidebarTab(panelId) {
+  const requested = String(panelId || '');
+  const scope = requested.startsWith('left-')
     ? 'left'
-    : (String(panelId || '').startsWith('right-') ? 'right' : '');
+    : (requested.startsWith('right-') ? 'right' : '');
+  if (!scope) return '';
+  const scopedButtons = elements.sidebarTabButtons.filter((button) => String(button.dataset.sidebarTab || '').startsWith(`${scope}-`));
+  const scopedPanels = elements.sidebarPanels.filter((panel) => String(panel.dataset.sidebarPanel || '').startsWith(`${scope}-`));
+  const hasRequestedButton = scopedButtons.some((button) => button.dataset.sidebarTab === requested);
+  const hasRequestedPanel = scopedPanels.some((panel) => panel.dataset.sidebarPanel === requested);
+  if (hasRequestedButton && hasRequestedPanel) return requested;
+  const fallback = scopedButtons.find((button) => scopedPanels.some((panel) => panel.dataset.sidebarPanel === button.dataset.sidebarTab));
+  return fallback?.dataset.sidebarTab || '';
+}
+
+function setSidebarTab(panelId) {
+  const targetPanelId = resolveSidebarTab(panelId);
+  const scope = String(targetPanelId || '').startsWith('left-')
+    ? 'left'
+    : (String(targetPanelId || '').startsWith('right-') ? 'right' : '');
   if (!scope) return;
   for (const button of elements.sidebarTabButtons) {
     const buttonScope = String(button.dataset.sidebarTab || '').startsWith('left-')
       ? 'left'
       : (String(button.dataset.sidebarTab || '').startsWith('right-') ? 'right' : '');
     if (buttonScope !== scope) continue;
-    button.classList.toggle('is-active', button.dataset.sidebarTab === panelId);
+    button.classList.toggle('is-active', button.dataset.sidebarTab === targetPanelId);
   }
   for (const panel of elements.sidebarPanels) {
     const panelScope = String(panel.dataset.sidebarPanel || '').startsWith('left-')
       ? 'left'
       : (String(panel.dataset.sidebarPanel || '').startsWith('right-') ? 'right' : '');
     if (panelScope !== scope) continue;
-    panel.classList.toggle('is-active', panel.dataset.sidebarPanel === panelId);
+    panel.classList.toggle('is-active', panel.dataset.sidebarPanel === targetPanelId);
   }
 }
 

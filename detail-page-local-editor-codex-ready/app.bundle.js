@@ -1300,8 +1300,9 @@ function createProjectStore() {
     notify();
   }
 
-  function setStatus(text) {
+  function setStatus(text, { preserveLastError = false } = {}) {
     state.statusText = String(text || '대기 중');
+    if (!preserveLastError) state.lastError = '';
     notify();
   }
 
@@ -5042,8 +5043,8 @@ function selectionExportBackground() {
   return raw === 'opaque' ? 'opaque' : 'transparent';
 }
 
-function setStatus(text) {
-  store.setStatus(text);
+function setStatus(text, options = undefined) {
+  store.setStatus(text, options);
 }
 
 function extractErrorMessage(error) {
@@ -5057,7 +5058,7 @@ function setStatusWithError(prefix, error, { logTag = 'APP_ERROR' } = {}) {
   const detail = extractErrorMessage(error);
   if (logTag) console.error(`[${logTag}]`, error);
   store.setLastError(detail);
-  setStatus(detail ? `${prefix} (${detail})` : prefix);
+  setStatus(prefix, { preserveLastError: true });
 }
 
 function isTypingInputTarget(target) {
@@ -5314,24 +5315,40 @@ function restorePanelLayoutState() {
   if (elements.advancedAttributeSection) elements.advancedAttributeSection.open = saved.advancedOpen;
 }
 
-function setSidebarTab(panelId) {
-  const scope = String(panelId || '').startsWith('left-')
+function resolveSidebarTab(panelId) {
+  const requested = String(panelId || '');
+  const scope = requested.startsWith('left-')
     ? 'left'
-    : (String(panelId || '').startsWith('right-') ? 'right' : '');
+    : (requested.startsWith('right-') ? 'right' : '');
+  if (!scope) return '';
+  const scopedButtons = elements.sidebarTabButtons.filter((button) => String(button.dataset.sidebarTab || '').startsWith(`${scope}-`));
+  const scopedPanels = elements.sidebarPanels.filter((panel) => String(panel.dataset.sidebarPanel || '').startsWith(`${scope}-`));
+  const hasRequestedButton = scopedButtons.some((button) => button.dataset.sidebarTab === requested);
+  const hasRequestedPanel = scopedPanels.some((panel) => panel.dataset.sidebarPanel === requested);
+  if (hasRequestedButton && hasRequestedPanel) return requested;
+  const fallback = scopedButtons.find((button) => scopedPanels.some((panel) => panel.dataset.sidebarPanel === button.dataset.sidebarTab));
+  return fallback?.dataset.sidebarTab || '';
+}
+
+function setSidebarTab(panelId) {
+  const targetPanelId = resolveSidebarTab(panelId);
+  const scope = String(targetPanelId || '').startsWith('left-')
+    ? 'left'
+    : (String(targetPanelId || '').startsWith('right-') ? 'right' : '');
   if (!scope) return;
   for (const button of elements.sidebarTabButtons) {
     const buttonScope = String(button.dataset.sidebarTab || '').startsWith('left-')
       ? 'left'
       : (String(button.dataset.sidebarTab || '').startsWith('right-') ? 'right' : '');
     if (buttonScope !== scope) continue;
-    button.classList.toggle('is-active', button.dataset.sidebarTab === panelId);
+    button.classList.toggle('is-active', button.dataset.sidebarTab === targetPanelId);
   }
   for (const panel of elements.sidebarPanels) {
     const panelScope = String(panel.dataset.sidebarPanel || '').startsWith('left-')
       ? 'left'
       : (String(panel.dataset.sidebarPanel || '').startsWith('right-') ? 'right' : '');
     if (panelScope !== scope) continue;
-    panel.classList.toggle('is-active', panel.dataset.sidebarPanel === panelId);
+    panel.classList.toggle('is-active', panel.dataset.sidebarPanel === targetPanelId);
   }
 }
 
@@ -5933,11 +5950,14 @@ function loadFixture(fixtureId) {
 
 async function openHtmlFile(file) {
   if (!file) return;
+  const requestId = importRequestSequence += 1;
   try {
     const html = await file.text();
+    if (requestId !== importRequestSequence) return;
     const fileIndex = createImportFileIndex([file], 'html-file');
     pendingMountOptions = { snapshot: null, preserveHistory: false };
     const project = normalizeProject({ html, sourceName: file.name, sourceType: 'html-file', fileIndex, htmlEntryPath: file.name });
+    if (requestId !== importRequestSequence) return;
     store.setProject(project);
     setStatus(`HTML 파일 ${file.name}을 불러왔습니다. 미해결 자산 ${project.summary.assetsUnresolved}개입니다.`);
   } catch (error) {
@@ -6498,8 +6518,11 @@ elements.applyAdvancedSettingsButton?.addEventListener('click', () => {
 
 elements.htmlFileInput.addEventListener('change', async (event) => {
   const [file] = event.target.files || [];
-  await openHtmlFile(file);
-  event.target.value = '';
+  try {
+    await openHtmlFile(file);
+  } finally {
+    event.target.value = '';
+  }
 });
 
 elements.folderInput.addEventListener('change', async (event) => {
