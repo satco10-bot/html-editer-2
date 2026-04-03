@@ -122,7 +122,8 @@ def main() -> None:
         'applyTextStyleButton', 'clearTextStyleButton', 'batchSelectionSummary',
         'duplicateButton', 'deleteButton', 'addTextButton', 'addBoxButton', 'addSlotButton',
         'geometryXInput', 'geometryYInput', 'geometryWInput', 'geometryHInput', 'applyGeometryButton',
-        'bringForwardButton', 'sendBackwardButton', 'imageNudgeLeftButton', 'imageNudgeRightButton', 'imageNudgeUpButton', 'imageNudgeDownButton'
+        'bringForwardButton', 'sendBackwardButton', 'bringToFrontButton', 'sendToBackButton',
+        'imageNudgeLeftButton', 'imageNudgeRightButton', 'imageNudgeUpButton', 'imageNudgeDownButton'
     ]
     for element_id in required_ids:
         add_check(checks, f'index_has_{element_id}', f'id="{element_id}"' in index_html, element_id)
@@ -138,7 +139,7 @@ def main() -> None:
         'applyTextStyle', 'applyBatchLayout', 'getPreflightReport', 'selectNodeByUid', 'refreshDerivedMeta',
         'toggleSelectedHidden', 'toggleSelectedLocked', 'toggleLayerHiddenByUid', 'toggleLayerLockedByUid',
         'duplicateSelected', 'deleteSelected', 'addTextElement', 'addBoxElement', 'addSlotElement',
-        'applyGeometryPatch', 'bringSelectedForward', 'sendSelectedBackward', 'nudgeSelectedImage',
+        'applyGeometryPatch', 'bringSelectedForward', 'sendSelectedBackward', 'bringSelectedToFront', 'sendSelectedToBack', 'nudgeSelectedImage',
         'exportFullJpgBlob', 'exportSelectionPngBlob'
     ]
     for method in required_editor_methods:
@@ -156,6 +157,8 @@ def main() -> None:
     add_check(checks, 'frame_has_lock_hide_runtime', 'data-editor-hidden' in frame_js and 'data-editor-locked' in frame_js, 'hide/lock data attributes should exist')
     add_check(checks, 'slot_detector_skips_runtime_nodes', 'editorRuntime' in slot_detector_js or 'data-editor-runtime' in slot_detector_js, 'slot detector should skip overlay runtime nodes')
     add_check(checks, 'renderers_have_layer_actions', 'data-layer-action="hide"' in renderers_js and 'data-layer-action="lock"' in renderers_js, 'layer action buttons should exist')
+    add_check(checks, 'frame_layer_index_command_unified', 'applyLayerIndexCommand' in frame_js and all(token in frame_js for token in ['layer-index-forward', 'layer-index-backward', 'layer-index-front', 'layer-index-back']), 'z-order should use layer-index command family')
+    add_check(checks, 'main_layer_and_canvas_sync_hook', 'selectNodeByUid' in main_js and 'renderLayerTree(elements.layerTree' in main_js and 'renderSelectionInspector(elements.selectionInspector' in main_js, 'layer panel/canvas sync rendering hooks should exist together')
 
     add_check(checks, 'index_has_batch_buttons', index_html.count('data-batch-action=') >= 8, 'expect batch layout actions in UI')
     add_check(checks, 'index_has_text_align_buttons', index_html.count('data-text-align=') == 3, 'left / center / right buttons')

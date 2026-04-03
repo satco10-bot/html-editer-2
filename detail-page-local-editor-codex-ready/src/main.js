@@ -103,6 +103,8 @@ const elements = {
   applyGeometryButton: document.getElementById('applyGeometryButton'),
   bringForwardButton: document.getElementById('bringForwardButton'),
   sendBackwardButton: document.getElementById('sendBackwardButton'),
+  bringToFrontButton: document.getElementById('bringToFrontButton'),
+  sendToBackButton: document.getElementById('sendToBackButton'),
   imageNudgeLeftButton: document.getElementById('imageNudgeLeftButton'),
   imageNudgeRightButton: document.getElementById('imageNudgeRightButton'),
   imageNudgeUpButton: document.getElementById('imageNudgeUpButton'),
@@ -470,6 +472,8 @@ function syncGeometryControls() {
     elements.applyGeometryButton,
     elements.bringForwardButton,
     elements.sendBackwardButton,
+    elements.bringToFrontButton,
+    elements.sendToBackButton,
     elements.imageNudgeLeftButton,
     elements.imageNudgeRightButton,
     elements.imageNudgeUpButton,
@@ -1019,6 +1023,16 @@ elements.bringForwardButton?.addEventListener('click', () => {
 elements.sendBackwardButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.sendSelectedBackward();
+  setStatus(result.message);
+});
+elements.bringToFrontButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.bringSelectedToFront();
+  setStatus(result.message);
+});
+elements.sendToBackButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.sendSelectedToBack();
   setStatus(result.message);
 });
 elements.imageNudgeLeftButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: -2, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));

@@ -1272,6 +1272,56 @@ function createProjectStore() {
 /* ===== src/editor/frame-editor.js ===== */
 
 const FRAME_CSS_URL_RE = /url\((['"]?)([^"'()]+)\1\)/gi;
+const ADD_ELEMENT_PRESETS = {
+  text: {
+    tagName: 'p',
+    className: 'editor-added-text',
+    textContent: '새 텍스트',
+    style: {
+      minHeight: '32px',
+      padding: '6px 8px',
+      color: '#111827',
+      fontSize: '20px',
+      fontWeight: '600',
+      lineHeight: '1.5',
+      background: 'rgba(255,255,255,0.5)',
+    },
+  },
+  box: {
+    tagName: 'div',
+    className: 'editor-added-box',
+    style: {
+      width: '220px',
+      height: '120px',
+      border: '2px solid #93c5fd',
+      borderRadius: '12px',
+      background: 'rgba(147,197,253,0.2)',
+      boxSizing: 'border-box',
+    },
+  },
+  slot: {
+    tagName: 'div',
+    className: 'editor-added-slot',
+    textContent: '[이미지 삽입부]',
+    dataset: {
+      manualSlot: '1',
+      imageSlot: 'new-slot',
+      slotLabel: '새 슬롯',
+    },
+    style: {
+      width: '240px',
+      height: '160px',
+      border: '2px dashed #22c55e',
+      borderRadius: '12px',
+      color: '#14532d',
+      background: 'rgba(220,252,231,0.48)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      fontWeight: '700',
+    },
+  },
+};
 
 function isElement(node) {
   return !!node && node.nodeType === Node.ELEMENT_NODE;
@@ -2436,7 +2486,7 @@ function createFrameEditor({
     clone.removeAttribute('id');
     target.after(clone);
     const state = readTransformState(target);
-    writeTransformState(clone, state.tx + 20, state.ty + 20);
+    writeTransformState(clone, state.tx + 10, state.ty + 10);
     clone.dataset.editorModified = '1';
     modifiedSlots.add(clone.dataset.nodeUid);
     redetect({ preserveSelectionUids: [clone.dataset.nodeUid] });
@@ -2460,25 +2510,16 @@ function createFrameEditor({
   }
 
   function addElement(kind) {
+    const preset = ADD_ELEMENT_PRESETS[kind];
+    if (!preset) return { ok: false, message: '지원하지 않는 추가 요소 타입입니다.' };
     const parent = selectedElement?.parentElement || doc.querySelector('.page') || doc.body;
     if (!parent) return { ok: false, message: '요소를 추가할 위치를 찾지 못했습니다.' };
-    const element = doc.createElement(kind === 'text' ? 'p' : 'div');
+    const element = doc.createElement(preset.tagName || 'div');
     element.dataset.nodeUid = nextId('node');
-    if (kind === 'text') {
-      element.textContent = '새 텍스트';
-      element.className = 'editor-added-text';
-      setInlineStyle(element, { minHeight: '32px', padding: '6px 8px', background: 'rgba(255,255,255,0.5)' });
-    } else if (kind === 'box') {
-      element.className = 'editor-added-box';
-      setInlineStyle(element, { width: '220px', height: '120px', border: '2px solid #93c5fd', background: 'rgba(147,197,253,0.2)' });
-    } else {
-      element.className = 'editor-added-slot';
-      element.dataset.manualSlot = '1';
-      element.dataset.imageSlot = 'new-slot';
-      element.dataset.slotLabel = '새 슬롯';
-      element.textContent = '[이미지 삽입부]';
-      setInlineStyle(element, { width: '240px', height: '160px', border: '2px dashed #22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center' });
-    }
+    element.className = preset.className || '';
+    if (preset.textContent) element.textContent = preset.textContent;
+    for (const [key, value] of Object.entries(preset.dataset || {})) element.dataset[key] = value;
+    setInlineStyle(element, preset.style || {});
     parent.appendChild(element);
     writeTransformState(element, 24, 24);
     element.dataset.editorModified = '1';
@@ -2488,23 +2529,38 @@ function createFrameEditor({
     return { ok: true, message: `${kind === 'text' ? '텍스트' : kind === 'box' ? '박스' : '이미지 슬롯'}를 추가했습니다.` };
   }
 
-  function reorderSelected(direction = 'forward') {
+  function applyLayerIndexCommand(command = 'forward') {
     const target = selectedElement;
     if (!target || !target.parentElement) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
-    if (direction === 'forward') {
+    const parent = target.parentElement;
+    if (command === 'forward') {
       const next = target.nextElementSibling;
       if (next) next.after(target);
       else return { ok: false, message: '이미 가장 앞 레이어입니다.' };
-    } else {
+    } else if (command === 'backward') {
       const prev = target.previousElementSibling;
       if (prev) prev.before(target);
       else return { ok: false, message: '이미 가장 뒤 레이어입니다.' };
+    } else if (command === 'front') {
+      if (!target.nextElementSibling) return { ok: false, message: '이미 가장 앞 레이어입니다.' };
+      parent.appendChild(target);
+    } else if (command === 'back') {
+      if (!target.previousElementSibling) return { ok: false, message: '이미 가장 뒤 레이어입니다.' };
+      parent.insertBefore(target, parent.firstElementChild);
+    } else {
+      return { ok: false, message: '지원하지 않는 레이어 명령입니다.' };
     }
     target.dataset.editorModified = '1';
     if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
     emitState();
-    emitMutation(`z-${direction}`);
-    return { ok: true, message: direction === 'forward' ? '선택 요소를 앞으로 보냈습니다.' : '선택 요소를 뒤로 보냈습니다.' };
+    emitMutation(`layer-index-${command}`);
+    const messageMap = {
+      forward: '선택 요소를 한 단계 앞으로 보냈습니다.',
+      backward: '선택 요소를 한 단계 뒤로 보냈습니다.',
+      front: '선택 요소를 맨 앞으로 보냈습니다.',
+      back: '선택 요소를 맨 뒤로 보냈습니다.',
+    };
+    return { ok: true, message: messageMap[command] || '레이어 순서를 변경했습니다.' };
   }
 
   function nudgeImagePosition(dx = 0, dy = 0) {
@@ -3424,8 +3480,10 @@ function createFrameEditor({
     addSlotElement: () => addElement('slot'),
     applyGeometryPatch,
     getSelectionGeometry: () => elementGeometry(selectedElement),
-    bringSelectedForward: () => reorderSelected('forward'),
-    sendSelectedBackward: () => reorderSelected('backward'),
+    bringSelectedForward: () => applyLayerIndexCommand('forward'),
+    sendSelectedBackward: () => applyLayerIndexCommand('backward'),
+    bringSelectedToFront: () => applyLayerIndexCommand('front'),
+    sendSelectedToBack: () => applyLayerIndexCommand('back'),
     nudgeSelectedImage: ({ dx = 0, dy = 0 } = {}) => nudgeImagePosition(dx, dy),
     getEditedHtml: serializeEditedHtml,
     getCurrentPortableHtml: async () => {
@@ -3841,6 +3899,8 @@ const elements = {
   applyGeometryButton: document.getElementById('applyGeometryButton'),
   bringForwardButton: document.getElementById('bringForwardButton'),
   sendBackwardButton: document.getElementById('sendBackwardButton'),
+  bringToFrontButton: document.getElementById('bringToFrontButton'),
+  sendToBackButton: document.getElementById('sendToBackButton'),
   imageNudgeLeftButton: document.getElementById('imageNudgeLeftButton'),
   imageNudgeRightButton: document.getElementById('imageNudgeRightButton'),
   imageNudgeUpButton: document.getElementById('imageNudgeUpButton'),
@@ -4208,6 +4268,8 @@ function syncGeometryControls() {
     elements.applyGeometryButton,
     elements.bringForwardButton,
     elements.sendBackwardButton,
+    elements.bringToFrontButton,
+    elements.sendToBackButton,
     elements.imageNudgeLeftButton,
     elements.imageNudgeRightButton,
     elements.imageNudgeUpButton,
@@ -4757,6 +4819,16 @@ elements.bringForwardButton?.addEventListener('click', () => {
 elements.sendBackwardButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.sendSelectedBackward();
+  setStatus(result.message);
+});
+elements.bringToFrontButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.bringSelectedToFront();
+  setStatus(result.message);
+});
+elements.sendToBackButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.sendSelectedToBack();
   setStatus(result.message);
 });
 elements.imageNudgeLeftButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: -2, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
