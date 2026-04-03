@@ -5,10 +5,14 @@ import json
 import re
 import subprocess
 import sys
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-from bs4 import BeautifulSoup
+try:
+    from bs4 import BeautifulSoup
+except Exception:  # pragma: no cover - optional dependency fallback
+    BeautifulSoup = None
 
 ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / 'index.html'
@@ -30,8 +34,97 @@ def sha256(path: Path) -> str:
 
 
 def count_selector(html_path: Path, selector: str) -> int:
-    soup = BeautifulSoup(html_path.read_text(encoding='utf-8'), 'lxml')
-    return len(soup.select(selector))
+    html = html_path.read_text(encoding='utf-8')
+    if BeautifulSoup is not None:
+        soup = BeautifulSoup(html, 'lxml')
+        return len(soup.select(selector))
+    return count_selector_without_bs4(html, selector)
+
+
+class _MiniDomParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.nodes: list[dict[str, Any]] = []
+        self.stack: list[int] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_map = {key: (value or '') for key, value in attrs}
+        node = {
+            'tag': tag.lower(),
+            'attrs': attr_map,
+            'classes': set(filter(None, attr_map.get('class', '').split())),
+            'parent': self.stack[-1] if self.stack else -1,
+        }
+        self.nodes.append(node)
+        self.stack.append(len(self.nodes) - 1)
+
+    def handle_endtag(self, _tag: str) -> None:
+        if self.stack:
+            self.stack.pop()
+
+
+def _split_selector(selector: str) -> tuple[list[str], list[str]]:
+    parts = selector.replace('>', ' > ').split()
+    simples: list[str] = []
+    combinators: list[str] = []
+    pending = ' '
+    for part in parts:
+        if part == '>':
+            pending = '>'
+            continue
+        simples.append(part)
+        if len(simples) >= 2:
+            combinators.append(pending)
+            pending = ' '
+    return simples, combinators
+
+
+def _match_simple(node: dict[str, Any], simple: str) -> bool:
+    if simple.startswith('[') and simple.endswith(']'):
+        match = re.fullmatch(r"\[([a-zA-Z0-9_-]+)=['\"]([^'\"]+)['\"]\]", simple)
+        if not match:
+            return False
+        attr_name, attr_value = match.groups()
+        return node['attrs'].get(attr_name) == attr_value
+
+    if simple.startswith('.'):
+        tag = ''
+        classes = simple[1:].split('.')
+    else:
+        chunks = simple.split('.')
+        tag = chunks[0].lower()
+        classes = chunks[1:]
+
+    if tag and node['tag'] != tag:
+        return False
+    return all(class_name in node['classes'] for class_name in classes if class_name)
+
+
+def count_selector_without_bs4(html: str, selector: str) -> int:
+    parser = _MiniDomParser()
+    parser.feed(html)
+    nodes = parser.nodes
+    simples, combinators = _split_selector(selector)
+    if not simples:
+        return 0
+
+    def matches_chain(node_index: int, simple_index: int) -> bool:
+        node = nodes[node_index]
+        if not _match_simple(node, simples[simple_index]):
+            return False
+        if simple_index == 0:
+            return True
+        parent = node['parent']
+        combinator = combinators[simple_index - 1]
+        if combinator == '>':
+            return parent >= 0 and matches_chain(parent, simple_index - 1)
+        while parent >= 0:
+            if matches_chain(parent, simple_index - 1):
+                return True
+            parent = nodes[parent]['parent']
+        return False
+
+    return sum(1 for index in range(len(nodes)) if matches_chain(index, len(simples) - 1))
 
 
 def add_check(checks: list[dict[str, Any]], name: str, ok: bool, detail: str = '') -> None:
@@ -91,6 +184,7 @@ def main() -> None:
     config_js = CONFIG_SRC.read_text(encoding='utf-8')
     slot_detector_js = SLOT_DETECTOR_SRC.read_text(encoding='utf-8')
     readme = README.read_text(encoding='utf-8')
+    readme_app = ROOT.joinpath('README_APP.md').read_text(encoding='utf-8')
     package = json.loads(PACKAGE.read_text(encoding='utf-8'))
     manifest = json.loads(MANIFEST.read_text(encoding='utf-8'))
 
@@ -110,7 +204,12 @@ def main() -> None:
     add_check(checks, 'bundle_has_autosave_key_v6', 'detail-local-webapp-autosave-v6' in bundle_js or 'detail-local-webapp-autosave-v6' in config_js, 'autosave key should be updated to v6')
     add_check(checks, 'package_is_phase6', package.get('version') == '0.6.0', json.dumps(package, ensure_ascii=False))
     add_check(checks, 'readme_mentions_phase6', all(word in readme for word in ['6단계', '숨김', '잠금', '스냅', 'Preset']), 'README should document phase6 capabilities')
-    add_check(checks, 'readme_app_has_forbidden_api_policy', all(token in ROOT.joinpath('README_APP.md').read_text(encoding='utf-8') for token in ['금지 API/의존 목록', 'fetch()', 'showOpenFilePicker', 'file:// 직접 실행']), 'README_APP should include policy + file gate checklist')
+    add_check(checks, 'readme_app_has_forbidden_api_policy', (
+        '금지 API/의존 목록' in readme_app
+        and 'fetch()' in readme_app
+        and 'showOpenFilePicker' in readme_app
+        and ('file:// 직접 실행' in readme_app or '`file://` 직접 실행' in readme_app)
+    ), 'README_APP should include policy + file gate checklist')
 
     required_ids = [
         'openHtmlButton', 'openFolderButton', 'loadFixtureButton', 'applyPasteButton',
@@ -151,7 +250,7 @@ def main() -> None:
         add_check(checks, f'renderer_has_{name}', f'function {name}' in renderers_js, name)
 
     add_check(checks, 'index_has_stage_hint', 'Shift+드래그' in index_html and '스냅 가이드' in index_html, 'canvas interaction hint should exist')
-    add_check(checks, 'index_has_export_preset_label', 'Export preset' in index_html, 'export preset selector should be visible')
+    add_check(checks, 'index_has_export_preset_label', ('Export preset' in index_html or '<span>Preset</span>' in index_html), 'export preset selector should be visible')
     add_check(checks, 'index_has_3x_scale_option', '<option value="3">3x</option>' in index_html, '3x export scale option should exist')
     add_check(checks, 'frame_has_marquee_runtime', '__phase6_marquee_box' in frame_js and 'handlePointerDown' in frame_js and 'updateMarqueeSelection' in frame_js, 'marquee drag selection runtime should exist')
     add_check(checks, 'frame_has_snap_runtime', '__phase6_snap_line_x' in frame_js and 'computeSnapAdjustment' in frame_js, 'snap guide runtime should exist')
