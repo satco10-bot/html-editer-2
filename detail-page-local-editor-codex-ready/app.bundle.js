@@ -2407,6 +2407,20 @@ function createFrameEditor({
     };
   }
 
+  function selectionHudState() {
+    const geometry = elementGeometry(selectedElement);
+    if (!selectedElement || !geometry) return null;
+    const siblings = selectedElement.parentElement
+      ? Array.from(selectedElement.parentElement.children).filter((node) => node.nodeType === 1)
+      : [];
+    const index = siblings.indexOf(selectedElement);
+    return {
+      ...geometry,
+      layerIndexFromBack: index >= 0 ? index + 1 : 0,
+      layerTotal: siblings.length,
+    };
+  }
+
   function applyGeometryPatch(patch = {}) {
     const target = selectedElement;
     if (!target) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
@@ -3424,6 +3438,7 @@ function createFrameEditor({
     addSlotElement: () => addElement('slot'),
     applyGeometryPatch,
     getSelectionGeometry: () => elementGeometry(selectedElement),
+    getSelectionHud: selectionHudState,
     bringSelectedForward: () => reorderSelected('forward'),
     sendSelectedBackward: () => reorderSelected('backward'),
     nudgeSelectedImage: ({ dx = 0, dy = 0 } = {}) => nudgeImagePosition(dx, dy),
@@ -3855,6 +3870,16 @@ const elements = {
   zoomLabel: document.getElementById('zoomLabel'),
   previewViewport: document.getElementById('previewViewport'),
   previewScaler: document.getElementById('previewScaler'),
+  canvasContextBar: document.getElementById('canvasContextBar'),
+  miniHud: document.getElementById('miniHud'),
+  miniHudPos: document.getElementById('miniHudPos'),
+  miniHudSize: document.getElementById('miniHudSize'),
+  miniHudLayer: document.getElementById('miniHudLayer'),
+  canvasGeometryXInput: document.getElementById('canvasGeometryXInput'),
+  canvasGeometryYInput: document.getElementById('canvasGeometryYInput'),
+  canvasGeometryWInput: document.getElementById('canvasGeometryWInput'),
+  canvasGeometryHInput: document.getElementById('canvasGeometryHInput'),
+  applyCanvasGeometryButton: document.getElementById('applyCanvasGeometryButton'),
   codeEditorTextarea: document.getElementById('codeEditorTextarea'),
   codeSearchInput: document.getElementById('codeSearchInput'),
   codeSearchNextButton: document.getElementById('codeSearchNextButton'),
@@ -3870,6 +3895,7 @@ const elements = {
   actionButtons: Array.from(document.querySelectorAll('[data-action]')),
   batchActionButtons: Array.from(document.querySelectorAll('[data-batch-action]')),
   textAlignButtons: Array.from(document.querySelectorAll('[data-text-align]')),
+  canvasActionButtons: Array.from(document.querySelectorAll('[data-canvas-action]')),
 };
 
 function projectBaseName(project) {
@@ -4222,6 +4248,41 @@ function syncGeometryControls() {
   elements.geometryYInput.value = String(geometry.y ?? 0);
   elements.geometryWInput.value = String(geometry.w ?? 0);
   elements.geometryHInput.value = String(geometry.h ?? 0);
+  if (elements.canvasGeometryXInput) elements.canvasGeometryXInput.value = String(geometry.x ?? 0);
+  if (elements.canvasGeometryYInput) elements.canvasGeometryYInput.value = String(geometry.y ?? 0);
+  if (elements.canvasGeometryWInput) elements.canvasGeometryWInput.value = String(geometry.w ?? 0);
+  if (elements.canvasGeometryHInput) elements.canvasGeometryHInput.value = String(geometry.h ?? 0);
+}
+
+function syncCanvasDirectUi(editorMeta) {
+  const hasEditor = !!activeEditor;
+  const selectionCount = Number(editorMeta?.selectionCount || 0);
+  const geometry = activeEditor?.getSelectionGeometry?.() || null;
+  const hud = activeEditor?.getSelectionHud?.() || null;
+  const hasSingle = !!geometry && selectionCount >= 1;
+
+  if (elements.canvasContextBar) elements.canvasContextBar.hidden = !(hasEditor && selectionCount >= 1);
+  if (elements.miniHud) elements.miniHud.hidden = !hasSingle;
+
+  const multiActions = new Set(['same-width', 'same-height', 'same-size', 'align-left', 'align-center', 'align-right']);
+  for (const button of elements.canvasActionButtons) {
+    const action = button.dataset.canvasAction;
+    button.disabled = !hasEditor || (multiActions.has(action) ? selectionCount < 2 : selectionCount < 1);
+  }
+  if (elements.applyCanvasGeometryButton) elements.applyCanvasGeometryButton.disabled = !hasSingle;
+  for (const input of [elements.canvasGeometryXInput, elements.canvasGeometryYInput, elements.canvasGeometryWInput, elements.canvasGeometryHInput]) {
+    if (!input) continue;
+    input.disabled = !hasSingle;
+  }
+
+  if (!hasSingle) return;
+  if (elements.miniHudPos) elements.miniHudPos.textContent = `X ${hud?.x ?? geometry.x ?? 0} / Y ${hud?.y ?? geometry.y ?? 0}`;
+  if (elements.miniHudSize) elements.miniHudSize.textContent = `W ${hud?.w ?? geometry.w ?? 0} / H ${hud?.h ?? geometry.h ?? 0}`;
+  if (elements.miniHudLayer) {
+    const current = Number(hud?.layerIndexFromBack || 0);
+    const total = Number(hud?.layerTotal || 0);
+    elements.miniHudLayer.textContent = total > 0 ? `레이어 ${current}/${total}` : '레이어 -/-';
+  }
 }
 
 function renderShell(state) {
@@ -4250,6 +4311,7 @@ function renderShell(state) {
   syncTextStyleControls(state.editorMeta);
   syncBatchSummary(state.editorMeta);
   syncGeometryControls();
+  syncCanvasDirectUi(state.editorMeta);
   elements.statusText.textContent = state.statusText;
   refreshComputedViews(state);
 
@@ -4749,6 +4811,30 @@ elements.applyGeometryButton?.addEventListener('click', () => {
   const result = activeEditor.applyGeometryPatch(patch);
   setStatus(result.message);
 });
+elements.applyCanvasGeometryButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const patch = {
+    x: Number.parseFloat(elements.canvasGeometryXInput?.value || ''),
+    y: Number.parseFloat(elements.canvasGeometryYInput?.value || ''),
+    w: Number.parseFloat(elements.canvasGeometryWInput?.value || ''),
+    h: Number.parseFloat(elements.canvasGeometryHInput?.value || ''),
+  };
+  const result = activeEditor.applyGeometryPatch(patch);
+  setStatus(result.message);
+});
+for (const button of elements.canvasActionButtons) {
+  button.addEventListener('click', () => {
+    if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+    const action = button.dataset.canvasAction;
+    let result = { ok: false, message: '지원하지 않는 액션입니다.' };
+    if (action === 'duplicate') result = activeEditor.duplicateSelected();
+    else if (action === 'delete') result = activeEditor.deleteSelected();
+    else if (action === 'bring-forward') result = activeEditor.bringSelectedForward();
+    else if (action === 'send-backward') result = activeEditor.sendSelectedBackward();
+    else result = activeEditor.applyBatchLayout(action);
+    setStatus(result.message);
+  });
+}
 elements.bringForwardButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.bringSelectedForward();
