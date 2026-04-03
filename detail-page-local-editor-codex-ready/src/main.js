@@ -115,11 +115,17 @@ const elements = {
   saveFormatGuide: document.getElementById('saveFormatGuide'),
   saveFormatPreview: document.getElementById('saveFormatPreview'),
   saveMetaSummary: document.getElementById('saveMetaSummary'),
-  downloadEditedButton: document.getElementById('downloadEditedButton'),
+  topbarDownloadEditedButton: document.getElementById('topbarDownloadEditedButton'),
+  modalDownloadEditedButton: document.getElementById('modalDownloadEditedButton'),
+  downloadEditedButtons: Array.from(document.querySelectorAll('[data-download-action="save-edited"]')),
   downloadNormalizedButton: document.getElementById('downloadNormalizedButton'),
   downloadLinkedZipButton: document.getElementById('downloadLinkedZipButton'),
-  exportPngButton: document.getElementById('exportPngButton'),
-  exportJpgButton: document.getElementById('exportJpgButton'),
+  topbarExportPngButton: document.getElementById('topbarExportPngButton'),
+  modalExportPngButton: document.getElementById('modalExportPngButton'),
+  exportPngButtons: Array.from(document.querySelectorAll('[data-download-action="export-full-png"]')),
+  topbarExportJpgButton: document.getElementById('topbarExportJpgButton'),
+  modalExportJpgButton: document.getElementById('modalExportJpgButton'),
+  exportJpgButtons: Array.from(document.querySelectorAll('[data-download-action="export-full-jpg"]')),
   exportSectionsZipButton: document.getElementById('exportSectionsZipButton'),
   exportSelectionPngButton: document.getElementById('exportSelectionPngButton'),
   exportPresetPackageButton: document.getElementById('exportPresetPackageButton'),
@@ -1296,11 +1302,17 @@ function renderShell(state) {
     const needed = requiresMany ? 2 : 1;
     button.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < needed;
   }
-  elements.downloadEditedButton.disabled = !hasProject;
+  for (const button of elements.downloadEditedButtons) {
+    button.disabled = !hasProject;
+  }
   elements.downloadNormalizedButton.disabled = !hasProject;
   elements.downloadLinkedZipButton.disabled = !hasEditor;
-  elements.exportPngButton.disabled = !hasEditor;
-  elements.exportJpgButton.disabled = !hasEditor;
+  for (const button of elements.exportPngButtons) {
+    button.disabled = !hasEditor;
+  }
+  for (const button of elements.exportJpgButtons) {
+    button.disabled = !hasEditor;
+  }
   elements.exportSectionsZipButton.disabled = !hasEditor;
   elements.exportSelectionPngButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
   elements.exportPresetPackageButton.disabled = !hasEditor;
@@ -1962,11 +1974,17 @@ elements.runDownloadChoiceButton?.addEventListener('click', async () => {
     setStatus(`저장/출력 중 오류: ${error?.message || error}`);
   }
 });
-elements.downloadEditedButton?.addEventListener('click', () => { runDownloadByChoice('save-edited').catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`)); });
+for (const button of elements.downloadEditedButtons) {
+  button?.addEventListener('click', () => { runDownloadByChoice('save-edited').catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`)); });
+}
 elements.downloadNormalizedButton?.addEventListener('click', () => { runDownloadByChoice('download-normalized-html').catch((error) => setStatus(`정규화 HTML 저장 중 오류: ${error?.message || error}`)); });
 elements.downloadLinkedZipButton?.addEventListener('click', () => { runDownloadByChoice('download-linked-zip').catch((error) => setStatus(`ZIP 저장 중 오류: ${error?.message || error}`)); });
-elements.exportPngButton?.addEventListener('click', () => { runDownloadByChoice('export-full-png').catch((error) => setStatus(`PNG 저장 중 오류: ${error?.message || error}`)); });
-elements.exportJpgButton?.addEventListener('click', () => { runDownloadByChoice('export-full-jpg').catch((error) => setStatus(`JPG 저장 중 오류: ${error?.message || error}`)); });
+for (const button of elements.exportPngButtons) {
+  button?.addEventListener('click', () => { runDownloadByChoice('export-full-png').catch((error) => setStatus(`PNG 저장 중 오류: ${error?.message || error}`)); });
+}
+for (const button of elements.exportJpgButtons) {
+  button?.addEventListener('click', () => { runDownloadByChoice('export-full-jpg').catch((error) => setStatus(`JPG 저장 중 오류: ${error?.message || error}`)); });
+}
 elements.exportSectionsZipButton?.addEventListener('click', () => { runDownloadByChoice('export-sections-zip').catch((error) => setStatus(`섹션 PNG ZIP 저장 중 오류: ${error?.message || error}`)); });
 elements.exportSelectionPngButton?.addEventListener('click', () => { runDownloadByChoice('export-selection-png').catch((error) => setStatus(`선택 PNG 저장 중 오류: ${error?.message || error}`)); });
 elements.exportPresetPackageButton?.addEventListener('click', () => { runDownloadByChoice('download-export-preset-package').catch((error) => setStatus(`Preset 패키지 저장 중 오류: ${error?.message || error}`)); });
