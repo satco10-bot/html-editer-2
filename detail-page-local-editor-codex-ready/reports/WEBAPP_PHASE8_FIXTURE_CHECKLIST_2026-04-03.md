@@ -1,4 +1,8 @@
 # Phase 8 Fixture Consistency Checklist (선택/이동/리사이즈/복제/삭제)
+- 기준 코드 버전: `0.8.0`
+- 기준 커밋: `60b1f586154070c5a2bd456cffa011e1e8ef2b80`
+- 기준 날짜: `2026-04-03`
+- 현재 기준 문서: [`README_APP.md`](../README_APP.md)
 
 아래 체크리스트는 5개 fixture(F01~F05)에서 **동일 동작**이 같은 기준으로 동작하는지 검증하기 위한 공통 기준입니다.
 

@@ -1,4 +1,8 @@
 # Phase 8 Regression Pipeline Summary
+- 기준 코드 버전: `0.8.0`
+- 기준 커밋: `60b1f586154070c5a2bd456cffa011e1e8ef2b80`
+- 기준 날짜: `2026-04-03`
+- 현재 기준 문서: [`README_APP.md`](../README_APP.md)
 
 - run_date: 2026-04-03
 - overall_status: FAIL
