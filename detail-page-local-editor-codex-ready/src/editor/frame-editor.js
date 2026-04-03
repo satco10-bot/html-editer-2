@@ -1390,6 +1390,49 @@ export function createFrameEditor({
     return { hasMedia, unresolved, placeholder, explicitEmpty };
   }
 
+  function classifyAssetPath(value) {
+    const text = String(value || '').trim();
+    if (!text) return 'empty';
+    if (text.startsWith('uploaded:')) return 'uploaded';
+    if (text.startsWith('blob:')) return 'blob';
+    if (text.startsWith('data:')) return 'data';
+    if (/^https?:\/\//i.test(text) || text.startsWith('//')) return 'remote';
+    if (text.startsWith('#')) return 'fragment';
+    if (/^[a-z][a-z0-9+.-]*:/i.test(text)) return 'custom';
+    if (text.startsWith('/')) return 'absolute';
+    return 'relative';
+  }
+
+  function buildPathPreservationSignals() {
+    const images = Array.from(doc.querySelectorAll('img'));
+    let preservedCount = 0;
+    let driftCount = 0;
+    let trackedCount = 0;
+    let editedBlobCount = 0;
+    const exportKinds = new Set();
+
+    for (const img of images) {
+      const originalRef = img.dataset.originalSrc || img.getAttribute('src') || '';
+      const editedRef = img.dataset.exportSrc || img.dataset.originalSrc || img.getAttribute('src') || '';
+      const originalKind = classifyAssetPath(originalRef);
+      const editedKind = classifyAssetPath(editedRef);
+      exportKinds.add(editedKind);
+      if (editedKind === 'blob') editedBlobCount += 1;
+      if (!['uploaded', 'relative'].includes(originalKind)) continue;
+      trackedCount += 1;
+      if (originalKind === editedKind || editedKind === 'data') preservedCount += 1;
+      else driftCount += 1;
+    }
+
+    return {
+      trackedCount,
+      preservedCount,
+      driftCount,
+      editedBlobCount,
+      exportKinds: Array.from(exportKinds).sort(),
+    };
+  }
+
   function buildPreflightReport() {
     const checks = [];
     const addCheck = (level, code, title, message, count = 0) => checks.push({ level, code, title, message, count });
@@ -1420,6 +1463,19 @@ export function createFrameEditor({
     }
     if (detection.nearMisses?.length) {
       addCheck('info', 'NEAR_MISS', '근접 후보', `자동 슬롯 감지 근접 후보가 ${detection.nearMisses.length}개 있습니다. 수동 슬롯 지정으로 보정할 수 있습니다.`, detection.nearMisses.length);
+    }
+    const pathSignals = buildPathPreservationSignals();
+    if (pathSignals.trackedCount > 0) {
+      if (pathSignals.driftCount > 0) {
+        addCheck('error', 'PATH_SAVE_REOPEN_DRIFT', '경로 보존 실패(저장/재오픈)', `uploaded: 또는 상대경로 이미지 ${pathSignals.driftCount}개가 저장 경로에서 다른 스킴으로 바뀔 수 있습니다.`, pathSignals.driftCount);
+      } else {
+        addCheck('info', 'PATH_SAVE_REOPEN_OK', '경로 보존 확인(저장/재오픈)', `uploaded:·상대경로 추적 대상 ${pathSignals.trackedCount}개가 현재 저장 규칙과 충돌하지 않습니다.`, pathSignals.trackedCount);
+      }
+    }
+    if (pathSignals.editedBlobCount > 0) {
+      addCheck('warning', 'PATH_EXPORT_BLOB', 'export 전 blob 경로 감지', `현재 편집 상태에 blob URL ${pathSignals.editedBlobCount}개가 있습니다. export 시 data URL 치환 경로를 점검하세요.`, pathSignals.editedBlobCount);
+    } else {
+      addCheck('info', 'PATH_EXPORT_READY', 'export 경로 준비', `현재 export 대상 경로 스킴: ${pathSignals.exportKinds.join(', ') || 'none'}.`, pathSignals.exportKinds.length);
     }
     const fixtureContract = project?.fixtureMeta?.slot_contract || null;
     if (fixtureContract?.required_exact_count != null && detection.summary.totalCount !== fixtureContract.required_exact_count) {

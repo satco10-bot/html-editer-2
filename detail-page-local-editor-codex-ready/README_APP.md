@@ -50,6 +50,42 @@
 - 브라우저 다운로드와 autosave를 기본 저장 흐름으로 둡니다.
 - 새로 넣은 이미지는 data URL로 저장해, 저장한 편집 HTML을 다시 열었을 때 blob URL 때문에 이미지가 빠지지 않게 유지합니다.
 
+## 금지 API/의존 목록 (필수 부팅 경로 기준)
+
+아래 항목은 "**있어도 되지만, 앱 시작 필수 경로**로 만들면 안 되는 것"입니다.
+
+- `fetch()` 또는 원격 API 호출을 초기 부팅 필수 경로로 강제 금지
+- File System Access API(`showOpenFilePicker`, `showSaveFilePicker`, `showDirectoryPicker`)를 필수 경로로 강제 금지
+- 서버/도메인/HTTPS 연결이 없으면 실행 자체가 안 되는 구조 금지
+
+앱은 시작 시 환경 점검을 수행하고, 위 정책 위반 신호가 감지되면 상단 로컬 모드 안내에 경고를 표시합니다.
+
+## import / asset 경로 매핑 규칙
+
+경로는 아래 규칙으로 분류/처리합니다.
+
+1. `uploaded:` 경로  
+   - 사용자 제공 커스텀 스킴으로 간주
+   - 폴더 import 시 파일 인덱스와 매칭 시도
+   - 편집 HTML 저장 시 원본 ref 보존이 기본
+2. 상대경로 (`images/a.png`, `./a.jpg` 등)  
+   - HTML 파일 기준 상대 위치 + basename fallback으로 매칭
+   - 폴더 import를 쓰면 재연결 성공률이 가장 높음
+   - 편집 HTML 저장 시 원본 ref 보존이 기본
+3. `blob:` URL  
+   - 편집 중 미리보기용 임시 URL
+   - portable/export 단계에서 data URL로 치환해 재오픈 안정성 확보
+   - linked ZIP export에서는 data URL을 `assets/*` 파일로 물질화
+
+## preflight 경로 보존 점검 항목
+
+`출력 전 검수`에 아래 자동 점검이 포함됩니다.
+
+- 저장/재오픈 경로 보존 점검: `uploaded:`·상대경로가 의도치 않게 다른 스킴으로 바뀌는지 확인
+- export 경로 점검: blob URL 잔존 여부 및 export 대상 스킴 요약 표시
+
+이 항목은 저장/재오픈/export에서 경로 안정성을 조기에 확인하려는 목적입니다.
+
 ## 폴더 구조
 
 - `index.html` : 로컬에서 직접 여는 진입점
@@ -84,6 +120,12 @@ python3 scripts/build_local_bundle.py
 node --check app.bundle.js
 python3 scripts/validate_phase6.py
 ```
+
+## 필수 게이트(수동/CI)
+
+- `file://` 직접 실행이 통과해야 합니다. (필수)
+  - 자동 체크: `python3 scripts/validate_phase6.py` 내 Playwright smoke는 `index.html`의 `file://` URI로 실행
+  - 수동 체크: 브라우저에서 `index.html`을 직접 열고, 초기 로딩/슬롯 목록/상태 텍스트를 확인
 
 ## 현재 남겨둔 범위
 

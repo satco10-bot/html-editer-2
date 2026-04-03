@@ -106,9 +106,11 @@ def main() -> None:
     add_check(checks, 'bundle_uses_srcdoc_preview', 'srcdoc' in bundle_js or 'srcdoc' in index_html, 'preview should be iframe srcdoc based')
     add_check(checks, 'main_boot_has_no_fetch', 'fetch(' not in main_js, 'startup flow should not require network fetch')
     add_check(checks, 'bundle_has_no_file_system_access_api', all(token not in bundle_js for token in ['showOpenFilePicker', 'showSaveFilePicker', 'showDirectoryPicker']), 'local file:// mode should not depend on secure-context file picker APIs')
+    add_check(checks, 'main_has_boot_environment_guard', 'evaluateLocalBootEnvironment' in main_js and 'BOOT_LOCAL_POLICY' in main_js, 'startup should expose local-mode guard checks')
     add_check(checks, 'bundle_has_autosave_key_v6', 'detail-local-webapp-autosave-v6' in bundle_js or 'detail-local-webapp-autosave-v6' in config_js, 'autosave key should be updated to v6')
     add_check(checks, 'package_is_phase6', package.get('version') == '0.6.0', json.dumps(package, ensure_ascii=False))
     add_check(checks, 'readme_mentions_phase6', all(word in readme for word in ['6단계', '숨김', '잠금', '스냅', 'Preset']), 'README should document phase6 capabilities')
+    add_check(checks, 'readme_app_has_forbidden_api_policy', all(token in ROOT.joinpath('README_APP.md').read_text(encoding='utf-8') for token in ['금지 API/의존 목록', 'fetch()', 'showOpenFilePicker', 'file:// 직접 실행']), 'README_APP should include policy + file gate checklist')
 
     required_ids = [
         'openHtmlButton', 'openFolderButton', 'loadFixtureButton', 'applyPasteButton',
@@ -192,6 +194,8 @@ def main() -> None:
     add_check(checks, 'F05_has_media_shells', all(token in f05_html for token in ['media-shell', 'hero-shot', 'opt-thumb', 'visual']), 'expected real-world slot patterns')
 
     browser_smoke = try_browser_smoke()
+    add_check(checks, 'playwright_smoke_uses_file_protocol', INDEX.resolve().as_uri().startswith('file://'), INDEX.resolve().as_uri())
+    add_check(checks, 'file_protocol_smoke_gate', browser_smoke.get('status') == 'ok', json.dumps(browser_smoke, ensure_ascii=False))
 
     summary = {
         'ok': all(item['ok'] for item in checks),
