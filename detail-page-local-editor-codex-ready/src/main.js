@@ -67,6 +67,8 @@ const elements = {
   exportJpgButton: document.getElementById('exportJpgButton'),
   exportSectionsZipButton: document.getElementById('exportSectionsZipButton'),
   exportSelectionPngButton: document.getElementById('exportSelectionPngButton'),
+  selectionExportPaddingInput: document.getElementById('selectionExportPaddingInput'),
+  selectionExportBackgroundSelect: document.getElementById('selectionExportBackgroundSelect'),
   exportPresetSelect: document.getElementById('exportPresetSelect'),
   exportScaleSelect: document.getElementById('exportScaleSelect'),
   exportJpgQualityInput: document.getElementById('exportJpgQualityInput'),
@@ -173,6 +175,17 @@ function exportJpgQuality() {
   const raw = Number.parseFloat(elements.exportJpgQualityInput?.value || String(DEFAULT_JPG_QUALITY));
   if (!Number.isFinite(raw)) return DEFAULT_JPG_QUALITY;
   return Math.min(1, Math.max(0.1, raw));
+}
+
+function selectionExportPadding() {
+  const raw = Number.parseFloat(elements.selectionExportPaddingInput?.value || '16');
+  if (!Number.isFinite(raw)) return 0;
+  return Math.max(0, Math.min(240, Math.round(raw)));
+}
+
+function selectionExportBackground() {
+  const raw = String(elements.selectionExportBackgroundSelect?.value || 'transparent');
+  return raw === 'opaque' ? 'opaque' : 'transparent';
 }
 
 function setStatus(text) {
@@ -886,10 +899,18 @@ async function exportSelectionPng() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
   if (!(await ensureFixtureIntegrityBeforeExport('선택 영역 PNG 저장'))) return;
-  const blob = await activeEditor.exportSelectionPngBlob(exportScale());
+  const options = {
+    padding: selectionExportPadding(),
+    background: selectionExportBackground(),
+  };
+  const { blob, meta } = await activeEditor.exportSelectionPngBlob(exportScale(), options);
   const fileName = `${projectBaseName(project)}__selection.png`;
   downloadBlob(fileName, blob);
-  setStatus(`선택 영역 PNG를 저장했습니다: ${fileName} (${exportScale()}x, 선택 bbox)`);
+  const skipped = meta?.policy?.skippedHidden + meta?.policy?.skippedLocked || 0;
+  const bgLabel = options.background === 'opaque' ? '불투명(흰색)' : '투명';
+  setStatus(
+    `선택 영역 PNG를 저장했습니다: ${fileName} (${exportScale()}x, union bbox, 여백 ${options.padding}px, 배경 ${bgLabel}, 포함 ${meta?.targetCount || 0}개, 제외 ${skipped}개·숨김 제외 ${meta?.policy?.excludeHidden ? 'ON' : 'OFF'}·잠금 제외 ${meta?.policy?.excludeLocked ? 'ON' : 'OFF'})`,
+  );
 }
 
 async function exportSectionsZip() {

@@ -50,6 +50,17 @@
         <button id="exportPngButton" class="button button--ghost">PNG</button>
         <button id="exportJpgButton" class="button button--ghost">JPG</button>
         <button id="exportSectionsZipButton" class="button button--ghost">섹션 ZIP</button>
+        <label class="mini-control">
+          <span>선택 여백</span>
+          <input id="selectionExportPaddingInput" type="number" min="0" max="240" step="1" value="16" style="width:74px" />
+        </label>
+        <label class="mini-control">
+          <span>선택 배경</span>
+          <select id="selectionExportBackgroundSelect">
+            <option value="transparent">투명</option>
+            <option value="opaque">불투명(흰색)</option>
+          </select>
+        </label>
         <button id="exportSelectionPngButton" class="button button--ghost">선택 PNG</button>
         <button id="exportPresetPackageButton" class="button button--ghost">Preset ZIP</button>
       </div>
