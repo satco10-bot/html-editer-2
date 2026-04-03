@@ -1,12 +1,13 @@
 {
   "summary": {
     "ok": false,
-    "check_count": 154,
-    "passed": 153,
-    "failed": 1,
-    "bundle_bytes": 286834,
-    "bundle_sha256": "5824f564bbdb2bea2d7d6dbf7dd16b9245bbc8d0fb0d7466cd368c647e16629e",
-    "browser_smoke_status": "unavailable"
+    "check_count": 166,
+    "passed": 159,
+    "failed": 7,
+    "bundle_bytes": 304910,
+    "bundle_sha256": "5fd287bce7eafea568ba0c0d92a0b227b09bdd71353a4341f9ad9d771623c8ee",
+    "browser_smoke_status": "unavailable",
+    "failure_type": "dependency_missing"
   },
   "checks": [
     {
@@ -170,6 +171,11 @@
       "detail": "exportScaleSelect"
     },
     {
+      "name": "index_has_exportJpgQualityInput",
+      "ok": true,
+      "detail": "exportJpgQualityInput"
+    },
+    {
       "name": "index_has_exportPngButton",
       "ok": true,
       "detail": "exportPngButton"
@@ -286,12 +292,12 @@
     },
     {
       "name": "index_has_duplicateButton",
-      "ok": true,
+      "ok": false,
       "detail": "duplicateButton"
     },
     {
       "name": "index_has_deleteButton",
-      "ok": true,
+      "ok": false,
       "detail": "deleteButton"
     },
     {
@@ -345,6 +351,16 @@
       "detail": "sendBackwardButton"
     },
     {
+      "name": "index_has_bringToFrontButton",
+      "ok": true,
+      "detail": "bringToFrontButton"
+    },
+    {
+      "name": "index_has_sendToBackButton",
+      "ok": true,
+      "detail": "sendToBackButton"
+    },
+    {
       "name": "index_has_imageNudgeLeftButton",
       "ok": true,
       "detail": "imageNudgeLeftButton"
@@ -366,8 +382,8 @@
     },
     {
       "name": "all_main_js_ids_exist_in_index",
-      "ok": true,
-      "detail": "ok"
+      "ok": false,
+      "detail": "deleteButton, duplicateButton"
     },
     {
       "name": "frame_editor_has_toggleTextEdit",
@@ -505,6 +521,16 @@
       "detail": "sendSelectedBackward"
     },
     {
+      "name": "frame_editor_has_bringSelectedToFront",
+      "ok": false,
+      "detail": "bringSelectedToFront"
+    },
+    {
+      "name": "frame_editor_has_sendSelectedToBack",
+      "ok": false,
+      "detail": "sendSelectedToBack"
+    },
+    {
       "name": "frame_editor_has_nudgeSelectedImage",
       "ok": true,
       "detail": "nudgeSelectedImage"
@@ -550,6 +576,11 @@
       "detail": "3x export scale option should exist"
     },
     {
+      "name": "index_has_jpg_quality_input",
+      "ok": true,
+      "detail": "JPG quality input should exist"
+    },
+    {
       "name": "frame_has_marquee_runtime",
       "ok": true,
       "detail": "marquee drag selection runtime should exist"
@@ -575,6 +606,16 @@
       "detail": "layer action buttons should exist"
     },
     {
+      "name": "frame_layer_index_command_unified",
+      "ok": false,
+      "detail": "z-order should use layer-index command family"
+    },
+    {
+      "name": "main_layer_and_canvas_sync_hook",
+      "ok": true,
+      "detail": "layer panel/canvas sync rendering hooks should exist together"
+    },
+    {
       "name": "index_has_batch_buttons",
       "ok": true,
       "detail": "expect batch layout actions in UI"
@@ -588,6 +629,26 @@
       "name": "frame_has_pointer_listeners",
       "ok": true,
       "detail": "drag interactions should use pointer events"
+    },
+    {
+      "name": "frame_has_shared_export_renderer",
+      "ok": true,
+      "detail": "export pipeline should use shared renderer and normalized scales"
+    },
+    {
+      "name": "frame_selection_uses_bbox_crop",
+      "ok": true,
+      "detail": "selection PNG should crop by bounding box"
+    },
+    {
+      "name": "main_uses_jpg_quality_option",
+      "ok": true,
+      "detail": "JPG quality option should be wired in main export flow"
+    },
+    {
+      "name": "main_has_fixture_integrity_gate",
+      "ok": true,
+      "detail": "fixture-based export integrity check should guard exports"
     },
     {
       "name": "fixture_count_is_5",
