@@ -81,34 +81,54 @@
       </div>
 
       <div class="topbar__right">
-        <button id="beginnerModeToggle" class="button button--secondary" type="button" aria-pressed="false">초보 모드: OFF</button>
+        <div class="topbar__group">
+          <span class="topbar__label">모드</span>
+          <button id="beginnerModeToggle" class="button" type="button" aria-pressed="false">초보 모드: OFF</button>
+          <details class="topbar__more" data-beginner-more-group="mode">
+            <summary>더보기</summary>
+            <div class="topbar__more-menu" data-beginner-more-target="mode"></div>
+          </details>
+        </div>
+
         <div class="topbar__group">
           <span class="topbar__label">열기</span>
           <button id="openHtmlButton" class="button">HTML 열기</button>
-          <button id="openFolderButton" class="button button--secondary">폴더 열기</button>
-          <label class="mini-control">
+          <button id="openFolderButton" class="button button--secondary" data-beginner-more-item="load">폴더 열기</button>
+          <label class="mini-control" data-beginner-more-item="load">
             <span>Fixture</span>
             <select id="fixtureSelect"></select>
           </label>
-          <button id="loadFixtureButton" class="button button--secondary">불러오기</button>
+          <button id="loadFixtureButton" class="button button--ghost" data-beginner-more-item="load">불러오기</button>
+          <details class="topbar__more" data-beginner-more-group="load">
+            <summary>더보기</summary>
+            <div class="topbar__more-menu" data-beginner-more-target="load"></div>
+          </details>
         </div>
 
         <div class="topbar__group">
           <span class="topbar__label">저장 / 출력</span>
           <button id="openDownloadModalButton" class="button">저장/출력 열기</button>
-          <button id="downloadEditedButton" class="button button--ghost" data-download-action="save-edited">문서 저장</button>
-          <button id="exportPngButton" class="button button--ghost" data-download-action="export-full-png">PNG</button>
-          <button id="exportJpgButton" class="button button--ghost" data-download-action="export-full-jpg">JPG</button>
+          <button id="downloadEditedButton" class="button button--secondary" data-download-action="save-edited" data-beginner-more-item="save">문서 저장</button>
+          <button id="exportPngButton" class="button button--ghost" data-download-action="export-full-png" data-beginner-more-item="save">PNG</button>
+          <button id="exportJpgButton" class="button button--ghost" data-download-action="export-full-jpg" data-beginner-more-item="save">JPG</button>
+          <details class="topbar__more" data-beginner-more-group="save">
+            <summary>더보기</summary>
+            <div class="topbar__more-menu" data-beginner-more-target="save"></div>
+          </details>
         </div>
 
         <div class="topbar__group topbar__group--workspace">
           <span class="topbar__label">작업</span>
-          <button id="undoButton" class="button button--ghost" data-beginner-advanced>되돌리기</button>
-          <button id="redoButton" class="button button--ghost" data-beginner-advanced>다시하기</button>
-          <button id="restoreAutosaveButton" class="button button--ghost" data-beginner-advanced>자동저장 복구</button>
-          <button id="toggleLeftSidebarButton" class="button button--ghost" data-beginner-advanced>왼쪽 패널</button>
-          <button id="toggleRightSidebarButton" class="button button--ghost" data-beginner-advanced>오른쪽 패널</button>
-          <button id="focusModeButton" class="button button--ghost" data-beginner-advanced>캔버스 집중</button>
+          <button id="undoButton" class="button">되돌리기</button>
+          <button id="redoButton" class="button button--secondary" data-beginner-more-item="workspace">다시하기</button>
+          <button id="restoreAutosaveButton" class="button button--ghost" data-beginner-more-item="workspace">자동저장 복구</button>
+          <button id="toggleLeftSidebarButton" class="button button--ghost" data-beginner-more-item="workspace">왼쪽 패널</button>
+          <button id="toggleRightSidebarButton" class="button button--ghost" data-beginner-more-item="workspace">오른쪽 패널</button>
+          <button id="focusModeButton" class="button button--ghost" data-beginner-more-item="workspace">캔버스 집중</button>
+          <details class="topbar__more" data-beginner-more-group="workspace">
+            <summary>더보기</summary>
+            <div class="topbar__more-menu" data-beginner-more-target="workspace"></div>
+          </details>
         </div>
       </div>
 

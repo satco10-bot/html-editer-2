@@ -266,7 +266,19 @@ const elements = {
   beginnerTutorialPrevButton: document.getElementById('beginnerTutorialPrevButton'),
   beginnerTutorialNextButton: document.getElementById('beginnerTutorialNextButton'),
   beginnerTutorialCloseButton: document.getElementById('beginnerTutorialCloseButton'),
+  beginnerMoreItems: Array.from(document.querySelectorAll('[data-beginner-more-item]')),
+  beginnerMoreTargets: Array.from(document.querySelectorAll('[data-beginner-more-target]')),
+  beginnerMoreMenus: Array.from(document.querySelectorAll('.topbar__more')),
 };
+
+const beginnerMoreItemAnchors = new WeakMap();
+
+elements.beginnerMoreItems.forEach((item) => {
+  beginnerMoreItemAnchors.set(item, {
+    parent: item.parentElement,
+    nextSibling: item.nextSibling,
+  });
+});
 
 function readFromLocalStorage(key, fallback = null) {
   try {
@@ -323,6 +335,36 @@ function applyBeginnerModeUi() {
   }
   if (isBeginnerMode && elements.advancedTopbarPanel) elements.advancedTopbarPanel.open = false;
   if (!isBeginnerMode && elements.beginnerTutorialTooltip) elements.beginnerTutorialTooltip.hidden = true;
+  syncBeginnerMoreMenus();
+}
+
+function syncBeginnerMoreMenus() {
+  const targetByGroup = new Map();
+  elements.beginnerMoreTargets.forEach((target) => {
+    const group = target.dataset.beginnerMoreTarget;
+    if (group) targetByGroup.set(group, target);
+  });
+  elements.beginnerMoreItems.forEach((item) => {
+    const group = item.dataset.beginnerMoreItem;
+    if (!group) return;
+    if (isBeginnerMode) {
+      const target = targetByGroup.get(group);
+      if (target && item.parentElement !== target) target.append(item);
+      return;
+    }
+    const anchor = beginnerMoreItemAnchors.get(item);
+    if (!anchor?.parent) return;
+    if (anchor.nextSibling && anchor.nextSibling.parentNode === anchor.parent) {
+      anchor.parent.insertBefore(item, anchor.nextSibling);
+    } else {
+      anchor.parent.append(item);
+    }
+  });
+  if (!isBeginnerMode) {
+    elements.beginnerMoreMenus.forEach((menu) => {
+      menu.open = false;
+    });
+  }
 }
 
 function setBeginnerMode(next, { silent = false } = {}) {
