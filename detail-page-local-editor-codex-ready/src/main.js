@@ -26,6 +26,8 @@ let currentExportPresetId = 'market';
 let currentCodeSource = 'edited';
 let codeEditorDirty = false;
 let geometryCoordMode = 'relative';
+let currentSaveFormat = 'linked';
+let lastSaveConversion = null;
 const zoomState = { mode: 'fit', value: 1 };
 const BOOT_LOCAL_POLICY = Object.freeze({
   requiresStartupFetch: false,
@@ -61,6 +63,8 @@ const elements = {
   redoButton: document.getElementById('redoButton'),
   restoreAutosaveButton: document.getElementById('restoreAutosaveButton'),
   downloadEditedButton: document.getElementById('downloadEditedButton'),
+  saveFormatSelect: document.getElementById('saveFormatSelect'),
+  saveFormatStatus: document.getElementById('saveFormatStatus'),
   downloadNormalizedButton: document.getElementById('downloadNormalizedButton'),
   downloadLinkedZipButton: document.getElementById('downloadLinkedZipButton'),
   exportPngButton: document.getElementById('exportPngButton'),
@@ -234,6 +238,21 @@ function populateExportPresetSelect() {
 
 function currentExportPreset() {
   return getExportPresetById(currentExportPresetId);
+}
+
+function normalizeSaveFormat(value) {
+  return value === 'embedded' ? 'embedded' : 'linked';
+}
+
+function syncSaveFormatUi() {
+  currentSaveFormat = normalizeSaveFormat(elements.saveFormatSelect?.value || currentSaveFormat);
+  if (elements.saveFormatSelect && elements.saveFormatSelect.value !== currentSaveFormat) {
+    elements.saveFormatSelect.value = currentSaveFormat;
+  }
+  if (elements.saveFormatStatus) {
+    const modeLabel = currentSaveFormat === 'embedded' ? 'embedded (data URL 내장)' : 'linked (경로 유지)';
+    elements.saveFormatStatus.textContent = `현재 저장 포맷: ${modeLabel}`;
+  }
 }
 
 function setSidebarTab(panelId) {
@@ -460,6 +479,10 @@ function buildReportPayload(project, report) {
     issues: project.issues,
     assets: project.assets,
     preflight: report.preflight || null,
+    save: {
+      selectedFormat: currentSaveFormat,
+      lastConversion: lastSaveConversion,
+    },
   };
 }
 
@@ -660,7 +683,9 @@ function renderShell(state) {
   elements.downloadReportButton.disabled = !hasProject;
   if (elements.applyCodeToEditorButton) elements.applyCodeToEditorButton.disabled = !hasProject || currentCodeSource === 'report';
   if (elements.reloadCodeFromEditorButton) elements.reloadCodeFromEditorButton.disabled = !hasProject;
+  if (elements.saveFormatSelect) elements.saveFormatSelect.disabled = !hasProject;
   syncExportPresetUi();
+  syncSaveFormatUi();
   syncWorkspaceButtons();
   applyPreviewZoom();
   refreshHistoryButtons();
@@ -679,7 +704,7 @@ function renderEmptyPreview() {
 function handleEditorShortcut(action) {
   if (action === 'undo') return undoHistory();
   if (action === 'redo') return redoHistory();
-  if (action === 'save-edited') return downloadEditedHtml();
+  if (action === 'save-edited') return downloadEditedHtml().catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`));
 }
 
 function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
@@ -814,13 +839,16 @@ function downloadNormalizedHtml() {
   setStatus(`정규화 HTML을 저장했습니다: ${fileName}`);
 }
 
-function downloadEditedHtml() {
+async function downloadEditedHtml() {
   const project = store.getState().project;
   if (!project) return setStatus('먼저 프로젝트를 불러와 주세요.');
-  const editedHtml = activeEditor ? activeEditor.getEditedHtml({ persistDetectedSlots: true }) : project.normalizedHtml;
-  const fileName = `${projectBaseName(project)}__edited_working.html`;
-  downloadTextFile(fileName, editedHtml, 'text/html;charset=utf-8');
-  setStatus(`편집 HTML을 저장했습니다: ${fileName}`);
+  if (!activeEditor) {
+    const fileName = `${projectBaseName(project)}__edited_working.html`;
+    downloadTextFile(fileName, project.normalizedHtml, 'text/html;charset=utf-8');
+    setStatus(`편집 HTML을 저장했습니다: ${fileName}`);
+    return;
+  }
+  await downloadByFormat(currentSaveFormat);
 }
 
 function ensurePreflightBeforeExport(kind) {
@@ -852,11 +880,34 @@ async function downloadLinkedZip() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
   if (!ensurePreflightBeforeExport('링크형 ZIP 저장')) return;
-  const entries = await activeEditor.getLinkedPackageEntries();
-  const zipBlob = await buildZipBlob(entries);
-  const fileName = `${projectBaseName(project)}__linked_package.zip`;
+  await downloadByFormat('linked', { forceZip: true });
+}
+
+async function downloadByFormat(format, { forceZip = false } = {}) {
+  const project = store.getState().project;
+  if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
+  const saveFormat = normalizeSaveFormat(format);
+  const result = await activeEditor.getSavePackageEntries(saveFormat);
+  lastSaveConversion = {
+    ...result.conversion,
+    savedAt: new Date().toISOString(),
+  };
+
+  if (saveFormat === 'embedded' && !forceZip) {
+    const entry = result.entries[0];
+    const text = new TextDecoder().decode(entry.data);
+    downloadTextFile(entry.name, text, 'text/html;charset=utf-8');
+    setStatus(`embedded HTML을 저장했습니다: ${entry.name} (blob→data ${result.conversion?.portableRewrite?.blobConvertedToDataUrl || 0}개)`);
+    return;
+  }
+
+  const zipBlob = await buildZipBlob(result.entries);
+  const suffix = saveFormat === 'embedded' ? '__embedded_package.zip' : '__linked_package.zip';
+  const fileName = `${projectBaseName(project)}${suffix}`;
   downloadBlob(fileName, zipBlob);
-  setStatus(`링크형 HTML + assets ZIP을 저장했습니다: ${fileName}`);
+  const warningCount = Number(result.conversion?.brokenLinkedPathWarnings?.length || 0);
+  const warningText = warningCount > 0 ? ` · 경고 ${warningCount}건(BROKEN_LINKED_PATH)` : '';
+  setStatus(`${saveFormat} 패키지를 저장했습니다: ${fileName}${warningText}`);
 }
 
 async function exportFullPng() {
@@ -1197,9 +1248,14 @@ elements.clearTextStyleButton.addEventListener('click', () => applyTextStyleFrom
 elements.undoButton.addEventListener('click', undoHistory);
 elements.redoButton.addEventListener('click', redoHistory);
 elements.restoreAutosaveButton.addEventListener('click', restoreAutosave);
-elements.downloadEditedButton.addEventListener('click', downloadEditedHtml);
+elements.downloadEditedButton.addEventListener('click', () => { downloadEditedHtml().catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`)); });
 elements.downloadNormalizedButton.addEventListener('click', downloadNormalizedHtml);
 elements.downloadLinkedZipButton.addEventListener('click', () => { downloadLinkedZip().catch((error) => setStatus(`ZIP 저장 중 오류: ${error?.message || error}`)); });
+elements.saveFormatSelect?.addEventListener('change', () => {
+  currentSaveFormat = normalizeSaveFormat(elements.saveFormatSelect.value || 'linked');
+  syncSaveFormatUi();
+  setStatus(`저장 포맷을 ${currentSaveFormat}로 변경했습니다.`);
+});
 elements.exportPngButton.addEventListener('click', () => { exportFullPng().catch((error) => setStatus(`PNG 저장 중 오류: ${error?.message || error}`)); });
 elements.exportJpgButton?.addEventListener('click', () => { exportFullJpg().catch((error) => setStatus(`JPG 저장 중 오류: ${error?.message || error}`)); });
 elements.exportSectionsZipButton.addEventListener('click', () => { exportSectionsZip().catch((error) => setStatus(`섹션 PNG ZIP 저장 중 오류: ${error?.message || error}`)); });
@@ -1320,7 +1376,7 @@ window.addEventListener('keydown', (event) => {
   }
   if (key === 's') {
     event.preventDefault();
-    return downloadEditedHtml();
+    return downloadEditedHtml().catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`));
   }
   if (key === '=') {
     event.preventDefault();
@@ -1361,5 +1417,6 @@ window.addEventListener('keydown', (event) => {
 setSidebarTab('left-import');
 setSidebarTab('right-inspect');
 setCodeSource('edited', { preserveDraft: false });
+syncSaveFormatUi();
 syncWorkspaceButtons();
 loadFixture('F05');

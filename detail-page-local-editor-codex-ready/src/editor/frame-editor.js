@@ -1726,15 +1726,36 @@ export function createFrameEditor({
 
   async function rewriteBlobRefsToPortableUrls(exportDoc) {
     const cache = new Map();
+    const stats = {
+      blobConvertedToDataUrl: 0,
+      blobConversionFailed: 0,
+      touchedImgSrc: 0,
+      touchedSrcset: 0,
+      touchedInlineStyleUrl: 0,
+      touchedStyleBlockUrl: 0,
+    };
+
+    function trackBlobRewrite(original, replacement, key) {
+      if (!String(original || '').startsWith('blob:')) return;
+      if (String(replacement || '').startsWith('data:')) stats.blobConvertedToDataUrl += 1;
+      else stats.blobConversionFailed += 1;
+      if (key && Object.prototype.hasOwnProperty.call(stats, key)) stats[key] += 1;
+    }
 
     for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
       const src = img.getAttribute('src') || '';
-      if (src) img.setAttribute('src', await resolvePortableUrl(src, cache));
+      if (src) {
+        const replacement = await resolvePortableUrl(src, cache);
+        trackBlobRewrite(src, replacement, 'touchedImgSrc');
+        img.setAttribute('src', replacement);
+      }
       const srcset = img.getAttribute('srcset') || '';
       if (srcset) {
         const rewritten = [];
         for (const item of parseSrcsetCandidates(srcset)) {
-          rewritten.push({ ...item, url: await resolvePortableUrl(item.url, cache) });
+          const replacement = await resolvePortableUrl(item.url, cache);
+          trackBlobRewrite(item.url, replacement, 'touchedSrcset');
+          rewritten.push({ ...item, url: replacement });
         }
         img.setAttribute('srcset', serializeSrcsetCandidates(rewritten));
       }
@@ -1743,7 +1764,9 @@ export function createFrameEditor({
     for (const source of Array.from(exportDoc.querySelectorAll('source[srcset]'))) {
       const items = [];
       for (const item of parseSrcsetCandidates(source.getAttribute('srcset') || '')) {
-        items.push({ ...item, url: await resolvePortableUrl(item.url, cache) });
+        const replacement = await resolvePortableUrl(item.url, cache);
+        trackBlobRewrite(item.url, replacement, 'touchedSrcset');
+        items.push({ ...item, url: replacement });
       }
       source.setAttribute('srcset', serializeSrcsetCandidates(items));
     }
@@ -1755,6 +1778,7 @@ export function createFrameEditor({
       let nextStyle = styleValue;
       for (const match of matches) {
         const replacement = await resolvePortableUrl(match[2], cache);
+        trackBlobRewrite(match[2], replacement, 'touchedInlineStyleUrl');
         nextStyle = nextStyle.replace(match[2], replacement);
       }
       element.setAttribute('style', nextStyle);
@@ -1767,10 +1791,31 @@ export function createFrameEditor({
       let nextCss = css;
       for (const match of matches) {
         const replacement = await resolvePortableUrl(match[2], cache);
+        trackBlobRewrite(match[2], replacement, 'touchedStyleBlockUrl');
         nextCss = nextCss.replace(match[2], replacement);
       }
       styleBlock.textContent = nextCss;
     }
+    return stats;
+  }
+
+  function collectLinkedPathWarnings(exportDoc) {
+    const warnings = [];
+    const unresolvedTokenRe = /%EB%AF%B8%ED%95%B4%EA%B2%B0|미해결/i;
+    for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
+      const src = img.getAttribute('src') || '';
+      const kind = classifyAssetPath(src);
+      if (!['relative', 'uploaded'].includes(kind)) continue;
+      const unresolved = img.dataset.normalizedUnresolvedImage === '1' || unresolvedTokenRe.test(src);
+      if (!unresolved) continue;
+      warnings.push({
+        code: 'BROKEN_LINKED_PATH',
+        kind,
+        uid: img.dataset.nodeUid || '',
+        ref: src,
+      });
+    }
+    return warnings;
   }
 
   function measureExportRoot() {
@@ -1959,11 +2004,15 @@ export function createFrameEditor({
     };
   }
 
-  async function buildLinkedPackageEntries() {
-    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
-    await rewriteBlobRefsToPortableUrls(exportDoc);
+  async function convertEmbeddedToLinked(exportDoc) {
     const assetEntries = [];
     const assetPathMap = new Map();
+    const stats = {
+      format: 'linked',
+      convertedDataUrlCount: 0,
+      generatedAssetCount: 0,
+      brokenLinkedPathWarnings: [],
+    };
 
     async function materializeUrl(url, hint = 'asset') {
       const value = String(url || '').trim();
@@ -1976,6 +2025,7 @@ export function createFrameEditor({
       const name = `assets/${String(assetEntries.length + 1).padStart(3, '0')}_${sanitizeFilename(slugify(hint) || 'asset')}${ext}`;
       assetEntries.push({ name, data: bytes });
       assetPathMap.set(value, name);
+      stats.convertedDataUrlCount += 1;
       return name;
     }
 
@@ -2026,12 +2076,44 @@ export function createFrameEditor({
       styleBlock.textContent = nextCss;
     }
 
+    stats.generatedAssetCount = assetEntries.length;
+    stats.brokenLinkedPathWarnings = collectLinkedPathWarnings(exportDoc);
+    return { exportDoc, assetEntries, stats };
+  }
+
+  async function buildSavePackageEntries(format = 'linked') {
+    const saveFormat = format === 'embedded' ? 'embedded' : 'linked';
     const baseName = sanitizeFilename(project?.sourceName?.replace(/\.html?$/i, '') || 'detail-page');
-    const html = createDoctypeHtml(exportDoc);
-    return [
-      { name: `${baseName}__linked.html`, data: new TextEncoder().encode(html) },
-      ...assetEntries,
-    ];
+    if (saveFormat === 'embedded') {
+      const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
+      const rewriteStats = await rewriteBlobRefsToPortableUrls(exportDoc);
+      const html = createDoctypeHtml(exportDoc);
+      return {
+        format: 'embedded',
+        entries: [{ name: `${baseName}__embedded.html`, data: new TextEncoder().encode(html) }],
+        conversion: {
+          format: 'embedded',
+          portableRewrite: rewriteStats,
+          generatedAssetCount: 0,
+          brokenLinkedPathWarnings: [],
+        },
+      };
+    }
+    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
+    const rewriteStats = await rewriteBlobRefsToPortableUrls(exportDoc);
+    const converted = await convertEmbeddedToLinked(exportDoc);
+    const html = createDoctypeHtml(converted.exportDoc);
+    return {
+      format: 'linked',
+      entries: [
+        { name: `${baseName}__linked.html`, data: new TextEncoder().encode(html) },
+        ...converted.assetEntries,
+      ],
+      conversion: {
+        ...converted.stats,
+        portableRewrite: rewriteStats,
+      },
+    };
   }
 
   function captureSnapshot(label = 'snapshot') {
@@ -2411,7 +2493,16 @@ export function createFrameEditor({
       return createDoctypeHtml(exportDoc);
     },
     async getLinkedPackageEntries() {
-      return await buildLinkedPackageEntries();
+      const result = await buildSavePackageEntries('linked');
+      return result.entries;
+    },
+    async getSavePackageEntries(format = 'linked') {
+      return await buildSavePackageEntries(format);
+    },
+    async convertEmbeddedToLinked() {
+      const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
+      await rewriteBlobRefsToPortableUrls(exportDoc);
+      return await convertEmbeddedToLinked(exportDoc);
     },
     async exportFullPngBlob(scale = 1.5) {
       return await exportFullPngBlob(scale);
