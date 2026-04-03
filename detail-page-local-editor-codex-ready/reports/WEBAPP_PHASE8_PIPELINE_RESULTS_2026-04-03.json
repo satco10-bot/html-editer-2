@@ -1,0 +1,108 @@
+{
+  "date": "2026-04-03",
+  "runs": [
+    {
+      "started_at": "2026-04-03T06:18:43.434788+00:00",
+      "finished_at": "2026-04-03T06:18:44.251446+00:00",
+      "requirements_file": "requirements-regression.txt",
+      "dependency": {
+        "ok": false,
+        "missing": [
+          "beautifulsoup4",
+          "lxml",
+          "playwright"
+        ],
+        "details": [
+          {
+            "package": "beautifulsoup4",
+            "module": "bs4",
+            "ok": "false",
+            "error": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nModuleNotFoundError: No module named 'bs4'"
+          },
+          {
+            "package": "lxml",
+            "module": "lxml",
+            "ok": "false",
+            "error": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nModuleNotFoundError: No module named 'lxml'"
+          },
+          {
+            "package": "playwright",
+            "module": "playwright",
+            "ok": "false",
+            "error": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nModuleNotFoundError: No module named 'playwright'"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "name": "dependency_check",
+          "status": "FAIL",
+          "missing": [
+            "beautifulsoup4",
+            "lxml",
+            "playwright"
+          ]
+        },
+        {
+          "name": "validate_phase6",
+          "status": "PASS",
+          "error_type": "none"
+        },
+        {
+          "name": "regression_layer_canvas_sync",
+          "status": "FAIL",
+          "error_type": "dependency_missing"
+        }
+      ],
+      "f05_gate": {
+        "ok": false,
+        "message": "F05 결과를 찾을 수 없습니다."
+      },
+      "validate_phase6": {
+        "script": "scripts/validate_phase6.py",
+        "returncode": 0,
+        "status": "ok",
+        "error_type": "none",
+        "stdout_tail": "ual=1\"\n    },\n    {\n      \"name\": \"F05_pattern_.ba-wrap .media-shell\",\n      \"ok\": true,\n      \"detail\": \"expected=2, actual=2\"\n    },\n    {\n      \"name\": \"F05_pattern_.set-grid .thumb.media-shell\",\n      \"ok\": true,\n      \"detail\": \"expected=3, actual=3\"\n    },\n    {\n      \"name\": \"F05_pattern_.point-hero .visual.media-shell\",\n      \"ok\": true,\n      \"detail\": \"expected=4, actual=4\"\n    },\n    {\n      \"name\": \"F05_required_exact_from_groups\",\n      \"ok\": true,\n      \"detail\": \"expected=13, actual=13\"\n    },\n    {\n      \"name\": \"F05_has_two_uploaded_img_refs\",\n      \"ok\": true,\n      \"detail\": \"uploaded_count=2\"\n    },\n    {\n      \"name\": \"F05_has_media_shells\",\n      \"ok\": true,\n      \"detail\": \"expected real-world slot patterns\"\n    },\n    {\n      \"name\": \"playwright_smoke_uses_file_protocol\",\n      \"ok\": true,\n      \"detail\": \"file:///workspace/html-editer-2/detail-page-local-editor-codex-ready/index.html\"\n    },\n    {\n      \"name\": \"file_protocol_smoke_gate\",\n      \"ok\": false,\n      \"detail\": \"{\\\"status\\\": \\\"unavailable\\\", \\\"error\\\": \\\"No module named 'playwright'\\\"}\"\n    }\n  ],\n  \"browser_smoke\": {\n    \"status\": \"unavailable\",\n    \"error\": \"No module named 'playwright'\"\n  }\n}",
+        "stderr_tail": "",
+        "json_summary": {
+          "status": null,
+          "error_type": null,
+          "summary": {
+            "ok": false,
+            "check_count": 166,
+            "passed": 159,
+            "failed": 7,
+            "bundle_bytes": 304910,
+            "bundle_sha256": "5fd287bce7eafea568ba0c0d92a0b227b09bdd71353a4341f9ad9d771623c8ee",
+            "browser_smoke_status": "unavailable"
+          },
+          "report_path": null
+        }
+      },
+      "regression_layer_canvas_sync": {
+        "script": "scripts/regression_layer_canvas_sync.py",
+        "returncode": 2,
+        "status": "failed",
+        "error_type": "dependency_missing",
+        "stdout_tail": "{\n  \"status\": \"dependency_missing\",\n  \"error_type\": \"dependency_missing\",\n  \"error\": \"No module named 'playwright'\",\n  \"missing_dependency\": \"playwright\",\n  \"started_at\": \"2026-04-03T06:18:44.240190+00:00\",\n  \"fixture_results\": [],\n  \"summary\": {\n    \"passed\": 0,\n    \"failed\": 0,\n    \"total\": 0\n  },\n  \"report_path\": \"reports/WEBAPP_PHASE8_REGRESSION_RESULTS_2026-04-03.json\"\n}",
+        "stderr_tail": "",
+        "json_summary": {
+          "status": "dependency_missing",
+          "error_type": "dependency_missing",
+          "summary": {
+            "passed": 0,
+            "failed": 0,
+            "total": 0
+          },
+          "report_path": "reports/WEBAPP_PHASE8_REGRESSION_RESULTS_2026-04-03.json"
+        }
+      },
+      "summary": {
+        "overall_status": "FAIL",
+        "step_pass": 1,
+        "step_fail": 2
+      }
+    }
+  ]
+}

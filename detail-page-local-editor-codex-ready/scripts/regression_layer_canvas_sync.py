@@ -1,78 +1,281 @@
 from __future__ import annotations
 
 import json
+import traceback
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / 'index.html'
+MANIFEST = ROOT / 'data' / 'WEBAPP_PHASE1_FIXTURE_MANIFEST.json'
+REPORTS_DIR = ROOT / 'reports'
 
 
-def record(results: list[dict], name: str, ok: bool, detail: str = '') -> None:
-    results.append({'name': name, 'ok': bool(ok), 'detail': detail})
+def record(results: list[dict[str, Any]], case_id: str, ok: bool, detail: str = '') -> None:
+    results.append({'id': case_id, 'ok': bool(ok), 'detail': detail})
+
+
+def _collect_fixture_ids() -> list[str]:
+    manifest = json.loads(MANIFEST.read_text(encoding='utf-8'))
+    return [item.get('id', '') for item in manifest.get('fixtures', []) if item.get('id')]
+
+
+def _load_fixture(page: Any, fixture_id: str) -> None:
+    page.select_option('#fixtureSelect', fixture_id)
+    page.locator('#loadFixtureButton').click()
+    page.wait_for_timeout(900)
+
+
+def _first_canvas_node(frame: Any) -> Any:
+    nodes = frame.locator('[data-node-uid]')
+    if nodes.count() == 0:
+        return None
+    return nodes.first
+
+
+def _to_box(locator: Any) -> dict[str, float] | None:
+    box = locator.bounding_box()
+    if not box:
+        return None
+    return {
+        'x': float(box['x']),
+        'y': float(box['y']),
+        'width': float(box['width']),
+        'height': float(box['height']),
+    }
+
+
+def _box_diff(before: dict[str, float] | None, after: dict[str, float] | None) -> tuple[float, float]:
+    if not before or not after:
+        return (0.0, 0.0)
+    return (after['x'] - before['x'], after['y'] - before['y'])
+
+
+def run_fixture_cases(page: Any, fixture_id: str) -> dict[str, Any]:
+    fixture_results: list[dict[str, Any]] = []
+    _load_fixture(page, fixture_id)
+    layer_items = page.locator('[data-layer-uid]')
+    frame = page.frame_locator('#previewFrame')
+    canvas_nodes = frame.locator('[data-node-uid]')
+
+    layer_count = layer_items.count()
+    node_count = canvas_nodes.count()
+    if layer_count == 0 or node_count == 0:
+        record(fixture_results, 'C1', False, f'fixture={fixture_id}, layer_count={layer_count}, node_count={node_count}')
+        for case_id in ['C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10']:
+            record(fixture_results, case_id, False, '선행 조건 실패: 레이어/노드 없음')
+        return {'fixture_id': fixture_id, 'results': fixture_results}
+
+    # C1: 단일 선택 (클릭)
+    first_node = canvas_nodes.first
+    first_uid = first_node.get_attribute('data-node-uid') or ''
+    first_node.click()
+    page.wait_for_timeout(150)
+    active_uid = page.locator('.layer-item.is-active').first.get_attribute('data-layer-uid') or ''
+    handles = frame.locator('.__phase7_resize_handle')
+    record(fixture_results, 'C1', active_uid == first_uid and handles.count() == 4, f'active={active_uid}, expected={first_uid}, handles={handles.count()}')
+
+    # C2: 다중 선택 (최소 자동화 버전: Shift+클릭)
+    second_node = canvas_nodes.nth(1)
+    second_uid = second_node.get_attribute('data-node-uid') or ''
+    second_node.click(modifiers=['Shift'])
+    page.wait_for_timeout(150)
+    selected_multi = frame.locator('.__phase5_selected_multi').count()
+    summary_text = (page.locator('#batchSelectionSummary').inner_text() or '').strip()
+    c2_ok = selected_multi >= 1 or '동시 선택' in summary_text
+    record(fixture_results, 'C2', c2_ok, f'second={second_uid}, selected_multi={selected_multi}, summary={summary_text}')
+
+    # C3: 포인터 드래그 이동
+    before_move = _to_box(first_node)
+    box_for_move = _to_box(first_node)
+    if box_for_move:
+        page.mouse.move(box_for_move['x'] + box_for_move['width'] / 2, box_for_move['y'] + box_for_move['height'] / 2)
+        page.mouse.down()
+        page.mouse.move(box_for_move['x'] + box_for_move['width'] / 2 + 30, box_for_move['y'] + box_for_move['height'] / 2 + 20)
+        page.mouse.up()
+    page.wait_for_timeout(160)
+    after_move = _to_box(first_node)
+    dx_move, dy_move = _box_diff(before_move, after_move)
+    moved = abs(dx_move) >= 2 or abs(dy_move) >= 2
+    record(fixture_results, 'C3', moved, f'dx={dx_move:.2f}, dy={dy_move:.2f}')
+
+    # C4: 리사이즈 핸들 드래그
+    before_resize = _to_box(first_node)
+    se_handle = frame.locator('[data-resize-corner="se"]')
+    if se_handle.count() > 0:
+        handle_box = _to_box(se_handle.first)
+        if handle_box:
+            page.mouse.move(handle_box['x'] + handle_box['width'] / 2, handle_box['y'] + handle_box['height'] / 2)
+            page.mouse.down()
+            page.mouse.move(handle_box['x'] + handle_box['width'] / 2 + 20, handle_box['y'] + handle_box['height'] / 2 + 20)
+            page.mouse.up()
+    page.wait_for_timeout(160)
+    after_resize = _to_box(first_node)
+    resized = False
+    if before_resize and after_resize:
+        resized = abs(after_resize['width'] - before_resize['width']) >= 1 or abs(after_resize['height'] - before_resize['height']) >= 1
+    record(fixture_results, 'C4', resized, f'before={before_resize}, after={after_resize}')
+
+    # C5: 복제
+    before_duplicate = canvas_nodes.count()
+    page.keyboard.press('ControlOrMeta+d')
+    page.wait_for_timeout(180)
+    after_duplicate = frame.locator('[data-node-uid]').count()
+    record(fixture_results, 'C5', after_duplicate == before_duplicate + 1, f'before={before_duplicate}, after={after_duplicate}')
+
+    # C6: 삭제
+    before_delete = frame.locator('[data-node-uid]').count()
+    page.keyboard.press('Delete')
+    page.wait_for_timeout(180)
+    after_delete = frame.locator('[data-node-uid]').count()
+    record(fixture_results, 'C6', after_delete == max(0, before_delete - 1), f'before={before_delete}, after={after_delete}')
+
+    # C7: 방향키 Nudge (1px: Alt+Arrow)
+    target = _first_canvas_node(frame)
+    before_nudge_1 = _to_box(target) if target else None
+    page.keyboard.press('Alt+ArrowRight')
+    page.wait_for_timeout(120)
+    after_nudge_1 = _to_box(target) if target else None
+    dx_1, dy_1 = _box_diff(before_nudge_1, after_nudge_1)
+    record(fixture_results, 'C7', abs(dx_1 - 1) <= 0.6 and abs(dy_1) <= 0.6, f'dx={dx_1:.2f}, dy={dy_1:.2f}')
+
+    # C8: Shift+방향키 Nudge (10px)
+    before_nudge_10 = _to_box(target) if target else None
+    page.keyboard.press('Shift+ArrowRight')
+    page.wait_for_timeout(120)
+    after_nudge_10 = _to_box(target) if target else None
+    dx_10, dy_10 = _box_diff(before_nudge_10, after_nudge_10)
+    record(fixture_results, 'C8', abs(dx_10 - 10) <= 1.0 and abs(dy_10) <= 1.0, f'dx={dx_10:.2f}, dy={dy_10:.2f}')
+
+    # C9/C10: Undo/Redo
+    before_undo = _to_box(target) if target else None
+    page.keyboard.press('ControlOrMeta+z')
+    page.wait_for_timeout(140)
+    after_undo = _to_box(target) if target else None
+    undo_dx, undo_dy = _box_diff(before_undo, after_undo)
+    undo_ok = abs(undo_dx) >= 1 or abs(undo_dy) >= 1
+    record(fixture_results, 'C9', undo_ok, f'dx={undo_dx:.2f}, dy={undo_dy:.2f}')
+
+    before_redo = _to_box(target) if target else None
+    page.keyboard.press('ControlOrMeta+y')
+    page.wait_for_timeout(140)
+    after_redo = _to_box(target) if target else None
+    redo_dx, redo_dy = _box_diff(before_redo, after_redo)
+    redo_ok = abs(redo_dx) >= 1 or abs(redo_dy) >= 1
+    record(fixture_results, 'C10', redo_ok, f'dx={redo_dx:.2f}, dy={redo_dy:.2f}')
+
+    return {'fixture_id': fixture_id, 'results': fixture_results}
+
+
+def save_daily_report(payload: dict[str, Any]) -> Path:
+    today = datetime.now(timezone.utc).date().isoformat()
+    report_path = REPORTS_DIR / f'WEBAPP_PHASE8_REGRESSION_RESULTS_{today}.json'
+    existing: dict[str, Any] = {'date': today, 'runs': []}
+    if report_path.exists():
+        try:
+            existing = json.loads(report_path.read_text(encoding='utf-8'))
+        except Exception:
+            existing = {'date': today, 'runs': []}
+    if not isinstance(existing.get('runs'), list):
+        existing['runs'] = []
+    existing['date'] = today
+    existing['runs'].append(payload)
+    report_path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding='utf-8')
+    return report_path
 
 
 def main() -> None:
-    results: list[dict] = []
+    started_at = datetime.now(timezone.utc).isoformat()
+    fixture_ids = _collect_fixture_ids()
+    all_fixture_results: list[dict[str, Any]] = []
+
     try:
         from playwright.sync_api import sync_playwright
     except Exception as error:  # noqa: BLE001
-        payload = {'status': 'unavailable', 'error': str(error), 'results': results}
+        payload = {
+            'status': 'dependency_missing',
+            'error_type': 'dependency_missing',
+            'error': str(error),
+            'missing_dependency': 'playwright',
+            'started_at': started_at,
+            'fixture_results': [],
+            'summary': {'passed': 0, 'failed': 0, 'total': 0},
+        }
+        report_path = save_daily_report(payload)
+        payload['report_path'] = str(report_path.relative_to(ROOT))
         print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return
+        raise SystemExit(2)
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, executable_path='/usr/bin/chromium', args=['--no-sandbox'])
-        page = browser.new_page(viewport={'width': 1700, 'height': 1200})
-        page.goto(INDEX.resolve().as_uri(), wait_until='load', timeout=30000)
-        page.wait_for_timeout(700)
-        page.locator('#loadFixtureButton').click()
-        page.wait_for_timeout(1200)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, executable_path='/usr/bin/chromium', args=['--no-sandbox'])
+            page = browser.new_page(viewport={'width': 1700, 'height': 1200})
+            page.goto(INDEX.resolve().as_uri(), wait_until='load', timeout=30000)
+            page.wait_for_timeout(700)
 
-        layer_items = page.locator('[data-layer-uid]')
-        layer_count = layer_items.count()
-        record(results, 'fixture_loaded_layers_exist', layer_count > 0, f'layer_count={layer_count}')
-        if layer_count > 0:
-            first_uid = layer_items.nth(0).get_attribute('data-layer-uid') or ''
-            layer_items.nth(0).click()
-            page.wait_for_timeout(150)
-            active_uid = page.locator('.layer-item.is-active').first.get_attribute('data-layer-uid') or ''
-            record(results, 'layer_click_keeps_active_uid', active_uid == first_uid, f'expected={first_uid}, actual={active_uid}')
+            for fixture_id in fixture_ids:
+                fixture_payload = run_fixture_cases(page, fixture_id)
+                all_fixture_results.append(fixture_payload)
 
-        frame = page.frame_locator('#previewFrame')
-        canvas_nodes = frame.locator('[data-node-uid]')
-        canvas_count = canvas_nodes.count()
-        record(results, 'canvas_nodes_exist', canvas_count > 0, f'canvas_nodes={canvas_count}')
-        if canvas_count > 0:
-            canvas_uid = canvas_nodes.first.get_attribute('data-node-uid') or ''
-            canvas_nodes.first.click()
-            page.wait_for_timeout(250)
-            active_uid = page.locator('.layer-item.is-active').first.get_attribute('data-layer-uid') or ''
-            record(results, 'canvas_click_syncs_layer_panel', active_uid == canvas_uid, f'expected={canvas_uid}, actual={active_uid}')
+            browser.close()
+    except Exception as error:  # noqa: BLE001
+        payload = {
+            'status': 'runtime_error',
+            'error_type': 'runtime_error',
+            'error': str(error),
+            'traceback': traceback.format_exc(),
+            'started_at': started_at,
+            'fixture_results': all_fixture_results,
+            'summary': {'passed': 0, 'failed': 1, 'total': 1},
+        }
+        report_path = save_daily_report(payload)
+        payload['report_path'] = str(report_path.relative_to(ROOT))
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        raise SystemExit(3)
 
-        if layer_count > 0:
-            layer_items.nth(0).click()
-            page.wait_for_timeout(100)
-            page.locator('#duplicateButton').click()
-            page.wait_for_timeout(250)
-            duplicated_count = page.locator('.layer-item.is-active').count()
-            record(results, 'duplicate_keeps_layer_sync', duplicated_count >= 1, f'active_count={duplicated_count}')
+    flat_results = [item for fixture in all_fixture_results for item in fixture['results']]
+    passed = sum(1 for item in flat_results if item['ok'])
+    failed = sum(1 for item in flat_results if not item['ok'])
 
-            page.locator('#deleteButton').click()
-            page.wait_for_timeout(200)
-            page.locator('#undoButton').click()
-            page.wait_for_timeout(250)
-            restored_count = page.locator('[data-layer-uid]').count()
-            record(results, 'delete_then_undo_restores_layers', restored_count >= layer_count, f'before={layer_count}, after_undo={restored_count}')
+    fixture_summary: dict[str, str] = {}
+    for fixture in all_fixture_results:
+        fixture_ok = all(case['ok'] for case in fixture['results'])
+        fixture_summary[fixture['fixture_id']] = 'PASS' if fixture_ok else 'FAIL'
 
-        browser.close()
+    f05_item = next((fixture for fixture in all_fixture_results if fixture['fixture_id'] == 'F05'), None)
+    f05_gate_ok = bool(f05_item and all(case['ok'] for case in f05_item['results']))
+    f05_failed_cases = [case['id'] for case in (f05_item or {}).get('results', []) if not case['ok']]
 
     payload = {
-        'status': 'ok',
-        'results': results,
-        'passed': sum(1 for item in results if item['ok']),
-        'failed': sum(1 for item in results if not item['ok']),
+        'status': 'ok' if failed == 0 else 'scenario_failed',
+        'error_type': 'none' if failed == 0 else 'scenario_failed',
+        'started_at': started_at,
+        'finished_at': datetime.now(timezone.utc).isoformat(),
+        'fixture_results': all_fixture_results,
+        'fixture_summary': fixture_summary,
+        'f05_gate': {
+            'ok': f05_gate_ok,
+            'failed_cases': f05_failed_cases,
+            'message': 'F05 회귀 금지 게이트 통과' if f05_gate_ok else f'⚠️ F05 회귀 금지 게이트 실패: {", ".join(f05_failed_cases) or "unknown"}',
+        },
+        'summary': {
+            'passed': passed,
+            'failed': failed,
+            'total': len(flat_results),
+        },
     }
+    report_path = save_daily_report(payload)
+    payload['report_path'] = str(report_path.relative_to(ROOT))
+
+    if not f05_gate_ok:
+        print('⚠️ [F05 GATE] 회귀 금지 fixture(F05)에서 실패가 감지되었습니다.', flush=True)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+    if not f05_gate_ok:
+        raise SystemExit(4)
+    if failed > 0:
+        raise SystemExit(1)
 
 
 if __name__ == '__main__':

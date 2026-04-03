@@ -29,6 +29,26 @@
 | C9 | 각 동작 직후 Undo 1회 | 직전 동작 1스텝 되돌림 | ☐ | ☐ | ☐ | ☐ | ☐ |
 | C10 | Undo 직후 Redo 1회 | 직전 Undo 1스텝 재적용 | ☐ | ☐ | ☐ | ☐ | ☐ |
 
+## 자동 회귀 파이프라인 실행 방법
+
+```bash
+python3 scripts/run_phase8_regression_pipeline.py
+```
+
+- 파이프라인은 아래를 **순서대로 자동 실행**합니다.
+  1. `scripts/validate_phase6.py` (정적/정책/기본 smoke)
+  2. `scripts/regression_layer_canvas_sync.py` (F01~F05 + C1~C10 최소 자동 시나리오)
+- 의존성(`bs4`, `lxml`, `playwright`) 누락 시 `dependency_missing`으로 실패 원인을 구분해 출력합니다.
+- 시나리오 실패 시 `scenario_failed`로 분류하고 실패 케이스 ID(C1~C10)를 JSON에 기록합니다.
+- 결과는 날짜별 파일에 누적됩니다.
+  - `reports/WEBAPP_PHASE8_PIPELINE_RESULTS_YYYY-MM-DD.json`
+  - `reports/WEBAPP_PHASE8_REGRESSION_RESULTS_YYYY-MM-DD.json`
+
+## F05 회귀 금지 게이트
+
+- F05는 별도 게이트(`f05_gate`)로 분리되어 평가됩니다.
+- F05에서 C1~C10 중 하나라도 실패하면 즉시 경고(`⚠️`)를 출력하고 파이프라인을 실패 처리합니다.
+
 ## 기록 규칙
 - C1~C10이 모두 체크되면 해당 fixture PASS.
 - 하나라도 실패하면 FAIL로 기록하고, 어떤 command(`duplicate`, `delete`, `nudge-selection`, `drag-move`, `resize-drag`)에서 어긋났는지 메모.
