@@ -264,6 +264,14 @@
           <div id="batchSelectionSummary" class="mini-summary">1개 이하 선택</div>
         </div>
         <div class="style-form">
+          <label class="field">
+            <span>좌표 기준</span>
+            <select id="geometryCoordModeSelect">
+              <option value="relative">상대 좌표 (요소 이동값)</option>
+              <option value="absolute">절대 좌표 (문서 좌상단 기준)</option>
+            </select>
+          </label>
+          <div id="geometryRuleHint" class="mini-summary">다중 선택에서 값이 다르면 "혼합"으로 표시됩니다.</div>
           <div class="style-grid">
             <label class="field field--mini">
               <span>X</span>
