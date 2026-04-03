@@ -14,6 +14,11 @@ import {
   truncate,
 } from '../utils.js';
 import { collectSlotCandidates } from '../core/slot-detector.js';
+import { beginMarqueeInteraction, applyMarqueeInteraction } from './canvas-interaction/select-interaction.js';
+import { beginMoveInteraction, applyMoveInteraction } from './canvas-interaction/move-interaction.js';
+import { beginResizeInteraction, applyResizeInteraction } from './canvas-interaction/resize-interaction.js';
+import { duplicateSelection } from './canvas-interaction/duplicate-command.js';
+import { deleteSelection } from './canvas-interaction/delete-command.js';
 
 const FRAME_CSS_URL_RE = /url\((['"]?)([^"'()]+)\1\)/gi;
 
@@ -1175,34 +1180,24 @@ export function createFrameEditor({
   }
 
   function duplicateSelected() {
-    const target = selectedElement;
-    if (!target) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
-    const clone = target.cloneNode(true);
-    clone.dataset.nodeUid = nextId('node');
-    clone.removeAttribute('id');
-    target.after(clone);
-    const state = readTransformState(target);
-    writeTransformState(clone, state.tx + 20, state.ty + 20);
-    clone.dataset.editorModified = '1';
-    modifiedSlots.add(clone.dataset.nodeUid);
-    redetect({ preserveSelectionUids: [clone.dataset.nodeUid] });
-    emitMutation('duplicate');
-    return { ok: true, message: '선택 요소를 복제했습니다.' };
+    return duplicateSelection({
+      selectedElement: () => selectedElement,
+      readTransformState,
+      writeTransformState,
+      nextId,
+      modifiedSlots: () => modifiedSlots,
+      redetect,
+      emitMutation,
+    });
   }
 
   function deleteSelected() {
-    const targets = uniqueConnectedElements(selectedElements);
-    if (!targets.length) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
-    let removed = 0;
-    for (const element of targets) {
-      if (!element.isConnected || element === doc.body || element.tagName === 'HTML' || element.tagName === 'BODY') continue;
-      element.remove();
-      removed += 1;
-    }
-    if (!removed) return { ok: false, message: '삭제할 수 있는 요소가 없습니다.' };
-    redetect({ preserveSelectionUids: [] });
-    emitMutation('delete');
-    return { ok: true, message: `선택 요소 ${removed}개를 삭제했습니다.` };
+    return deleteSelection({
+      selectedElements: () => uniqueConnectedElements(selectedElements),
+      doc,
+      redetect,
+      emitMutation,
+    });
   }
 
   function addElement(kind) {
@@ -1251,6 +1246,15 @@ export function createFrameEditor({
     emitState();
     emitMutation(`z-${direction}`);
     return { ok: true, message: direction === 'forward' ? '선택 요소를 앞으로 보냈습니다.' : '선택 요소를 뒤로 보냈습니다.' };
+  }
+
+  function nudgeSelectedElements(dx = 0, dy = 0) {
+    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
+    if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
+    for (const element of targets) shiftElementBy(element, dx, dy);
+    emitState();
+    emitMutation('nudge-selection');
+    return { ok: true, message: `선택 요소 ${targets.length}개를 ${dx}, ${dy}만큼 이동했습니다.` };
   }
 
   function nudgeImagePosition(dx = 0, dy = 0) {
@@ -1824,122 +1828,81 @@ export function createFrameEditor({
   }
 
   function beginMoveDrag(target, event) {
-    if (!target || isLockedElement(target)) return false;
-    if (!selectedElements.some((element) => element.dataset.nodeUid === target.dataset.nodeUid)) {
-      selectElements([target], { silent: true });
-    }
-    const elements = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
-    if (!elements.length) return false;
-    const snapshots = elements.map((element) => ({
-      element,
-      rect: element.getBoundingClientRect(),
-      transform: readTransformState(element),
-    }));
-    const union = unionRect(snapshots.map((item) => item.rect));
-    const excluded = new Set(elements.map((element) => element.dataset.nodeUid));
-    dragState = {
-      mode: 'move',
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      moved: false,
-      snapshots,
-      union,
-      snapCandidates: buildSnapCandidates(excluded),
-    };
+    const nextState = beginMoveInteraction({
+      target,
+      event,
+      isLockedElement,
+      selectedElements: () => selectedElements,
+      selectElements,
+      uniqueConnectedElements,
+      readTransformState,
+      unionRect,
+      buildSnapCandidates,
+    });
+    if (!nextState) return false;
+    dragState = nextState;
     return true;
   }
 
   function beginMarqueeDrag(event) {
-    dragState = {
-      mode: 'marquee',
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      moved: false,
-      additive: !!(event.ctrlKey || event.metaKey || event.shiftKey),
-      seedSelection: uniqueConnectedElements(selectedElements),
-    };
+    dragState = beginMarqueeInteraction({
+      event,
+      selectedElements: () => selectedElements,
+      uniqueConnectedElements,
+    });
     return true;
   }
 
   function updateMarqueeSelection(endX, endY) {
-    if (!dragState || dragState.mode !== 'marquee') return;
-    const rect = normalizeClientRect(dragState.startX, dragState.startY, endX, endY);
-    showMarqueeRect(rect);
-    const hits = collectInteractiveLayers()
-      .filter((element) => !isLockedElement(element) && !isHiddenElement(element))
-      .filter((element) => {
-        const box = element.getBoundingClientRect();
-        return box.width > 1 && box.height > 1 && rectIntersects(box, rect);
-      });
-    const next = dragState.additive ? uniqueConnectedElements([...dragState.seedSelection, ...hits]) : uniqueConnectedElements(hits);
-    selectElements(next, { silent: true });
+    applyMarqueeInteraction({
+      dragState,
+      endX,
+      endY,
+      showMarqueeRect,
+      collectInteractiveLayers,
+      isLockedElement,
+      isHiddenElement,
+      rectIntersects,
+      uniqueConnectedElements,
+      selectElements,
+    });
   }
 
   function updateMoveDrag(clientX, clientY) {
-    if (!dragState || dragState.mode !== 'move') return;
-    const rawDx = clientX - dragState.startX;
-    const rawDy = clientY - dragState.startY;
-    const snapped = computeSnapAdjustment(dragState.union, rawDx, rawDy, dragState.snapCandidates);
-    for (const item of dragState.snapshots) {
-      writeTransformState(item.element, item.transform.tx + snapped.dx, item.transform.ty + snapped.dy);
-    }
-    showSnapLines({ x: snapped.guideX, y: snapped.guideY });
-    doc.documentElement.classList.add('__phase6_dragging_cursor');
-    doc.body.classList.add('__phase6_dragging_cursor');
+    applyMoveInteraction({
+      dragState,
+      clientX,
+      clientY,
+      computeSnapAdjustment,
+      writeTransformState,
+      showSnapLines,
+      doc,
+    });
   }
 
   function beginResizeDrag(event, corner) {
-    const target = selectedElement;
-    if (!target || isLockedElement(target)) return false;
-    const rect = target.getBoundingClientRect();
-    const transform = readTransformState(target);
-    const width = Number.parseFloat(win.getComputedStyle(target).width || String(rect.width)) || rect.width;
-    const height = Number.parseFloat(win.getComputedStyle(target).height || String(rect.height)) || rect.height;
-    resizeState = {
-      pointerId: event.pointerId,
+    const nextState = beginResizeInteraction({
+      event,
       corner,
-      target,
-      startX: event.clientX,
-      startY: event.clientY,
-      startWidth: width,
-      startHeight: height,
-      startTx: transform.tx,
-      startTy: transform.ty,
-      moved: false,
-    };
+      selectedElement: () => selectedElement,
+      isLockedElement,
+      readTransformState,
+      win,
+    });
+    if (!nextState) return false;
+    resizeState = nextState;
     return true;
   }
 
   function updateResizeDrag(event) {
-    if (!resizeState || resizeState.pointerId !== event.pointerId) return;
-    const dx = event.clientX - resizeState.startX;
-    const dy = event.clientY - resizeState.startY;
-    if (!resizeState.moved && Math.hypot(dx, dy) < 2) return;
-    resizeState.moved = true;
-    const { corner, target } = resizeState;
-    let width = resizeState.startWidth;
-    let height = resizeState.startHeight;
-    let tx = resizeState.startTx;
-    let ty = resizeState.startTy;
-    if (corner.includes('e')) width += dx;
-    if (corner.includes('s')) height += dy;
-    if (corner.includes('w')) {
-      width -= dx;
-      tx += dx;
-    }
-    if (corner.includes('n')) {
-      height -= dy;
-      ty += dy;
-    }
-    width = Math.max(8, width);
-    height = Math.max(8, height);
-    setInlineStyle(target, { width: `${Math.round(width)}px`, height: `${Math.round(height)}px` });
-    writeTransformState(target, tx, ty);
-    target.dataset.editorModified = '1';
-    if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
-    updateResizeOverlay();
+    applyResizeInteraction({
+      event,
+      resizeState,
+      setInlineStyle,
+      writeTransformState,
+      modifiedSlots: () => modifiedSlots,
+      updateResizeOverlay,
+    });
   }
 
   function finishResizeDrag(event) {
@@ -2044,35 +2007,69 @@ export function createFrameEditor({
     }
   }
 
+  function executeCommand(command, payload = {}) {
+    if (command === 'duplicate') return duplicateSelected();
+    if (command === 'delete') return deleteSelected();
+    if (command === 'nudge-selection') return nudgeSelectedElements(payload.dx || 0, payload.dy || 0);
+    if (command === 'undo' || command === 'redo' || command === 'save-edited') {
+      onShortcut(command);
+      return { ok: true, message: command };
+    }
+    return { ok: false, message: `지원하지 않는 명령: ${command}` };
+  }
+
   function handleKeydown(event) {
     const withModifier = event.ctrlKey || event.metaKey;
     if (withModifier && !event.altKey) {
       const key = String(event.key || '').toLowerCase();
       if (key === 'z') {
         event.preventDefault();
-        onShortcut(event.shiftKey ? 'redo' : 'undo');
+        executeCommand(event.shiftKey ? 'redo' : 'undo');
         return;
       }
       if (key === 'y') {
         event.preventDefault();
-        onShortcut('redo');
+        executeCommand('redo');
         return;
       }
       if (key === 's') {
         event.preventDefault();
-        onShortcut('save-edited');
+        executeCommand('save-edited');
         return;
       }
       if (key === 'd') {
         event.preventDefault();
-        onStatus(duplicateSelected().message);
+        onStatus(executeCommand('duplicate').message);
         return;
       }
     }
     if (!withModifier && !editingTextElement && (event.key === 'Delete' || event.key === 'Backspace')) {
       event.preventDefault();
-      onStatus(deleteSelected().message);
+      onStatus(executeCommand('delete').message);
       return;
+    }
+    if (!withModifier && !editingTextElement) {
+      const delta = event.shiftKey ? 10 : 1;
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        onStatus(executeCommand('nudge-selection', { dx: -delta, dy: 0 }).message);
+        return;
+      }
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        onStatus(executeCommand('nudge-selection', { dx: delta, dy: 0 }).message);
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        onStatus(executeCommand('nudge-selection', { dx: 0, dy: -delta }).message);
+        return;
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        onStatus(executeCommand('nudge-selection', { dx: 0, dy: delta }).message);
+        return;
+      }
     }
     if (!editingTextElement) return;
     if (event.key === 'Escape') {
@@ -2173,6 +2170,7 @@ export function createFrameEditor({
     bringSelectedForward: () => reorderSelected('forward'),
     sendSelectedBackward: () => reorderSelected('backward'),
     nudgeSelectedImage: ({ dx = 0, dy = 0 } = {}) => nudgeImagePosition(dx, dy),
+    executeCommand,
     getEditedHtml: serializeEditedHtml,
     getCurrentPortableHtml: async () => {
       const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
