@@ -312,8 +312,8 @@ def main() -> None:
 
     if dependency['ok']:
         steps.append({'name': 'dependency_check', 'status': 'PASS', 'error_type': 'none'})
-        validate_result = run_json_script('scripts/validate_phase6.py')
-        steps.append({'name': 'validate_phase6', 'status': 'PASS' if validate_result['status'] == 'ok' else 'FAIL', 'error_type': validate_result['error_type']})
+        validate_result = run_json_script('scripts/validate_phase8.py')
+        steps.append({'name': 'validate_phase8', 'status': 'PASS' if validate_result['status'] == 'ok' else 'FAIL', 'error_type': validate_result['error_type']})
 
         regression_result = run_json_script('scripts/regression_layer_canvas_sync.py')
         steps.append({'name': 'regression_layer_canvas_sync', 'status': 'PASS' if regression_result['status'] == 'ok' else 'FAIL', 'error_type': regression_result['error_type']})
@@ -328,13 +328,13 @@ def main() -> None:
         )
         scenario_section = {
             'status': 'executed',
-            'validate_phase6': validate_result['status'],
+            'validate_phase8': validate_result['status'],
             'regression_layer_canvas_sync': regression_result['status'],
         }
     else:
         steps.append({'name': 'dependency_check', 'status': 'FAIL', 'missing': dependency['missing'], 'error_type': 'dependency_missing'})
         validate_result = {
-            'script': 'scripts/validate_phase6.py',
+            'script': 'scripts/validate_phase8.py',
             'returncode': None,
             'status': 'skipped',
             'error_type': 'not_run',
@@ -349,7 +349,7 @@ def main() -> None:
             'stdout_tail': '',
             'stderr_tail': '',
         }
-        steps.append({'name': 'validate_phase6', 'status': 'NOT_RUN', 'error_type': 'not_run'})
+        steps.append({'name': 'validate_phase8', 'status': 'NOT_RUN', 'error_type': 'not_run'})
         steps.append({'name': 'regression_layer_canvas_sync', 'status': 'NOT_RUN', 'error_type': 'not_run'})
         f05_gate = {'ok': False, 'status': 'not_run', 'message': '의존성 부족으로 F05 게이트를 실행하지 못했습니다.'}
         scenario_section = {
@@ -392,7 +392,7 @@ def main() -> None:
         'quality_low_reasons': quality_low_reasons,
         'steps': steps,
         'f05_gate': f05_gate,
-        'validate_phase6': compact_script_result(validate_result),
+        'validate_phase8': compact_script_result(validate_result),
         'regression_layer_canvas_sync': compact_script_result(regression_result),
         'summary': {
             'overall_status': 'PASS' if overall_ok else 'FAIL',

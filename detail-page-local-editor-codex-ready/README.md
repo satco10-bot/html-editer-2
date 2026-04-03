@@ -3,8 +3,8 @@
 이 폴더는 **GitHub에 그대로 올려서 Codex에게 맡기기 쉽게** 정리한 버전입니다.
 
 ## 현재 기준(최신) 핵심 기능 요약
-- 이 버전은 **phase6 로컬 워크플로우를 유지**하면서, 직접 편집/출력 기능을 최신 기준으로 보강한 상태입니다.
-- 검증 호환 키워드: **6단계**, **숨김/잠금**, **스냅**, **Preset**.
+- 이 버전은 **phase8 리부트 로컬 워크플로우를 유지**하면서, 직접 편집/출력 기능을 최신 기준으로 보강한 상태입니다.
+- 검증 호환 키워드: **리부트**, **숨김/잠금**, **스냅**, **Preset**.
 - 캔버스 직접 편집: 선택/이동/리사이즈, 요소 추가(텍스트/박스/슬롯), 복제/삭제, 그룹 묶기/해제
 - 정밀 배치: XYWH 숫자 적용, z-order(앞으로/뒤로), Shift+드래그 다중선택, 스냅 가이드
 - 출력: JPG, 선택 PNG, 1x/2x/3x 배율, Export Preset
@@ -46,7 +46,7 @@
 ```bash
 python3 scripts/build_local_bundle.py
 node --check app.bundle.js
-python3 scripts/validate_phase6.py
+python3 scripts/validate_phase8.py
 ```
 
 ### `build_local_bundle` 실행 기준(입력/출력)
