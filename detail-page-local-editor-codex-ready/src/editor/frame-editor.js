@@ -1865,6 +1865,63 @@ export function createFrameEditor({
     return { ok: false, message: '지원하지 않는 정렬 액션입니다.' };
   }
 
+  function applyStackLayout({ direction = 'vertical', gap = 24, align = 'start' } = {}) {
+    const axis = direction === 'horizontal' ? 'x' : 'y';
+    const crossAxis = axis === 'x' ? 'y' : 'x';
+    const normalizedGap = Number.isFinite(gap) ? Math.max(0, gap) : 24;
+    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
+    if (targets.length < 2) return { ok: false, message: '스택 정렬은 2개 이상 선택해야 합니다.' };
+    const records = targets.map((element) => ({ element, rect: element.getBoundingClientRect() }));
+    const sorted = [...records].sort((a, b) => axis === 'x' ? a.rect.left - b.rect.left : a.rect.top - b.rect.top);
+    const anchor = sorted[0].rect;
+    let cursor = axis === 'x' ? anchor.left : anchor.top;
+    for (const record of sorted) {
+      const primary = axis === 'x' ? record.rect.left : record.rect.top;
+      const secondary = axis === 'x' ? record.rect.top : record.rect.left;
+      const size = axis === 'x' ? record.rect.width : record.rect.height;
+      const crossSize = axis === 'x' ? record.rect.height : record.rect.width;
+      let targetCross = axis === 'x' ? anchor.top : anchor.left;
+      if (align === 'center') {
+        targetCross = (axis === 'x' ? anchor.top + (anchor.height - crossSize) / 2 : anchor.left + (anchor.width - crossSize) / 2);
+      } else if (align === 'end') {
+        targetCross = axis === 'x' ? anchor.bottom - crossSize : anchor.right - crossSize;
+      }
+      const deltaPrimary = cursor - primary;
+      const deltaCross = targetCross - secondary;
+      shiftElementBy(record.element, axis === 'x' ? deltaPrimary : deltaCross, axis === 'x' ? deltaCross : deltaPrimary);
+      cursor += size + normalizedGap;
+    }
+    emitState();
+    emitMutation(axis === 'x' ? 'stack-horizontal' : 'stack-vertical');
+    return { ok: true, message: `선택 요소 ${records.length}개를 ${direction === 'horizontal' ? '가로' : '세로'} 스택으로 정렬했습니다.` };
+  }
+
+  function tidySelection({ axis = 'x' } = {}) {
+    const normalizedAxis = axis === 'y' ? 'y' : 'x';
+    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
+    if (targets.length < 3) return { ok: false, message: '간격 맞춤은 3개 이상 선택해야 합니다.' };
+    const records = targets.map((element) => ({ element, rect: element.getBoundingClientRect() }));
+    const sorted = [...records].sort((a, b) => normalizedAxis === 'x' ? a.rect.left - b.rect.left : a.rect.top - b.rect.top);
+    const first = sorted[0].rect;
+    const last = sorted.at(-1).rect;
+    const totalSize = sorted.reduce((sum, record) => sum + (normalizedAxis === 'x' ? record.rect.width : record.rect.height), 0);
+    const span = normalizedAxis === 'x'
+      ? (last.left + last.width) - first.left
+      : (last.top + last.height) - first.top;
+    const gap = (span - totalSize) / (sorted.length - 1);
+    let cursor = normalizedAxis === 'x' ? first.left : first.top;
+    for (const record of sorted) {
+      const position = normalizedAxis === 'x' ? record.rect.left : record.rect.top;
+      const size = normalizedAxis === 'x' ? record.rect.width : record.rect.height;
+      const delta = cursor - position;
+      shiftElementBy(record.element, normalizedAxis === 'x' ? delta : 0, normalizedAxis === 'x' ? 0 : delta);
+      cursor += size + gap;
+    }
+    emitState();
+    emitMutation(normalizedAxis === 'x' ? 'tidy-horizontal' : 'tidy-vertical');
+    return { ok: true, message: `선택 요소 ${records.length}개의 ${normalizedAxis === 'x' ? '가로' : '세로'} 간격을 균등화했습니다.` };
+  }
+
   function applyTextStyle(patch = {}, { clear = false } = {}) {
     const targets = getTextTargets().filter((element) => !isLockedElement(element));
     if (!targets.length) return { ok: false, message: '텍스트 요소를 먼저 선택해 주세요.' };
@@ -2929,6 +2986,10 @@ export function createFrameEditor({
     if (command === 'layer-index-backward') return applyLayerIndexCommand('backward');
     if (command === 'layer-index-front') return applyLayerIndexCommand('front');
     if (command === 'layer-index-back') return applyLayerIndexCommand('back');
+    if (command === 'stack-horizontal') return applyStackLayout({ ...payload, direction: 'horizontal' });
+    if (command === 'stack-vertical') return applyStackLayout({ ...payload, direction: 'vertical' });
+    if (command === 'tidy-horizontal') return tidySelection({ axis: 'x' });
+    if (command === 'tidy-vertical') return tidySelection({ axis: 'y' });
     if (command === 'undo' || command === 'redo' || command === 'save-edited') {
       onShortcut(command);
       return { ok: true, message: command };
@@ -3150,6 +3211,8 @@ export function createFrameEditor({
     toggleTextEdit,
     applyTextStyle,
     applyBatchLayout,
+    applyStackLayout,
+    tidySelection,
     duplicateSelected,
     deleteSelected,
     groupSelected,

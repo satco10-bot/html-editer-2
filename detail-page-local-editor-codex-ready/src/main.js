@@ -71,6 +71,27 @@ const APP_STATES = Object.freeze({
 const BEGINNER_MODE_STORAGE_KEY = 'detail_editor_beginner_mode_v1';
 const ONBOARDING_COMPLETED_STORAGE_KEY = 'detail_editor_onboarding_completed_v1';
 const ONBOARDING_SAMPLE_CHECKED_STORAGE_KEY = 'detail_editor_onboarding_sample_checked_v1';
+const COMMAND_REGISTRY = Object.freeze([
+  { id: 'tool-select', label: '선택 도구', shortcut: 'V', keywords: ['선택', '화살표', 'v'], run: () => { setSelectionMode('smart'); return { ok: true, message: '선택 도구(V)로 전환했습니다.' }; } },
+  { id: 'tool-text', label: '텍스트 도구', shortcut: 'T', keywords: ['텍스트', '글자', 't'], run: () => { setSelectionMode('text'); return { ok: true, message: '텍스트 도구(T)로 전환했습니다.' }; } },
+  { id: 'tool-box', label: '박스 도구', shortcut: 'R', keywords: ['박스', '사각형', 'r'], run: () => { setSelectionMode('box'); return { ok: true, message: '박스 도구(R)로 전환했습니다.' }; } },
+  { id: 'duplicate', label: '선택 복제', shortcut: 'Ctrl/Cmd + D', keywords: ['복제', '복사', 'duplicate'], run: () => executeEditorCommand('duplicate') },
+  { id: 'delete', label: '선택 삭제', shortcut: 'Delete', keywords: ['삭제', '지우기', 'remove'], run: () => executeEditorCommand('delete') },
+  { id: 'group', label: '그룹 묶기', shortcut: 'Ctrl/Cmd + G', keywords: ['그룹', '묶기'], run: () => executeEditorCommand('group-selection') },
+  { id: 'ungroup', label: '그룹 해제', shortcut: 'Shift + Ctrl/Cmd + G', keywords: ['그룹해제', '해제', 'ungroup'], run: () => executeEditorCommand('ungroup-selection') },
+  { id: 'save-edited', label: '문서 저장', shortcut: 'Ctrl/Cmd + S', keywords: ['저장', '세이브', 'save'], run: () => { downloadEditedHtml().catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`)); return { ok: true, message: '문서 저장을 실행했습니다.' }; } },
+  { id: 'export-png', label: '전체 PNG 내보내기', shortcut: '-', keywords: ['png', '내보내기', '이미지'], run: () => { exportFullPng().catch((error) => setStatus(`PNG 내보내기 오류: ${error?.message || error}`)); return { ok: true, message: '전체 PNG 내보내기를 실행했습니다.' }; } },
+  { id: 'section-add', label: '섹션 추가', shortcut: '-', keywords: ['섹션 추가', 'section', '블록 추가'], run: () => {
+    if (!activeEditor) return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
+    const uid = store.getState().editorMeta?.selectedSectionUid || '';
+    return activeEditor.addSectionAfterUid(uid);
+  } },
+  { id: 'stack-horizontal', label: '가로 스택 정렬', shortcut: '-', keywords: ['가로', 'stack', '정렬'], run: () => applyStackCommand('horizontal') },
+  { id: 'stack-vertical', label: '세로 스택 정렬', shortcut: '-', keywords: ['세로', 'stack', '정렬'], run: () => applyStackCommand('vertical') },
+  { id: 'tidy-horizontal', label: '가로 간격 맞춤', shortcut: '-', keywords: ['가로 간격', 'tidy', '균등'], run: () => applyTidyCommand('x') },
+  { id: 'tidy-vertical', label: '세로 간격 맞춤', shortcut: '-', keywords: ['세로 간격', 'tidy', '균등'], run: () => applyTidyCommand('y') },
+  { id: 'toggle-shortcut-help', label: '단축키 치트시트 열기/닫기', shortcut: '?', keywords: ['도움말', '단축키', '치트시트'], run: () => ({ ok: true, message: toggleShortcutHelp() ? '단축키 치트시트를 열었습니다.' : '단축키 치트시트를 닫았습니다.' }) },
+]);
 const BEGINNER_TUTORIAL_STEPS = Object.freeze([
   {
     id: 'slot-select',
@@ -94,6 +115,9 @@ const BEGINNER_TUTORIAL_STEPS = Object.freeze([
 let isBeginnerMode = false;
 let beginnerTutorialStepIndex = 0;
 let onboardingCompleted = false;
+let lastFocusedBeforeCommandPalette = null;
+let commandPaletteResults = [];
+let commandPaletteActiveIndex = 0;
 
 const historyState = {
   baseSnapshot: null,
@@ -293,7 +317,20 @@ const elements = {
   textAlignButtons: Array.from(document.querySelectorAll('[data-text-align]')),
   canvasActionButtons: Array.from(document.querySelectorAll('[data-canvas-action]')),
   shortcutHelpOverlay: document.getElementById('shortcutHelpOverlay'),
+  shortcutHelpList: document.getElementById('shortcutHelpList'),
   shortcutHelpCloseButton: document.getElementById('shortcutHelpCloseButton'),
+  commandPaletteOverlay: document.getElementById('commandPaletteOverlay'),
+  commandPaletteCloseButton: document.getElementById('commandPaletteCloseButton'),
+  commandPaletteInput: document.getElementById('commandPaletteInput'),
+  commandPaletteList: document.getElementById('commandPaletteList'),
+  commandPaletteRunButton: document.getElementById('commandPaletteRunButton'),
+  stackDirectionSelect: document.getElementById('stackDirectionSelect'),
+  stackGapInput: document.getElementById('stackGapInput'),
+  stackAlignSelect: document.getElementById('stackAlignSelect'),
+  stackHorizontalButton: document.getElementById('stackHorizontalButton'),
+  stackVerticalButton: document.getElementById('stackVerticalButton'),
+  tidyHorizontalButton: document.getElementById('tidyHorizontalButton'),
+  tidyVerticalButton: document.getElementById('tidyVerticalButton'),
   beginnerModeToggle: document.getElementById('beginnerModeToggle'),
   advancedTopbarPanel: document.getElementById('advancedTopbarPanel'),
   beginnerTutorialTooltip: document.getElementById('beginnerTutorialTooltip'),
@@ -613,6 +650,119 @@ function applyShortcutTooltips() {
       if (!originalAria.includes('(')) node.setAttribute('aria-label', `${originalAria} ${label.match(/\(.+\)/)?.[0] || ''}`.trim());
     }
   }
+}
+
+function renderShortcutHelpList() {
+  if (!elements.shortcutHelpList) return;
+  elements.shortcutHelpList.innerHTML = '';
+  for (const item of COMMAND_REGISTRY) {
+    if (!item.shortcut || item.shortcut === '-') continue;
+    const li = document.createElement('li');
+    const kbd = document.createElement('kbd');
+    kbd.textContent = item.shortcut;
+    const label = document.createElement('span');
+    label.textContent = item.label;
+    li.append(kbd, label);
+    elements.shortcutHelpList.append(li);
+  }
+}
+
+function getCommandPaletteFocusable() {
+  if (!elements.commandPaletteOverlay) return [];
+  return Array.from(elements.commandPaletteOverlay.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])'))
+    .filter((node) => node instanceof HTMLElement && !node.disabled && !node.hidden && node.tabIndex >= 0);
+}
+
+function handleCommandPaletteFocusTrap(event) {
+  if (!elements.commandPaletteOverlay || elements.commandPaletteOverlay.hidden || event.key !== 'Tab') return;
+  const focusable = getCommandPaletteFocusable();
+  if (focusable.length < 1) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+  if (event.shiftKey && active === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function performCommandAction(commandId) {
+  const command = COMMAND_REGISTRY.find((item) => item.id === commandId);
+  if (!command) return { ok: false, message: '명령을 찾지 못했습니다.' };
+  const result = command.run?.() || { ok: false, message: '명령 실행기를 찾지 못했습니다.' };
+  if (result?.message) setStatus(result.message);
+  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+  return result;
+}
+
+function filterCommandPalette(query) {
+  const normalized = String(query || '').trim().toLowerCase();
+  if (!normalized) return [...COMMAND_REGISTRY];
+  return COMMAND_REGISTRY.filter((item) => {
+    const target = [item.label, item.shortcut, ...(item.keywords || [])].join(' ').toLowerCase();
+    return target.includes(normalized);
+  });
+}
+
+function renderCommandPaletteResults() {
+  if (!elements.commandPaletteList) return;
+  elements.commandPaletteList.innerHTML = '';
+  if (!commandPaletteResults.length) {
+    const li = document.createElement('li');
+    li.className = 'command-palette__item';
+    li.textContent = '검색 결과가 없습니다.';
+    elements.commandPaletteList.append(li);
+    return;
+  }
+  commandPaletteActiveIndex = Math.max(0, Math.min(commandPaletteActiveIndex, commandPaletteResults.length - 1));
+  commandPaletteResults.forEach((item, index) => {
+    const li = document.createElement('li');
+    li.className = `command-palette__item${index === commandPaletteActiveIndex ? ' is-active' : ''}`;
+    li.setAttribute('role', 'option');
+    li.setAttribute('aria-selected', index === commandPaletteActiveIndex ? 'true' : 'false');
+    li.dataset.commandId = item.id;
+    li.innerHTML = `<strong>${item.label}</strong><span class="topbar__sub">${item.shortcut || '-'}</span>`;
+    li.addEventListener('click', () => {
+      commandPaletteActiveIndex = index;
+      runActiveCommandPaletteItem();
+    });
+    elements.commandPaletteList.append(li);
+  });
+}
+
+function runActiveCommandPaletteItem() {
+  const selected = commandPaletteResults[commandPaletteActiveIndex];
+  if (!selected) return;
+  const result = performCommandAction(selected.id);
+  if (result?.ok) toggleCommandPalette(false);
+}
+
+function updateCommandPaletteResults() {
+  commandPaletteResults = filterCommandPalette(elements.commandPaletteInput?.value || '');
+  commandPaletteActiveIndex = 0;
+  renderCommandPaletteResults();
+}
+
+function toggleCommandPalette(forceOpen = null) {
+  const overlay = elements.commandPaletteOverlay;
+  if (!overlay) return false;
+  const shouldOpen = forceOpen == null ? overlay.hidden : !!forceOpen;
+  overlay.hidden = !shouldOpen;
+  if (shouldOpen) {
+    lastFocusedBeforeCommandPalette = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (elements.commandPaletteInput) {
+      elements.commandPaletteInput.value = '';
+      updateCommandPaletteResults();
+      elements.commandPaletteInput.focus();
+    }
+    setStatus('명령 팔레트를 열었습니다. 검색 후 Enter를 누르세요.');
+  } else if (lastFocusedBeforeCommandPalette && typeof lastFocusedBeforeCommandPalette.focus === 'function') {
+    lastFocusedBeforeCommandPalette.focus();
+  }
+  return shouldOpen;
 }
 
 function evaluateLocalBootEnvironment() {
@@ -1517,6 +1667,11 @@ function renderShell(state) {
     const needed = requiresMany ? 2 : 1;
     button.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < needed;
   }
+  const selectionCount = Number(state.editorMeta?.selectionCount || 0);
+  if (elements.stackHorizontalButton) elements.stackHorizontalButton.disabled = !hasEditor || selectionCount < 2;
+  if (elements.stackVerticalButton) elements.stackVerticalButton.disabled = !hasEditor || selectionCount < 2;
+  if (elements.tidyHorizontalButton) elements.tidyHorizontalButton.disabled = !hasEditor || selectionCount < 3;
+  if (elements.tidyVerticalButton) elements.tidyVerticalButton.disabled = !hasEditor || selectionCount < 3;
   for (const button of elements.downloadEditedButtons) {
     button.disabled = !hasProject;
   }
@@ -2034,6 +2189,28 @@ function applyBatchAction(action) {
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 }
 
+function applyStackCommand(direction = 'vertical') {
+  if (!activeEditor) return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
+  const gap = Number.parseFloat(elements.stackGapInput?.value || '24');
+  const align = elements.stackAlignSelect?.value || 'start';
+  const result = activeEditor.applyStackLayout({
+    direction,
+    gap: Number.isFinite(gap) ? gap : 24,
+    align,
+  });
+  setStatus(result.message);
+  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+  return result;
+}
+
+function applyTidyCommand(axis = 'x') {
+  if (!activeEditor) return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
+  const result = activeEditor.tidySelection({ axis });
+  setStatus(result.message);
+  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+  return result;
+}
+
 async function reloadCodeFromEditor() {
   const project = store.getState().project;
   if (!project) return setStatus('먼저 프로젝트를 열어 주세요.');
@@ -2093,6 +2270,7 @@ function safeBoot() {
     refreshLauncherRecentButton();
     const bootEnvironmentReport = evaluateLocalBootEnvironment();
     renderLocalModeNotice(elements.localModeNotice, bootEnvironmentReport);
+    renderShortcutHelpList();
     if (bootEnvironmentReport.errorCount || bootEnvironmentReport.warningCount) {
       setStatus(`환경 점검: 오류 ${bootEnvironmentReport.errorCount}개 · 경고 ${bootEnvironmentReport.warningCount}개`);
     }
@@ -2177,6 +2355,27 @@ for (const button of elements.actionButtons) {
   });
 }
 for (const button of elements.batchActionButtons) button.addEventListener('click', () => applyBatchAction(button.dataset.batchAction));
+elements.stackHorizontalButton?.addEventListener('click', () => applyStackCommand('horizontal'));
+elements.stackVerticalButton?.addEventListener('click', () => applyStackCommand('vertical'));
+elements.tidyHorizontalButton?.addEventListener('click', () => applyTidyCommand('x'));
+elements.tidyVerticalButton?.addEventListener('click', () => applyTidyCommand('y'));
+elements.commandPaletteInput?.addEventListener('input', updateCommandPaletteResults);
+elements.commandPaletteInput?.addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    commandPaletteActiveIndex = Math.min(commandPaletteResults.length - 1, commandPaletteActiveIndex + 1);
+    renderCommandPaletteResults();
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    commandPaletteActiveIndex = Math.max(0, commandPaletteActiveIndex - 1);
+    renderCommandPaletteResults();
+  } else if (event.key === 'Enter') {
+    event.preventDefault();
+    runActiveCommandPaletteItem();
+  }
+});
+elements.commandPaletteRunButton?.addEventListener('click', runActiveCommandPaletteItem);
+elements.commandPaletteCloseButton?.addEventListener('click', () => toggleCommandPalette(false));
 for (const button of elements.canvasActionButtons) {
   button.addEventListener('click', () => {
     const result = executeCanvasContextAction(button.dataset.canvasAction);
@@ -2597,6 +2796,14 @@ elements.basicAttributeSection?.addEventListener('toggle', persistPanelLayoutSta
 elements.advancedAttributeSection?.addEventListener('toggle', persistPanelLayoutState);
 
 window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !elements.commandPaletteOverlay?.hidden) {
+    event.preventDefault();
+    toggleCommandPalette(false);
+    return;
+  }
+  handleCommandPaletteFocusTrap(event);
+  if (!elements.commandPaletteOverlay?.hidden) return;
+
   if (event.key === 'Escape' && !elements.downloadModal?.hidden) {
     event.preventDefault();
     toggleDownloadModal(false);
@@ -2646,31 +2853,33 @@ window.addEventListener('keydown', (event) => {
     const key = String(event.key || '').toLowerCase();
     if (key === 'v') {
       event.preventDefault();
-      setSelectionMode('smart');
-      return setStatus('선택 도구(V)로 전환했습니다.');
+      return performCommandAction('tool-select');
     }
     if (key === 't') {
       event.preventDefault();
-      setSelectionMode('text');
-      return setStatus('텍스트 도구(T)로 전환했습니다.');
+      return performCommandAction('tool-text');
     }
     if (key === 'r') {
       event.preventDefault();
-      setSelectionMode('box');
-      return setStatus('박스 도구(R)로 전환했습니다.');
+      return performCommandAction('tool-box');
     }
   }
 
   if (!withModifier || event.altKey) return;
-  if (isTypingInputTarget(event.target)) return;
   const key = String(event.key || '').toLowerCase();
+  if (key === 'k') {
+    event.preventDefault();
+    toggleCommandPalette(true);
+    return;
+  }
+  if (isTypingInputTarget(event.target)) return;
   if (key === 'd') {
     event.preventDefault();
-    return executeEditorCommand('duplicate');
+    return performCommandAction('duplicate');
   }
   if (key === 'g') {
     event.preventDefault();
-    return executeEditorCommand(event.shiftKey ? 'ungroup-selection' : 'group-selection');
+    return performCommandAction(event.shiftKey ? 'ungroup' : 'group');
   }
   if (key === 'z') {
     event.preventDefault();
@@ -2682,7 +2891,7 @@ window.addEventListener('keydown', (event) => {
   }
   if (key === 's') {
     event.preventDefault();
-    return downloadEditedHtml().catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`));
+    return performCommandAction('save-edited');
   }
   if (key === '=') {
     event.preventDefault();
@@ -2712,20 +2921,15 @@ window.addEventListener('keydown', (event) => {
     event.preventDefault();
     return setZoom('fit');
   }
-  if (key === 'k') {
-    event.preventDefault();
-    setSidebarTab('left-start');
-    const advancedDetails = document.querySelector('[data-sidebar-panel="left-start"] details.left-accordion');
-    if (advancedDetails) advancedDetails.open = true;
-    elements.codeSearchInput?.focus();
-    return;
-  }
 });
 
 elements.shortcutHelpOverlay?.addEventListener('click', (event) => {
   if (event.target === elements.shortcutHelpOverlay) toggleShortcutHelp(false);
 });
 elements.shortcutHelpCloseButton?.addEventListener('click', () => toggleShortcutHelp(false));
+elements.commandPaletteOverlay?.addEventListener('click', (event) => {
+  if (event.target === elements.commandPaletteOverlay) toggleCommandPalette(false);
+});
 elements.downloadModal?.addEventListener('click', (event) => {
   if (event.target === elements.downloadModal) toggleDownloadModal(false);
 });

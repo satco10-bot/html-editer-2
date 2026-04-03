@@ -55,6 +55,45 @@
       color: #0f172a;
       text-align: center;
     }
+    .command-palette-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.58);
+      z-index: 999999;
+      display: grid;
+      place-items: center;
+      padding: 16px;
+    }
+    .command-palette {
+      width: min(640px, 94vw);
+      max-height: min(680px, 88vh);
+      overflow: auto;
+      border-radius: 14px;
+      border: 1px solid rgba(148, 163, 184, 0.34);
+      background: #ffffff;
+      box-shadow: 0 20px 40px rgba(15, 23, 42, 0.3);
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+    }
+    .command-palette__list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 8px;
+    }
+    .command-palette__item {
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 8px;
+      display: grid;
+      gap: 4px;
+    }
+    .command-palette__item.is-active {
+      border-color: #2563eb;
+      background: #eff6ff;
+    }
   </style>
 </head>
 <body>
@@ -557,6 +596,38 @@
           </div>
         </details>
         <div class="panel-divider"></div>
+        <div class="style-form">
+          <label class="field">
+            <span>스택 방향</span>
+            <select id="stackDirectionSelect">
+              <option value="vertical">세로</option>
+              <option value="horizontal">가로</option>
+            </select>
+          </label>
+          <div class="control-row control-row--split">
+            <label class="field field--mini">
+              <span>간격(px)</span>
+              <input id="stackGapInput" type="number" min="0" step="1" value="24" />
+            </label>
+            <label class="field field--mini">
+              <span>정렬</span>
+              <select id="stackAlignSelect">
+                <option value="start">시작</option>
+                <option value="center">가운데</option>
+                <option value="end">끝</option>
+              </select>
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="stackHorizontalButton" class="button button--ghost button--small" type="button">가로 스택 정렬</button>
+            <button id="stackVerticalButton" class="button button--ghost button--small" type="button">세로 스택 정렬</button>
+          </div>
+          <div class="button-row">
+            <button id="tidyHorizontalButton" class="button button--ghost button--small" type="button">가로 간격 맞춤</button>
+            <button id="tidyVerticalButton" class="button button--ghost button--small" type="button">세로 간격 맞춤</button>
+          </div>
+        </div>
+        <div class="panel-divider"></div>
         <div class="action-grid">
           <button class="button button--ghost button--small" data-batch-action="same-width">같은 너비</button>
           <button class="button button--ghost button--small" data-batch-action="same-height">같은 높이</button>
@@ -710,19 +781,25 @@
         <h2 id="shortcutHelpTitle">단축키 치트시트 (1차 10개)</h2>
         <button id="shortcutHelpCloseButton" class="button button--ghost button--small" type="button">닫기</button>
       </header>
-      <ul class="shortcut-help-list">
-        <li><kbd>V</kbd><span>선택 도구</span></li>
-        <li><kbd>T</kbd><span>텍스트 도구</span></li>
-        <li><kbd>R</kbd><span>박스 도구</span></li>
-        <li><kbd>Ctrl/Cmd + D</kbd><span>선택 복제</span></li>
-        <li><kbd>Delete</kbd><span>선택 삭제</span></li>
-        <li><kbd>Ctrl/Cmd + G</kbd><span>그룹 묶기</span></li>
-        <li><kbd>Shift + Ctrl/Cmd + G</kbd><span>그룹 해제</span></li>
-        <li><kbd>↑ ↓ ← →</kbd><span>선택 요소 nudge 이동</span></li>
-        <li><kbd>Shift + 방향키</kbd><span>10px 빠른 nudge</span></li>
-        <li><kbd>?</kbd><span>치트시트 열기/닫기</span></li>
-      </ul>
+      <ul id="shortcutHelpList" class="shortcut-help-list"></ul>
       <p class="hint">입력창/텍스트 편집 중에는 단축키 충돌을 막기 위해 대부분의 편집 단축키를 무시합니다.</p>
+    </section>
+  </div>
+
+  <div id="commandPaletteOverlay" class="command-palette-overlay" hidden>
+    <section class="command-palette" role="dialog" aria-modal="true" aria-labelledby="commandPaletteTitle">
+      <header class="shortcut-help-panel__header">
+        <h2 id="commandPaletteTitle">명령 검색 (Ctrl/Cmd + K)</h2>
+        <button id="commandPaletteCloseButton" class="button button--ghost button--small" type="button">닫기</button>
+      </header>
+      <label class="field">
+        <span>명령 검색</span>
+        <input id="commandPaletteInput" type="search" placeholder="예: 복제, 삭제, PNG, 섹션 추가" autocomplete="off" />
+      </label>
+      <ul id="commandPaletteList" class="command-palette__list" role="listbox" aria-label="명령 결과"></ul>
+      <div class="button-row">
+        <button id="commandPaletteRunButton" class="button button--secondary button--small" type="button">선택 명령 실행</button>
+      </div>
     </section>
   </div>
   <div id="beginnerTutorialTooltip" class="beginner-tutorial" role="dialog" aria-live="polite" hidden>
