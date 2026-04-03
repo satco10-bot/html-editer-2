@@ -1,0 +1,31 @@
+{
+  "date": "2026-04-03",
+  "runs": [
+    {
+      "status": "dependency_missing",
+      "error_type": "dependency_missing",
+      "error": "No module named 'playwright'",
+      "missing_dependency": "playwright",
+      "started_at": "2026-04-03T06:18:44.240190+00:00",
+      "fixture_results": [],
+      "summary": {
+        "passed": 0,
+        "failed": 0,
+        "total": 0
+      }
+    },
+    {
+      "status": "dependency_missing",
+      "error_type": "dependency_missing",
+      "error": "No module named 'playwright'",
+      "missing_dependency": "playwright",
+      "started_at": "2026-04-03T06:18:59.812332+00:00",
+      "fixture_results": [],
+      "summary": {
+        "passed": 0,
+        "failed": 0,
+        "total": 0
+      }
+    }
+  ]
+}
