@@ -178,7 +178,21 @@ const elements = {
   batchActionButtons: Array.from(document.querySelectorAll('[data-batch-action]')),
   textAlignButtons: Array.from(document.querySelectorAll('[data-text-align]')),
   canvasActionButtons: Array.from(document.querySelectorAll('[data-canvas-action]')),
+  shortcutHelpOverlay: document.getElementById('shortcutHelpOverlay'),
+  shortcutHelpCloseButton: document.getElementById('shortcutHelpCloseButton'),
 };
+
+const SHORTCUT_TOOLTIP_MAP = Object.freeze({
+  '[data-selection-mode="smart"]': '선택 도구 (V)',
+  '[data-selection-mode="text"]': '텍스트 도구 (T)',
+  '[data-selection-mode="box"]': '박스 도구 (R)',
+  '#addTextButton': '텍스트 추가 (T)',
+  '#addBoxButton': '박스 추가 (R)',
+  '#groupButton': '그룹 묶기 (Ctrl/Cmd+G)',
+  '#ungroupButton': '그룹 해제 (Shift+Ctrl/Cmd+G)',
+  '[data-canvas-action="duplicate"]': '복제 (Ctrl/Cmd+D)',
+  '[data-canvas-action="delete"]': '삭제 (Delete)',
+});
 
 function projectBaseName(project) {
   return sanitizeFilename((project?.sourceName || 'detail-page').replace(/\.html?$/i, '') || 'detail-page');
@@ -211,6 +225,38 @@ function selectionExportBackground() {
 
 function setStatus(text) {
   store.setStatus(text);
+}
+
+function isTypingInputTarget(target) {
+  if (!target || !(target instanceof Element)) return false;
+  if (target.closest('[contenteditable="true"]')) return true;
+  const tagName = target.tagName;
+  if (tagName === 'TEXTAREA' || tagName === 'SELECT') return true;
+  if (tagName !== 'INPUT') return false;
+  const inputType = String(target.getAttribute('type') || 'text').toLowerCase();
+  return inputType !== 'checkbox' && inputType !== 'radio' && inputType !== 'button' && inputType !== 'submit' && inputType !== 'reset';
+}
+
+function toggleShortcutHelp(forceOpen = null) {
+  const overlay = elements.shortcutHelpOverlay;
+  if (!overlay) return false;
+  const shouldOpen = forceOpen == null ? overlay.hidden : !!forceOpen;
+  overlay.hidden = !shouldOpen;
+  if (shouldOpen) {
+    elements.shortcutHelpCloseButton?.focus();
+    setStatus('단축키 치트시트를 열었습니다.');
+  }
+  return shouldOpen;
+}
+
+function applyShortcutTooltips() {
+  for (const [selector, label] of Object.entries(SHORTCUT_TOOLTIP_MAP)) {
+    for (const node of Array.from(document.querySelectorAll(selector))) {
+      node.title = label;
+      const originalAria = node.getAttribute('aria-label') || node.textContent?.trim() || '';
+      if (!originalAria.includes('(')) node.setAttribute('aria-label', `${originalAria} ${label.match(/\(.+\)/)?.[0] || ''}`.trim());
+    }
+  }
 }
 
 function evaluateLocalBootEnvironment() {
@@ -809,6 +855,7 @@ function handleEditorShortcut(action) {
   if (action === 'undo') return undoHistory();
   if (action === 'redo') return redoHistory();
   if (action === 'save-edited') return downloadEditedHtml().catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`));
+  if (action === 'toggle-shortcut-help') return toggleShortcutHelp();
 }
 
 function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
@@ -1487,11 +1534,51 @@ elements.basicAttributeSection?.addEventListener('toggle', persistPanelLayoutSta
 elements.advancedAttributeSection?.addEventListener('toggle', persistPanelLayoutState);
 
 window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !elements.shortcutHelpOverlay?.hidden) {
+    event.preventDefault();
+    toggleShortcutHelp(false);
+    return;
+  }
+  const questionMarkPressed = event.key === '?' || (event.key === '/' && event.shiftKey);
+  if (questionMarkPressed) {
+    if (isTypingInputTarget(event.target)) return;
+    event.preventDefault();
+    toggleShortcutHelp();
+    return;
+  }
+  if (!elements.shortcutHelpOverlay?.hidden) return;
+
   const withModifier = event.ctrlKey || event.metaKey;
+  if (!withModifier && !isTypingInputTarget(event.target)) {
+    const key = String(event.key || '').toLowerCase();
+    if (key === 'v') {
+      event.preventDefault();
+      setSelectionMode('smart');
+      return setStatus('선택 도구(V)로 전환했습니다.');
+    }
+    if (key === 't') {
+      event.preventDefault();
+      setSelectionMode('text');
+      return setStatus('텍스트 도구(T)로 전환했습니다.');
+    }
+    if (key === 'r') {
+      event.preventDefault();
+      setSelectionMode('box');
+      return setStatus('박스 도구(R)로 전환했습니다.');
+    }
+  }
+
   if (!withModifier || event.altKey) return;
-  const tagName = document.activeElement?.tagName || '';
-  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tagName)) return;
+  if (isTypingInputTarget(event.target)) return;
   const key = String(event.key || '').toLowerCase();
+  if (key === 'd') {
+    event.preventDefault();
+    return executeEditorCommand('duplicate');
+  }
+  if (key === 'g') {
+    event.preventDefault();
+    return executeEditorCommand(event.shiftKey ? 'ungroup-selection' : 'group-selection');
+  }
   if (key === 'z') {
     event.preventDefault();
     return event.shiftKey ? redoHistory() : undoHistory();
@@ -1540,6 +1627,11 @@ window.addEventListener('keydown', (event) => {
   }
 });
 
+elements.shortcutHelpOverlay?.addEventListener('click', (event) => {
+  if (event.target === elements.shortcutHelpOverlay) toggleShortcutHelp(false);
+});
+elements.shortcutHelpCloseButton?.addEventListener('click', () => toggleShortcutHelp(false));
+
 setSidebarTab('left-import');
 setSidebarTab('right-inspect');
 setCodeSource('edited', { preserveDraft: false });
@@ -1547,4 +1639,5 @@ syncSaveFormatUi();
 restorePanelLayoutState();
 syncAdvancedFormFromState();
 syncWorkspaceButtons();
+applyShortcutTooltips();
 loadFixture('F05');

@@ -5,6 +5,57 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>상세페이지 웹앱 로컬 에디터 · UX 리부트</title>
   <link rel="stylesheet" href="./styles.css" />
+  <style>
+    .shortcut-help-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.58);
+      z-index: 999999;
+      display: grid;
+      place-items: center;
+      padding: 16px;
+    }
+    .shortcut-help-panel {
+      width: min(560px, 94vw);
+      max-height: min(640px, 88vh);
+      overflow: auto;
+      border-radius: 14px;
+      border: 1px solid rgba(148, 163, 184, 0.34);
+      background: #ffffff;
+      box-shadow: 0 20px 40px rgba(15, 23, 42, 0.3);
+      padding: 16px;
+    }
+    .shortcut-help-panel__header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .shortcut-help-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 8px;
+    }
+    .shortcut-help-list li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .shortcut-help-list kbd {
+      display: inline-block;
+      min-width: 140px;
+      padding: 4px 8px;
+      border-radius: 8px;
+      border: 1px solid #cbd5e1;
+      background: #f8fafc;
+      font: 600 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      color: #0f172a;
+      text-align: center;
+    }
+  </style>
 </head>
 <body>
   <div class="app-shell">
@@ -130,21 +181,21 @@
       <div class="stage-toolbar stage-toolbar--reboot">
         <div class="stage-toolbar__row">
           <div class="selection-mode segmented">
-            <button class="segmented__item is-active" data-selection-mode="smart">스마트</button>
+            <button class="segmented__item is-active" data-selection-mode="smart" title="선택 도구 (V)">스마트</button>
             <button class="segmented__item" data-selection-mode="image">이미지</button>
-            <button class="segmented__item" data-selection-mode="text">텍스트</button>
-            <button class="segmented__item" data-selection-mode="box">박스</button>
+            <button class="segmented__item" data-selection-mode="text" title="텍스트 도구 (T)">텍스트</button>
+            <button class="segmented__item" data-selection-mode="box" title="박스 도구 (R)">박스</button>
           </div>
           <div class="quick-actions button-row">
             <button id="replaceImageButton" class="button button--secondary">이미지 넣기</button>
             <button id="manualSlotButton" class="button button--ghost">슬롯 지정</button>
             <button id="demoteSlotButton" class="button button--warn">슬롯 해제</button>
             <button id="textEditButton" class="button button--ghost">텍스트 편집</button>
-            <button id="addTextButton" class="button button--ghost">텍스트 추가</button>
-            <button id="addBoxButton" class="button button--ghost">박스 추가</button>
+            <button id="addTextButton" class="button button--ghost" title="텍스트 도구 (T)">텍스트 추가</button>
+            <button id="addBoxButton" class="button button--ghost" title="박스 도구 (R)">박스 추가</button>
             <button id="addSlotButton" class="button button--ghost">슬롯 추가</button>
-            <button id="groupButton" class="button button--ghost">그룹 묶기</button>
-            <button id="ungroupButton" class="button button--ghost">그룹 해제</button>
+            <button id="groupButton" class="button button--ghost" title="그룹 묶기 (Ctrl/Cmd+G)">그룹 묶기</button>
+            <button id="ungroupButton" class="button button--ghost" title="그룹 해제 (Shift+Ctrl/Cmd+G)">그룹 해제</button>
             <button id="toggleHideButton" class="button button--ghost">숨김</button>
             <button id="toggleLockButton" class="button button--ghost">잠금</button>
             <button id="redetectButton" class="button button--ghost">다시 감지</button>
@@ -177,8 +228,8 @@
         <div id="previewViewport" class="preview-viewport">
           <div id="canvasContextBar" class="canvas-context-bar" hidden>
             <div class="canvas-context-bar__actions">
-              <button class="button button--ghost button--small" data-canvas-action="duplicate">복제</button>
-              <button class="button button--warn button--small" data-canvas-action="delete">삭제</button>
+              <button class="button button--ghost button--small" data-canvas-action="duplicate" title="복제 (Ctrl/Cmd+D)">복제</button>
+              <button class="button button--warn button--small" data-canvas-action="delete" title="삭제 (Delete)">삭제</button>
               <button class="button button--ghost button--small" data-canvas-action="bring-forward">앞으로</button>
               <button class="button button--ghost button--small" data-canvas-action="send-backward">뒤로</button>
               <button class="button button--ghost button--small" data-canvas-action="same-width">너비 맞춤</button>
@@ -428,6 +479,28 @@
   <footer class="statusbar">
     <div id="statusText">대기 중</div>
   </footer>
+
+  <div id="shortcutHelpOverlay" class="shortcut-help-overlay" hidden>
+    <section class="shortcut-help-panel" role="dialog" aria-modal="true" aria-labelledby="shortcutHelpTitle">
+      <header class="shortcut-help-panel__header">
+        <h2 id="shortcutHelpTitle">단축키 치트시트 (1차 10개)</h2>
+        <button id="shortcutHelpCloseButton" class="button button--ghost button--small" type="button">닫기</button>
+      </header>
+      <ul class="shortcut-help-list">
+        <li><kbd>V</kbd><span>선택 도구</span></li>
+        <li><kbd>T</kbd><span>텍스트 도구</span></li>
+        <li><kbd>R</kbd><span>박스 도구</span></li>
+        <li><kbd>Ctrl/Cmd + D</kbd><span>선택 복제</span></li>
+        <li><kbd>Delete</kbd><span>선택 삭제</span></li>
+        <li><kbd>Ctrl/Cmd + G</kbd><span>그룹 묶기</span></li>
+        <li><kbd>Shift + Ctrl/Cmd + G</kbd><span>그룹 해제</span></li>
+        <li><kbd>↑ ↓ ← →</kbd><span>선택 요소 nudge 이동</span></li>
+        <li><kbd>Shift + 방향키</kbd><span>10px 빠른 nudge</span></li>
+        <li><kbd>?</kbd><span>치트시트 열기/닫기</span></li>
+      </ul>
+      <p class="hint">입력창/텍스트 편집 중에는 단축키 충돌을 막기 위해 대부분의 편집 단축키를 무시합니다.</p>
+    </section>
+  </div>
 
   <script src="./app.bundle.js"></script>
 </body>
