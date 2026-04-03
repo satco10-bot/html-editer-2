@@ -1,0 +1,31 @@
+name: Check bundle sync
+
+on:
+  pull_request:
+    paths:
+      - 'detail-page-local-editor-codex-ready/src/**'
+      - 'detail-page-local-editor-codex-ready/scripts/build_local_bundle.py'
+      - 'detail-page-local-editor-codex-ready/app.bundle.js'
+  push:
+    paths:
+      - 'detail-page-local-editor-codex-ready/src/**'
+      - 'detail-page-local-editor-codex-ready/scripts/build_local_bundle.py'
+      - 'detail-page-local-editor-codex-ready/app.bundle.js'
+
+jobs:
+  bundle-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Rebuild local bundle from src
+        run: python3 detail-page-local-editor-codex-ready/scripts/build_local_bundle.py
+
+      - name: Fail if app.bundle.js is outdated
+        run: git diff --exit-code -- detail-page-local-editor-codex-ready/app.bundle.js

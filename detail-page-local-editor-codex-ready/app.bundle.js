@@ -3032,6 +3032,22 @@ function createFrameEditor({
     return applyLayerIndexCommand('back');
   }
 
+  function bringSelectedForward() {
+    return applyLayerIndexCommand('forward');
+  }
+
+  function sendSelectedBackward() {
+    return applyLayerIndexCommand('backward');
+  }
+
+  function bringSelectedToFront() {
+    return applyLayerIndexCommand('front');
+  }
+
+  function sendSelectedToBack() {
+    return applyLayerIndexCommand('back');
+  }
+
   function nudgeSelectedElements(dx = 0, dy = 0) {
     const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
     if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
