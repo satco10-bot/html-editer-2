@@ -57,6 +57,8 @@ const elements = {
   addTextButton: document.getElementById('addTextButton'),
   addBoxButton: document.getElementById('addBoxButton'),
   addSlotButton: document.getElementById('addSlotButton'),
+  groupButton: document.getElementById('groupButton'),
+  ungroupButton: document.getElementById('ungroupButton'),
   undoButton: document.getElementById('undoButton'),
   redoButton: document.getElementById('redoButton'),
   restoreAutosaveButton: document.getElementById('restoreAutosaveButton'),
@@ -643,6 +645,8 @@ function renderShell(state) {
   elements.toggleHideButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
   elements.toggleLockButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
   elements.textEditButton.disabled = !hasEditor;
+  elements.groupButton.disabled = !hasEditor || !state.editorMeta?.canGroupSelection;
+  elements.ungroupButton.disabled = !hasEditor || !state.editorMeta?.canUngroupSelection;
   elements.preflightRefreshButton.disabled = !hasEditor;
   for (const button of elements.batchActionButtons) {
     const requiresMany = button.dataset.batchAction !== 'reset-transform';
@@ -690,6 +694,8 @@ function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
   const fallback = {
     duplicate: () => activeEditor.duplicateSelected(),
     delete: () => activeEditor.deleteSelected(),
+    'group-selection': () => activeEditor.groupSelected?.() || { ok: false, message: 'group-selection 명령을 지원하지 않습니다.' },
+    'ungroup-selection': () => activeEditor.ungroupSelected?.() || { ok: false, message: 'ungroup-selection 명령을 지원하지 않습니다.' },
   };
   const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
   setStatus(result.message);
@@ -1132,6 +1138,8 @@ elements.textEditButton.addEventListener('click', () => {
 });
 elements.duplicateButton?.addEventListener('click', () => { executeEditorCommand('duplicate'); });
 elements.deleteButton?.addEventListener('click', () => { executeEditorCommand('delete'); });
+elements.groupButton?.addEventListener('click', () => { executeEditorCommand('group-selection'); });
+elements.ungroupButton?.addEventListener('click', () => { executeEditorCommand('ungroup-selection'); });
 elements.addTextButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.addTextElement();

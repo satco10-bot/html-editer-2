@@ -351,6 +351,31 @@ export function createFrameEditor({
     return result;
   }
 
+  function isGroupElement(element) {
+    return !!element && isElement(element) && element.dataset?.nodeRole === 'group';
+  }
+
+  function filterTopLevelSelection(items) {
+    const selected = uniqueConnectedElements(items);
+    return selected.filter((element) => !selected.some((other) => other !== element && other.contains(element)));
+  }
+
+  function canGroupSelection() {
+    const targets = filterTopLevelSelection(selectedElements).filter((element) => !isLockedElement(element));
+    if (targets.length < 2) return false;
+    const parent = targets[0]?.parentElement;
+    if (!parent || parent === doc.body || parent.tagName === 'HTML' || parent.tagName === 'BODY') return false;
+    if (isGroupElement(parent)) return false;
+    return targets.every((element) => element.parentElement === parent && !isGroupElement(element));
+  }
+
+  function canUngroupSelection() {
+    const targets = filterTopLevelSelection(selectedElements);
+    if (!targets.length) return false;
+    if (targets.some((element) => isGroupElement(element) && !isLockedElement(element))) return true;
+    return targets.some((element) => isGroupElement(element.parentElement) && !isLockedElement(element.parentElement));
+  }
+
   function placeholderTextValue(element) {
     return [
       element?.getAttribute?.('data-slot-label') || '',
@@ -551,6 +576,7 @@ export function createFrameEditor({
 
   function layerTypeOf(element) {
     if (!element || !isElement(element)) return 'box';
+    if (isGroupElement(element)) return 'group';
     if (element.hasAttribute('data-detected-slot') || element.matches(EXPLICIT_SLOT_SELECTOR) || element.dataset.manualSlot === '1') return 'slot';
     if (isTextyElement(element)) return 'text';
     if (isSectionLike(element)) return 'section';
@@ -577,6 +603,7 @@ export function createFrameEditor({
         if (!child.dataset.nodeUid) child.dataset.nodeUid = nextId('node');
         const expose = shouldExposeLayer(child, depth);
         if (expose) {
+          const selectedViaGroup = selectedElements.some((selected) => isGroupElement(selected) && selected !== child && selected.contains(child));
           items.push({
             uid: child.dataset.nodeUid,
             label: buildLabel(child),
@@ -585,6 +612,7 @@ export function createFrameEditor({
             depth,
             childCount: child.children?.length || 0,
             selected: selectedUids.has(child.dataset.nodeUid),
+            selectedViaGroup,
             hidden: child.dataset.editorHidden === '1',
             locked: child.dataset.editorLocked === '1',
           });
@@ -676,6 +704,8 @@ export function createFrameEditor({
       layerTree,
       textStyle: getTextStyleState(),
       preflight: buildPreflightReport(),
+      canGroupSelection: canGroupSelection(),
+      canUngroupSelection: canUngroupSelection(),
     };
   }
 
@@ -712,6 +742,7 @@ export function createFrameEditor({
 
   function selectionTypeOf(element) {
     if (!element) return '';
+    if (isGroupElement(element)) return 'group';
     if (element.hasAttribute('data-detected-slot') || element.matches(EXPLICIT_SLOT_SELECTOR) || element.dataset.manualSlot === '1') return 'slot';
     if (isTextyElement(element)) return 'text';
     return 'box';
@@ -1328,6 +1359,66 @@ export function createFrameEditor({
     };
   }
 
+  function groupSelected() {
+    const targets = filterTopLevelSelection(selectedElements).filter((element) => !isLockedElement(element));
+    if (targets.length < 2) return { ok: false, message: '그룹은 2개 이상 선택해야 합니다.' };
+    const parent = targets[0]?.parentElement;
+    if (!parent || parent === doc.body || ['HTML', 'BODY'].includes(parent.tagName)) {
+      return { ok: false, message: '그룹을 만들 공통 부모를 찾지 못했습니다.' };
+    }
+    if (!targets.every((element) => element.parentElement === parent)) {
+      return { ok: false, message: '같은 부모 레벨의 요소만 그룹으로 묶을 수 있습니다.' };
+    }
+    const siblingOrder = Array.from(parent.children || []);
+    const orderedTargets = targets.slice().sort((a, b) => siblingOrder.indexOf(a) - siblingOrder.indexOf(b));
+    const group = doc.createElement('div');
+    group.dataset.nodeRole = 'group';
+    group.dataset.nodeUid = nextId('node');
+    group.dataset.groupLabel = `그룹 ${orderedTargets.length}`;
+    group.setAttribute('aria-label', group.dataset.groupLabel);
+    parent.insertBefore(group, orderedTargets[0]);
+    for (const target of orderedTargets) group.appendChild(target);
+    group.dataset.editorModified = '1';
+    modifiedSlots.add(group.dataset.nodeUid);
+    redetect({ preserveSelectionUids: [group.dataset.nodeUid] });
+    emitMutation('group-selection');
+    return { ok: true, message: `선택 요소 ${orderedTargets.length}개를 그룹으로 묶었습니다.` };
+  }
+
+  function ungroupSelected() {
+    const targets = filterTopLevelSelection(selectedElements);
+    if (!targets.length) return { ok: false, message: '먼저 그룹(또는 그룹 안 요소)을 선택해 주세요.' };
+    const groups = [];
+    const seen = new Set();
+    const pushGroup = (group) => {
+      if (!isGroupElement(group) || !group.isConnected || isLockedElement(group)) return;
+      const uid = group.dataset.nodeUid || nextId('node');
+      group.dataset.nodeUid = uid;
+      if (seen.has(uid)) return;
+      seen.add(uid);
+      groups.push(group);
+    };
+    for (const target of targets) {
+      if (isGroupElement(target)) pushGroup(target);
+      else pushGroup(target.parentElement);
+    }
+    if (!groups.length) return { ok: false, message: '해제할 그룹을 찾지 못했습니다.' };
+    const keepSelectionUids = [];
+    for (const group of groups) {
+      const parent = group.parentElement;
+      if (!parent) continue;
+      const children = Array.from(group.children || []).filter((child) => isElement(child));
+      for (const child of children) {
+        parent.insertBefore(child, group);
+        if (child.dataset.nodeUid) keepSelectionUids.push(child.dataset.nodeUid);
+      }
+      group.remove();
+    }
+    redetect({ preserveSelectionUids: keepSelectionUids });
+    emitMutation('ungroup-selection');
+    return { ok: true, message: `그룹 ${groups.length}개를 해제했습니다.` };
+  }
+
   function deleteSelected() {
     return deleteSelection({
       selectedElements: () => uniqueConnectedElements(selectedElements),
@@ -1673,6 +1764,8 @@ export function createFrameEditor({
       layerTree: buildLayerTree(),
       textStyle: getTextStyleState(),
       preflight: buildPreflightReport(),
+      canGroupSelection: canGroupSelection(),
+      canUngroupSelection: canUngroupSelection(),
       generatedAt: new Date().toISOString(),
     };
   }
@@ -2257,6 +2350,8 @@ export function createFrameEditor({
   function executeCommand(command, payload = {}) {
     if (command === 'duplicate') return duplicateSelected();
     if (command === 'delete') return deleteSelected();
+    if (command === 'group-selection') return groupSelected();
+    if (command === 'ungroup-selection') return ungroupSelected();
     if (command === 'nudge-selection') return nudgeSelectedElements(payload.dx || 0, payload.dy || 0);
     if (command === 'undo' || command === 'redo' || command === 'save-edited') {
       onShortcut(command);
@@ -2287,6 +2382,11 @@ export function createFrameEditor({
       if (key === 'd') {
         event.preventDefault();
         onStatus(executeCommand('duplicate').message);
+        return;
+      }
+      if (key === 'g') {
+        event.preventDefault();
+        onStatus(executeCommand(event.shiftKey ? 'ungroup-selection' : 'group-selection').message);
         return;
       }
     }
@@ -2394,6 +2494,8 @@ export function createFrameEditor({
     applyBatchLayout,
     duplicateSelected,
     deleteSelected,
+    groupSelected,
+    ungroupSelected,
     addTextElement: () => addElement('text'),
     addBoxElement: () => addElement('box'),
     addSlotElement: () => addElement('slot'),
