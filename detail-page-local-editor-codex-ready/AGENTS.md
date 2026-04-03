@@ -25,6 +25,14 @@
 3. 번들이 바뀌면 `python3 scripts/build_local_bundle.py`
 4. 변경 요약, 남은 위험, 회귀 가능성을 보고할 것.
 
+## Release gate (manual regression, 최소 1회 필수)
+릴리즈 전에는 아래 수동 회귀 루틴을 **최소 1회** 반드시 수행하고, 결과를 체크리스트로 남길 것.
+
+- [ ] 초기 부팅 필수 경로에 `fetch()`/원격 API 의존이 없는지 확인
+- [ ] File System Access API가 필수 경로인지 여부 확인
+- [ ] `uploaded:`/상대경로 이미지가 저장 → 재오픈 후 유지되는지 확인
+- [ ] 저장한 HTML을 다시 열었을 때 런타임 오버레이(`data-editor-runtime`)가 결과물에 섞이지 않는지 확인
+
 ## Priority order
 1. 직접 편집 핵심 UX
 2. 저장/재오픈 안정성
