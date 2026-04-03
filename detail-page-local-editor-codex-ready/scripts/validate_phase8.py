@@ -40,7 +40,7 @@ REQUIRED_BUTTON_IDS = [
     'replaceImageButton', 'manualSlotButton', 'demoteSlotButton', 'toggleHideButton', 'toggleLockButton', 'redetectButton', 'textEditButton',
     'undoButton', 'redoButton', 'restoreAutosaveButton',
     'downloadEditedButton', 'downloadNormalizedButton', 'downloadLinkedZipButton',
-    'exportPresetSelect', 'exportScaleSelect', 'exportJpgQualityInput', 'exportPngButton', 'exportJpgButton', 'exportSectionsZipButton', 'exportSelectionPngButton', 'exportPresetPackageButton', 'downloadReportButton',
+    'exportPresetSelect', 'exportPngButton', 'exportJpgButton', 'exportSectionsZipButton', 'exportSelectionPngButton', 'exportPresetPackageButton', 'downloadReportButton',
     'replaceImageInput', 'previewFrame', 'slotList', 'selectionInspector', 'assetFilterInput',
     'preflightContainer', 'preflightRefreshButton', 'layerTree', 'layerFilterInput',
     'textFontSizeInput', 'textLineHeightInput', 'textLetterSpacingInput', 'textWeightSelect', 'textColorInput',
@@ -50,6 +50,11 @@ REQUIRED_BUTTON_IDS = [
     'bringForwardButton', 'sendBackwardButton', 'bringToFrontButton', 'sendToBackButton',
     'imageNudgeLeftButton', 'imageNudgeRightButton', 'imageNudgeUpButton', 'imageNudgeDownButton',
 ]
+
+REQUIRED_ID_ALIASES = {
+    'exportScaleSelect': {'exportScaleSelect', 'exportScaleSelectMain', 'exportScaleSelectSelection'},
+    'exportJpgQualityInput': {'exportJpgQualityInput', 'exportJpgQualityInputMain', 'exportJpgQualityInputSelection'},
+}
 
 REQUIRED_EDITOR_METHODS = [
     'toggleTextEdit', 'captureSnapshot', 'exportFullPngBlob', 'exportSectionPngEntries',
@@ -328,6 +333,11 @@ def main() -> None:
         exists = element_id in html_ids
         add_check(checks, f'index_has_{element_id}', exists, 'ok' if exists else explain_missing_id(element_id))
 
+    for canonical_id, alias_ids in REQUIRED_ID_ALIASES.items():
+        exists = any(alias_id in html_ids for alias_id in alias_ids)
+        detail = 'ok' if exists else explain_missing_id(canonical_id)
+        add_check(checks, f'index_has_{canonical_id}', exists, detail)
+
     missing_ids = [element_id for element_id in js_ids if element_id not in html_ids]
     missing_detail = 'ok' if not missing_ids else '; '.join(explain_missing_id(element_id) for element_id in missing_ids)
     add_check(checks, 'all_main_js_ids_exist_in_index', not missing_ids, missing_detail)
@@ -351,7 +361,12 @@ def main() -> None:
     add_check(checks, 'index_has_stage_hint', 'Shift+드래그' in index_html and '스냅 가이드' in index_html, 'canvas interaction hint should exist')
     add_check(checks, 'index_has_export_preset_label', ('Export preset' in index_html or '<span>Preset</span>' in index_html), 'export preset selector should be visible')
     add_check(checks, 'index_has_3x_scale_option', '<option value="3">3x</option>' in index_html, '3x export scale option should exist')
-    add_check(checks, 'index_has_jpg_quality_input', 'id="exportJpgQualityInput"' in index_html, 'JPG quality input should exist')
+    add_check(
+        checks,
+        'index_has_jpg_quality_input',
+        any(token in index_html for token in ['id="exportJpgQualityInput"', 'id="exportJpgQualityInputMain"', 'id="exportJpgQualityInputSelection"']),
+        'JPG quality input should exist',
+    )
     add_check(
         checks,
         'frame_has_marquee_runtime',

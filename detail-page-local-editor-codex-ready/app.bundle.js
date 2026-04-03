@@ -199,8 +199,8 @@ function getFixtureMeta(fixtureId) {
 
 /* ===== src/config.js ===== */
 
-const APP_TITLE = '상세페이지 웹앱 로컬 에디터 · 6단계';
-const APP_VERSION = 'phase6-local-2026-04-02';
+const APP_TITLE = '상세페이지 웹앱 로컬 에디터 · 8단계';
+const APP_VERSION = 'phase8-local-2026-04-03';
 const EXPLICIT_SLOT_SELECTOR = '[data-image-slot], .image-slot, .drop-slot';
 const PLACEHOLDER_TEXT_RE = /(\[[^\]]*(이미지|영상)[^\]]*\]|이미지\s*삽입부|삽입부|드래그\s*이미지|image\s*slot|image\s*area|누끼|클로즈업|착용컷|연출컷|상세컷|대표\s*이미지|메인\s*이미지|썸네일|thumbnail|visual|hero|shot)/i;
 const STRONG_SLOT_CLASS_RE = /(^|\s)(media-shell|hero-shot|hero-visual|visual|opt-thumb|thumb|thumb-box|thumb-item|image-slot|drop-slot|image-wrap|photo-wrap|poster|cover|ph|c-box|cta-char|frame|hero-image|hero-media)(\s|$)/i;
@@ -1210,7 +1210,14 @@ function createProjectStore() {
   };
 
   function notify() {
-    for (const listener of listeners) listener(getState());
+    const snapshot = getState();
+    for (const listener of listeners) {
+      try {
+        listener(snapshot);
+      } catch (error) {
+        console.error('[project-store] listener failed:', error);
+      }
+    }
   }
 
   function getState() {
@@ -1261,7 +1268,11 @@ function createProjectStore() {
 
   function subscribe(listener) {
     listeners.add(listener);
-    listener(getState());
+    try {
+      listener(getState());
+    } catch (error) {
+      console.error('[project-store] initial listener failed:', error);
+    }
     return () => listeners.delete(listener);
   }
 
@@ -3014,22 +3025,6 @@ function createFrameEditor({
       back: '선택 요소를 맨 뒤로 보냈습니다.',
     };
     return { ok: true, message: messageMap[command] || '레이어 순서를 변경했습니다.' };
-  }
-
-  function bringSelectedForward() {
-    return applyLayerIndexCommand('forward');
-  }
-
-  function sendSelectedBackward() {
-    return applyLayerIndexCommand('backward');
-  }
-
-  function bringSelectedToFront() {
-    return applyLayerIndexCommand('front');
-  }
-
-  function sendSelectedToBack() {
-    return applyLayerIndexCommand('back');
   }
 
   function bringSelectedForward() {

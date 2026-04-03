@@ -4,8 +4,8 @@
     "check_count": 167,
     "passed": 166,
     "failed": 1,
-    "bundle_bytes": 351218,
-    "bundle_sha256": "6254db3ab8f4aa852e23e9280b4523fde486e539db84b1561772a12c1334631a",
+    "bundle_bytes": 353480,
+    "bundle_sha256": "083163b58393d7013248dc46ed80b262efbb474670751fbbd4f0b983b0fc9853",
     "browser_smoke_status": "unavailable",
     "failure_type": "dependency_missing"
   },
@@ -167,16 +167,6 @@
     },
     {
       "name": "index_has_exportPresetSelect",
-      "ok": true,
-      "detail": "ok"
-    },
-    {
-      "name": "index_has_exportScaleSelect",
-      "ok": true,
-      "detail": "ok"
-    },
-    {
-      "name": "index_has_exportJpgQualityInput",
       "ok": true,
       "detail": "ok"
     },
@@ -382,6 +372,16 @@
     },
     {
       "name": "index_has_imageNudgeDownButton",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "name": "index_has_exportScaleSelect",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "name": "index_has_exportJpgQualityInput",
       "ok": true,
       "detail": "ok"
     },
