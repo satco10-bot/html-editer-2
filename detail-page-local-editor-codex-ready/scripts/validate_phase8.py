@@ -244,15 +244,20 @@ def try_browser_smoke() -> dict[str, Any]:
     script = f"""
 from pathlib import Path
 import json
+import shutil
 try:
     from playwright.sync_api import sync_playwright
 except Exception as error:
     print(json.dumps({{'status': 'unavailable', 'error': str(error)}}, ensure_ascii=False))
     raise SystemExit(0)
 URL = Path(r'{INDEX}').resolve().as_uri()
+CHROMIUM_PATH = shutil.which('chromium') or shutil.which('chromium-browser')
 try:
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, executable_path='/usr/bin/chromium', args=['--no-sandbox'])
+        launch_options = {{'headless': True, 'args': ['--no-sandbox']}}
+        if CHROMIUM_PATH:
+            launch_options['executable_path'] = CHROMIUM_PATH
+        browser = p.chromium.launch(**launch_options)
         page = browser.new_page(viewport={{'width': 1700, 'height': 1200}})
         page.goto(URL, wait_until='load', timeout=10000)
         page.wait_for_timeout(1200)

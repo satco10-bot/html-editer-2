@@ -4,6 +4,7 @@
   "version": "0.8.0",
   "scripts": {
     "build:local": "python3 scripts/build_local_bundle.py",
-    "validate": "python3 scripts/validate_phase8.py"
+    "validate": "python3 scripts/validate_phase8.py",
+    "test:workflow": "python3 scripts/test_workflow_html_image_png.py"
   }
 }

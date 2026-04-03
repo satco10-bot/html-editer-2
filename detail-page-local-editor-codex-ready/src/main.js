@@ -32,6 +32,7 @@ let lastSaveConversion = null;
 let advancedSettingsDirty = false;
 let lastFocusedBeforeShortcutHelp = null;
 let lastFocusedBeforeDownloadModal = null;
+let importRequestSequence = 0;
 const zoomState = { mode: 'fit', value: 1 };
 const viewFeatureFlags = {
   snap: true,
@@ -44,6 +45,7 @@ const WORKFLOW_STEP_GUIDES = Object.freeze({
   edit: '요소를 클릭한 뒤 드래그하세요.',
   save: `결과를 확인한 뒤 [${OPEN_DOWNLOAD_MODAL_BUTTON_LABEL}] 버튼을 눌러 실행하세요.`,
 });
+const SHORTCUT_TOOLTIP_MAP = Object.freeze({});
 const BOOT_LOCAL_POLICY = Object.freeze({
   requiresStartupFetch: false,
   requiresFileSystemAccessApi: false,
@@ -81,6 +83,8 @@ const advancedSettings = {
   selectionExportPadding: 16,
   selectionExportBackground: 'transparent',
 };
+
+const EXPORT_SCALE_OPTIONS = Object.freeze([1, 2, 3]);
 
 const elements = {
   fixtureSelect: document.getElementById('fixtureSelect'),
@@ -2078,7 +2082,8 @@ elements.applyAdvancedSettingsButton?.addEventListener('click', () => {
 });
 
 elements.htmlFileInput?.addEventListener('change', async (event) => {
-  const [file] = event.target.files || [];
+  const fileList = event.target?.files;
+  const file = fileList && fileList.length > 0 ? fileList[0] : null;
   try {
     await openHtmlFile(file);
   } finally {
