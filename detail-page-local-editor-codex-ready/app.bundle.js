@@ -1737,6 +1737,31 @@ function createFrameEditor({
     return result;
   }
 
+  function isGroupElement(element) {
+    return !!element && isElement(element) && element.dataset?.nodeRole === 'group';
+  }
+
+  function filterTopLevelSelection(items) {
+    const selected = uniqueConnectedElements(items);
+    return selected.filter((element) => !selected.some((other) => other !== element && other.contains(element)));
+  }
+
+  function canGroupSelection() {
+    const targets = filterTopLevelSelection(selectedElements).filter((element) => !isLockedElement(element));
+    if (targets.length < 2) return false;
+    const parent = targets[0]?.parentElement;
+    if (!parent || parent === doc.body || parent.tagName === 'HTML' || parent.tagName === 'BODY') return false;
+    if (isGroupElement(parent)) return false;
+    return targets.every((element) => element.parentElement === parent && !isGroupElement(element));
+  }
+
+  function canUngroupSelection() {
+    const targets = filterTopLevelSelection(selectedElements);
+    if (!targets.length) return false;
+    if (targets.some((element) => isGroupElement(element) && !isLockedElement(element))) return true;
+    return targets.some((element) => isGroupElement(element.parentElement) && !isLockedElement(element.parentElement));
+  }
+
   function placeholderTextValue(element) {
     return [
       element?.getAttribute?.('data-slot-label') || '',
@@ -1937,6 +1962,7 @@ function createFrameEditor({
 
   function layerTypeOf(element) {
     if (!element || !isElement(element)) return 'box';
+    if (isGroupElement(element)) return 'group';
     if (element.hasAttribute('data-detected-slot') || element.matches(EXPLICIT_SLOT_SELECTOR) || element.dataset.manualSlot === '1') return 'slot';
     if (isTextyElement(element)) return 'text';
     if (isSectionLike(element)) return 'section';
@@ -1963,6 +1989,7 @@ function createFrameEditor({
         if (!child.dataset.nodeUid) child.dataset.nodeUid = nextId('node');
         const expose = shouldExposeLayer(child, depth);
         if (expose) {
+          const selectedViaGroup = selectedElements.some((selected) => isGroupElement(selected) && selected !== child && selected.contains(child));
           items.push({
             uid: child.dataset.nodeUid,
             label: buildLabel(child),
@@ -1971,6 +1998,7 @@ function createFrameEditor({
             depth,
             childCount: child.children?.length || 0,
             selected: selectedUids.has(child.dataset.nodeUid),
+            selectedViaGroup,
             hidden: child.dataset.editorHidden === '1',
             locked: child.dataset.editorLocked === '1',
           });
@@ -2062,6 +2090,8 @@ function createFrameEditor({
       layerTree,
       textStyle: getTextStyleState(),
       preflight: buildPreflightReport(),
+      canGroupSelection: canGroupSelection(),
+      canUngroupSelection: canUngroupSelection(),
     };
   }
 
@@ -2098,6 +2128,7 @@ function createFrameEditor({
 
   function selectionTypeOf(element) {
     if (!element) return '';
+    if (isGroupElement(element)) return 'group';
     if (element.hasAttribute('data-detected-slot') || element.matches(EXPLICIT_SLOT_SELECTOR) || element.dataset.manualSlot === '1') return 'slot';
     if (isTextyElement(element)) return 'text';
     return 'box';
@@ -2714,19 +2745,73 @@ function createFrameEditor({
     };
   }
 
-  function deleteSelected() {
-    const targets = uniqueConnectedElements(selectedElements);
-    if (!targets.length) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
-    let removed = 0;
-    for (const element of targets) {
-      if (!element.isConnected || element === doc.body || element.tagName === 'HTML' || element.tagName === 'BODY') continue;
-      element.remove();
-      removed += 1;
+  function groupSelected() {
+    const targets = filterTopLevelSelection(selectedElements).filter((element) => !isLockedElement(element));
+    if (targets.length < 2) return { ok: false, message: '그룹은 2개 이상 선택해야 합니다.' };
+    const parent = targets[0]?.parentElement;
+    if (!parent || parent === doc.body || ['HTML', 'BODY'].includes(parent.tagName)) {
+      return { ok: false, message: '그룹을 만들 공통 부모를 찾지 못했습니다.' };
     }
-    if (!removed) return { ok: false, message: '삭제할 수 있는 요소가 없습니다.' };
-    redetect({ preserveSelectionUids: [] });
-    emitMutation('delete');
-    return { ok: true, message: `선택 요소 ${removed}개를 삭제했습니다.` };
+    if (!targets.every((element) => element.parentElement === parent)) {
+      return { ok: false, message: '같은 부모 레벨의 요소만 그룹으로 묶을 수 있습니다.' };
+    }
+    const siblingOrder = Array.from(parent.children || []);
+    const orderedTargets = targets.slice().sort((a, b) => siblingOrder.indexOf(a) - siblingOrder.indexOf(b));
+    const group = doc.createElement('div');
+    group.dataset.nodeRole = 'group';
+    group.dataset.nodeUid = nextId('node');
+    group.dataset.groupLabel = `그룹 ${orderedTargets.length}`;
+    group.setAttribute('aria-label', group.dataset.groupLabel);
+    parent.insertBefore(group, orderedTargets[0]);
+    for (const target of orderedTargets) group.appendChild(target);
+    group.dataset.editorModified = '1';
+    modifiedSlots.add(group.dataset.nodeUid);
+    redetect({ preserveSelectionUids: [group.dataset.nodeUid] });
+    emitMutation('group-selection');
+    return { ok: true, message: `선택 요소 ${orderedTargets.length}개를 그룹으로 묶었습니다.` };
+  }
+
+  function ungroupSelected() {
+    const targets = filterTopLevelSelection(selectedElements);
+    if (!targets.length) return { ok: false, message: '먼저 그룹(또는 그룹 안 요소)을 선택해 주세요.' };
+    const groups = [];
+    const seen = new Set();
+    const pushGroup = (group) => {
+      if (!isGroupElement(group) || !group.isConnected || isLockedElement(group)) return;
+      const uid = group.dataset.nodeUid || nextId('node');
+      group.dataset.nodeUid = uid;
+      if (seen.has(uid)) return;
+      seen.add(uid);
+      groups.push(group);
+    };
+    for (const target of targets) {
+      if (isGroupElement(target)) pushGroup(target);
+      else pushGroup(target.parentElement);
+    }
+    if (!groups.length) return { ok: false, message: '해제할 그룹을 찾지 못했습니다.' };
+    const keepSelectionUids = [];
+    for (const group of groups) {
+      const parent = group.parentElement;
+      if (!parent) continue;
+      const children = Array.from(group.children || []).filter((child) => isElement(child));
+      for (const child of children) {
+        parent.insertBefore(child, group);
+        if (child.dataset.nodeUid) keepSelectionUids.push(child.dataset.nodeUid);
+      }
+      group.remove();
+    }
+    redetect({ preserveSelectionUids: keepSelectionUids });
+    emitMutation('ungroup-selection');
+    return { ok: true, message: `그룹 ${groups.length}개를 해제했습니다.` };
+  }
+
+  function deleteSelected() {
+    return deleteSelection({
+      selectedElements: () => uniqueConnectedElements(selectedElements),
+      doc,
+      redetect,
+      emitMutation,
+    });
   }
 
   function addElement(kind) {
@@ -2795,6 +2880,15 @@ function createFrameEditor({
       back: '선택 요소를 맨 뒤로 보냈습니다.',
     };
     return { ok: true, message: messageMap[command] || '레이어 순서를 변경했습니다.' };
+  }
+
+  function nudgeSelectedElements(dx = 0, dy = 0) {
+    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
+    if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
+    for (const element of targets) shiftElementBy(element, dx, dy);
+    emitState();
+    emitMutation('nudge-selection');
+    return { ok: true, message: `선택 요소 ${targets.length}개를 ${dx}, ${dy}만큼 이동했습니다.` };
   }
 
   function nudgeImagePosition(dx = 0, dy = 0) {
@@ -3056,6 +3150,8 @@ function createFrameEditor({
       layerTree: buildLayerTree(),
       textStyle: getTextStyleState(),
       preflight: buildPreflightReport(),
+      canGroupSelection: canGroupSelection(),
+      canUngroupSelection: canUngroupSelection(),
       generatedAt: new Date().toISOString(),
     };
   }
@@ -3433,91 +3529,69 @@ function createFrameEditor({
   }
 
   function beginMoveDrag(target, event) {
-    if (!target || isLockedElement(target)) return false;
-    if (!selectedElements.some((element) => element.dataset.nodeUid === target.dataset.nodeUid)) {
-      selectElements([target], { silent: true });
-    }
-    const elements = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
-    if (!elements.length) return false;
-    const snapshots = elements.map((element) => ({
-      element,
-      rect: element.getBoundingClientRect(),
-      transform: readTransformState(element),
-    }));
-    const union = unionRect(snapshots.map((item) => item.rect));
-    const excluded = new Set(elements.map((element) => element.dataset.nodeUid));
-    dragState = {
-      mode: 'move',
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      moved: false,
-      snapshots,
-      union,
-      snapCandidates: buildSnapCandidates(excluded),
-    };
+    const nextState = beginMoveInteraction({
+      target,
+      event,
+      isLockedElement,
+      selectedElements: () => selectedElements,
+      selectElements,
+      uniqueConnectedElements,
+      readTransformState,
+      unionRect,
+      buildSnapCandidates,
+    });
+    if (!nextState) return false;
+    dragState = nextState;
     return true;
   }
 
   function beginMarqueeDrag(event) {
-    dragState = {
-      mode: 'marquee',
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      moved: false,
-      additive: !!(event.ctrlKey || event.metaKey || event.shiftKey),
-      seedSelection: uniqueConnectedElements(selectedElements),
-    };
+    dragState = beginMarqueeInteraction({
+      event,
+      selectedElements: () => selectedElements,
+      uniqueConnectedElements,
+    });
     return true;
   }
 
   function updateMarqueeSelection(endX, endY) {
-    if (!dragState || dragState.mode !== 'marquee') return;
-    const rect = normalizeClientRect(dragState.startX, dragState.startY, endX, endY);
-    showMarqueeRect(rect);
-    const hits = collectInteractiveLayers()
-      .filter((element) => !isLockedElement(element) && !isHiddenElement(element))
-      .filter((element) => {
-        const box = element.getBoundingClientRect();
-        return box.width > 1 && box.height > 1 && rectIntersects(box, rect);
-      });
-    const next = dragState.additive ? uniqueConnectedElements([...dragState.seedSelection, ...hits]) : uniqueConnectedElements(hits);
-    selectElements(next, { silent: true });
+    applyMarqueeInteraction({
+      dragState,
+      endX,
+      endY,
+      showMarqueeRect,
+      collectInteractiveLayers,
+      isLockedElement,
+      isHiddenElement,
+      rectIntersects,
+      uniqueConnectedElements,
+      selectElements,
+    });
   }
 
   function updateMoveDrag(clientX, clientY) {
-    if (!dragState || dragState.mode !== 'move') return;
-    const rawDx = clientX - dragState.startX;
-    const rawDy = clientY - dragState.startY;
-    const snapped = computeSnapAdjustment(dragState.union, rawDx, rawDy, dragState.snapCandidates);
-    for (const item of dragState.snapshots) {
-      writeTransformState(item.element, item.transform.tx + snapped.dx, item.transform.ty + snapped.dy);
-    }
-    showSnapLines({ x: snapped.guideX, y: snapped.guideY });
-    doc.documentElement.classList.add('__phase6_dragging_cursor');
-    doc.body.classList.add('__phase6_dragging_cursor');
+    applyMoveInteraction({
+      dragState,
+      clientX,
+      clientY,
+      computeSnapAdjustment,
+      writeTransformState,
+      showSnapLines,
+      doc,
+    });
   }
 
   function beginResizeDrag(event, corner) {
-    const target = selectedElement;
-    if (!target || isLockedElement(target)) return false;
-    const rect = target.getBoundingClientRect();
-    const transform = readTransformState(target);
-    const width = Number.parseFloat(win.getComputedStyle(target).width || String(rect.width)) || rect.width;
-    const height = Number.parseFloat(win.getComputedStyle(target).height || String(rect.height)) || rect.height;
-    resizeState = {
-      pointerId: event.pointerId,
+    const nextState = beginResizeInteraction({
+      event,
       corner,
-      target,
-      startX: event.clientX,
-      startY: event.clientY,
-      startWidth: width,
-      startHeight: height,
-      startTx: transform.tx,
-      startTy: transform.ty,
-      moved: false,
-    };
+      selectedElement: () => selectedElement,
+      isLockedElement,
+      readTransformState,
+      win,
+    });
+    if (!nextState) return false;
+    resizeState = nextState;
     return true;
   }
 
@@ -3659,34 +3733,52 @@ function createFrameEditor({
     }
   }
 
+  function executeCommand(command, payload = {}) {
+    if (command === 'duplicate') return duplicateSelected();
+    if (command === 'delete') return deleteSelected();
+    if (command === 'group-selection') return groupSelected();
+    if (command === 'ungroup-selection') return ungroupSelected();
+    if (command === 'nudge-selection') return nudgeSelectedElements(payload.dx || 0, payload.dy || 0);
+    if (command === 'undo' || command === 'redo' || command === 'save-edited') {
+      onShortcut(command);
+      return { ok: true, message: command };
+    }
+    return { ok: false, message: `지원하지 않는 명령: ${command}` };
+  }
+
   function handleKeydown(event) {
     const withModifier = event.ctrlKey || event.metaKey;
     if (withModifier && !event.altKey) {
       const key = String(event.key || '').toLowerCase();
       if (key === 'z') {
         event.preventDefault();
-        onShortcut(event.shiftKey ? 'redo' : 'undo');
+        executeCommand(event.shiftKey ? 'redo' : 'undo');
         return;
       }
       if (key === 'y') {
         event.preventDefault();
-        onShortcut('redo');
+        executeCommand('redo');
         return;
       }
       if (key === 's') {
         event.preventDefault();
-        onShortcut('save-edited');
+        executeCommand('save-edited');
         return;
       }
       if (key === 'd') {
         event.preventDefault();
-        onStatus(duplicateSelected().message);
+        onStatus(executeCommand('duplicate').message);
+        return;
+      }
+      if (key === 'g') {
+        event.preventDefault();
+        onStatus(executeCommand(event.shiftKey ? 'ungroup-selection' : 'group-selection').message);
         return;
       }
     }
     if (!withModifier && !editingTextElement && (event.key === 'Delete' || event.key === 'Backspace')) {
       event.preventDefault();
-      onStatus(deleteSelected().message);
+      onStatus(executeCommand('delete').message);
       return;
     }
     if (!withModifier && !editingTextElement && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
@@ -3788,6 +3880,8 @@ function createFrameEditor({
     applyBatchLayout,
     duplicateSelected,
     deleteSelected,
+    groupSelected,
+    ungroupSelected,
     addTextElement: () => addElement('text'),
     addBoxElement: () => addElement('box'),
     addSlotElement: () => addElement('slot'),
@@ -3797,6 +3891,7 @@ function createFrameEditor({
     bringSelectedForward: () => reorderSelected('forward'),
     sendSelectedBackward: () => reorderSelected('backward'),
     nudgeSelectedImage: ({ dx = 0, dy = 0 } = {}) => nudgeImagePosition(dx, dy),
+    executeCommand,
     getEditedHtml: serializeEditedHtml,
     getCurrentPortableHtml: async () => {
       const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
@@ -3988,14 +4083,15 @@ function renderLayerTree(container, editorMeta, filterText = '') {
     return;
   }
   container.innerHTML = rows.map((node) => `
-    <div class="layer-item ${selectedUids.has(node.uid) ? 'is-active' : ''} ${node.hidden ? 'is-hidden' : ''} ${node.locked ? 'is-locked' : ''}" data-layer-uid="${escapeHtml(node.uid)}" style="--depth:${Math.max(0, Number(node.depth || 0))}" role="button" tabindex="0">
+    <div class="layer-item ${(selectedUids.has(node.uid) || node.selectedViaGroup) ? 'is-active' : ''} ${node.hidden ? 'is-hidden' : ''} ${node.locked ? 'is-locked' : ''} ${node.type === 'group' ? 'is-group' : ''}" data-layer-uid="${escapeHtml(node.uid)}" style="--depth:${Math.max(0, Number(node.depth || 0))}" role="button" tabindex="0">
       <span class="layer-item__indent" aria-hidden="true"></span>
       <span class="layer-item__body">
-        <strong>${escapeHtml(truncate(node.label || node.uid, 40))}</strong>
+        <strong>${node.type === 'group' ? '🗂️ ' : ''}${escapeHtml(truncate(node.label || node.uid, 40))}</strong>
         <span class="layer-item__meta">${escapeHtml(node.type)} · ${escapeHtml(node.tagName || '')}${node.childCount ? ` · child ${escapeHtml(String(node.childCount))}` : ''}</span>
         <span class="layer-item__status">
           ${node.hidden ? '<span class="status-chip" data-status="hidden">숨김</span>' : ''}
           ${node.locked ? '<span class="status-chip" data-status="locked">잠금</span>' : ''}
+          ${node.selectedViaGroup ? '<span class="status-chip" data-status="selected">그룹선택</span>' : ''}
         </span>
       </span>
       <span class="layer-item__actions">
@@ -4182,6 +4278,8 @@ const elements = {
   addTextButton: document.getElementById('addTextButton'),
   addBoxButton: document.getElementById('addBoxButton'),
   addSlotButton: document.getElementById('addSlotButton'),
+  groupButton: document.getElementById('groupButton'),
+  ungroupButton: document.getElementById('ungroupButton'),
   undoButton: document.getElementById('undoButton'),
   redoButton: document.getElementById('redoButton'),
   restoreAutosaveButton: document.getElementById('restoreAutosaveButton'),
@@ -4768,6 +4866,8 @@ function renderShell(state) {
   elements.toggleHideButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
   elements.toggleLockButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
   elements.textEditButton.disabled = !hasEditor;
+  elements.groupButton.disabled = !hasEditor || !state.editorMeta?.canGroupSelection;
+  elements.ungroupButton.disabled = !hasEditor || !state.editorMeta?.canUngroupSelection;
   elements.preflightRefreshButton.disabled = !hasEditor;
   for (const button of elements.batchActionButtons) {
     const requiresMany = button.dataset.batchAction !== 'reset-transform';
@@ -4805,6 +4905,23 @@ function handleEditorShortcut(action) {
   if (action === 'undo') return undoHistory();
   if (action === 'redo') return redoHistory();
   if (action === 'save-edited') return downloadEditedHtml();
+}
+
+function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
+  if (!activeEditor) {
+    setStatus('먼저 미리보기를 로드해 주세요.');
+    return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
+  }
+  const fallback = {
+    duplicate: () => activeEditor.duplicateSelected(),
+    delete: () => activeEditor.deleteSelected(),
+    'group-selection': () => activeEditor.groupSelected?.() || { ok: false, message: 'group-selection 명령을 지원하지 않습니다.' },
+    'ungroup-selection': () => activeEditor.ungroupSelected?.() || { ok: false, message: 'ungroup-selection 명령을 지원하지 않습니다.' },
+  };
+  const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
+  setStatus(result.message);
+  if (refresh && (store.getState().currentView === 'edited' || store.getState().currentView === 'report')) refreshComputedViews(store.getState());
+  return result;
 }
 
 function mountProject(project, { snapshot = null, preserveHistory = false, force = false } = {}) {
@@ -5240,18 +5357,10 @@ elements.textEditButton.addEventListener('click', () => {
   setStatus(result.message);
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
-elements.duplicateButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const result = activeEditor.duplicateSelected();
-  setStatus(result.message);
-  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
-});
-elements.deleteButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const result = activeEditor.deleteSelected();
-  setStatus(result.message);
-  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
-});
+elements.duplicateButton?.addEventListener('click', () => { executeEditorCommand('duplicate'); });
+elements.deleteButton?.addEventListener('click', () => { executeEditorCommand('delete'); });
+elements.groupButton?.addEventListener('click', () => { executeEditorCommand('group-selection'); });
+elements.ungroupButton?.addEventListener('click', () => { executeEditorCommand('ungroup-selection'); });
 elements.addTextButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.addTextElement();
