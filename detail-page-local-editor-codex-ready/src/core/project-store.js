@@ -4,6 +4,7 @@ export function createProjectStore() {
     project: null,
     editorMeta: null,
     statusText: '대기 중',
+    lastError: '',
     currentView: 'preview',
     selectionMode: 'smart',
   };
@@ -24,6 +25,7 @@ export function createProjectStore() {
       project: state.project,
       editorMeta: state.editorMeta,
       statusText: state.statusText,
+      lastError: state.lastError,
       currentView: state.currentView,
       selectionMode: state.selectionMode,
     };
@@ -55,6 +57,11 @@ export function createProjectStore() {
     notify();
   }
 
+  function setLastError(text) {
+    state.lastError = String(text || '');
+    notify();
+  }
+
   function setView(view) {
     state.currentView = view || 'preview';
     notify();
@@ -75,5 +82,5 @@ export function createProjectStore() {
     return () => listeners.delete(listener);
   }
 
-  return { getState, setProject, updateProject, setEditorMeta, setStatus, setView, setSelectionMode, subscribe };
+  return { getState, setProject, updateProject, setEditorMeta, setStatus, setLastError, setView, setSelectionMode, subscribe };
 }
