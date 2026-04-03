@@ -4712,6 +4712,11 @@ let lastSaveConversion = null;
 let advancedSettingsDirty = false;
 let lastFocusedBeforeShortcutHelp = null;
 const zoomState = { mode: 'fit', value: 1 };
+const viewFeatureFlags = {
+  snap: true,
+  guide: true,
+  ruler: false,
+};
 const WORKFLOW_STEP_GUIDES = Object.freeze({
   load: 'HTML 파일이나 폴더를 먼저 불러오세요.',
   edit: '요소를 클릭한 뒤 드래그하세요.',
@@ -4885,8 +4890,9 @@ const elements = {
   codeSourceButtons: Array.from(document.querySelectorAll('[data-code-source]')),
   sidebarTabButtons: Array.from(document.querySelectorAll('[data-sidebar-tab]')),
   sidebarPanels: Array.from(document.querySelectorAll('[data-sidebar-panel]')),
-  viewButtons: Array.from(document.querySelectorAll('[data-view]')),
-  viewPanels: Array.from(document.querySelectorAll('[data-stage-view]')),
+  viewSnapToggleButton: document.getElementById('viewSnapToggleButton'),
+  viewGuideToggleButton: document.getElementById('viewGuideToggleButton'),
+  viewRulerToggleButton: document.getElementById('viewRulerToggleButton'),
   selectionModeButtons: Array.from(document.querySelectorAll('[data-selection-mode]')),
   presetButtons: Array.from(document.querySelectorAll('[data-preset]')),
   actionButtons: Array.from(document.querySelectorAll('[data-action]')),
@@ -5132,10 +5138,6 @@ function evaluateLocalBootEnvironment() {
     errorCount: checks.filter((item) => item.level === 'error').length,
     warningCount: checks.filter((item) => item.level === 'warning').length,
   };
-}
-
-function setView(nextView) {
-  store.setView(nextView);
 }
 
 function populateFixtureSelect() {
@@ -5440,13 +5442,26 @@ function setSelectionMode(nextMode) {
   activeEditor?.setSelectionMode(nextMode);
 }
 
-function renderViewButtons(currentView) {
-  for (const button of elements.viewButtons) {
-    button.classList.toggle('is-active', button.dataset.view === currentView);
+function syncViewFeatureButtons() {
+  const mapping = [
+    ['snap', elements.viewSnapToggleButton, '스냅'],
+    ['guide', elements.viewGuideToggleButton, '가이드'],
+    ['ruler', elements.viewRulerToggleButton, '눈금자'],
+  ];
+  for (const [key, button, label] of mapping) {
+    if (!button) continue;
+    const isOn = !!viewFeatureFlags[key];
+    button.classList.toggle('is-active', isOn);
+    button.setAttribute('aria-pressed', isOn ? 'true' : 'false');
+    button.textContent = `${label}: ${isOn ? 'ON' : 'OFF'}`;
   }
-  for (const panel of elements.viewPanels) {
-    panel.hidden = panel.dataset.stageView !== currentView;
-  }
+}
+
+function toggleViewFeatureFlag(key, label) {
+  if (!(key in viewFeatureFlags)) return;
+  viewFeatureFlags[key] = !viewFeatureFlags[key];
+  syncViewFeatureButtons();
+  setStatus(`${label} 표시를 ${viewFeatureFlags[key] ? '켰습니다' : '껐습니다'} (기능 플래그 유지)`);
 }
 
 function renderSelectionModeButtons(currentMode) {
@@ -5787,7 +5802,6 @@ function applyGeometryFromInputs() {
 }
 
 function renderShell(state) {
-  renderViewButtons(state.currentView);
   renderSelectionModeButtons(state.selectionMode);
   renderSummaryCards(elements.summaryCards, state.project, state.editorMeta);
   renderIssueList(elements.issueList, state.project);
@@ -6321,7 +6335,6 @@ function safeBoot() {
 
 safeBoot();
 
-for (const button of elements.viewButtons) button.addEventListener('click', () => setView(button.dataset.view));
 for (const button of elements.selectionModeButtons) button.addEventListener('click', () => setSelectionMode(button.dataset.selectionMode));
 for (const button of elements.workflowStepButtons) {
   button.addEventListener('click', () => setWorkflowStep(button.dataset.workflowStep));
@@ -6737,7 +6750,7 @@ window.addEventListener('keydown', (event) => {
   }
   if (key === 'k') {
     event.preventDefault();
-    setSidebarTab('left-code');
+    setSidebarTab('left-advanced');
     elements.codeSearchInput?.focus();
     return;
   }
@@ -6762,13 +6775,17 @@ elements.beginnerTutorialNextButton?.addEventListener('click', () => {
   renderBeginnerTutorialStep();
 });
 elements.beginnerTutorialCloseButton?.addEventListener('click', closeBeginnerTutorial);
+elements.viewSnapToggleButton?.addEventListener('click', () => toggleViewFeatureFlag('snap', '스냅'));
+elements.viewGuideToggleButton?.addEventListener('click', () => toggleViewFeatureFlag('guide', '가이드'));
+elements.viewRulerToggleButton?.addEventListener('click', () => toggleViewFeatureFlag('ruler', '눈금자'));
 
-setSidebarTab('left-import');
+setSidebarTab('left-upload');
 setSidebarTab('right-inspect');
 setCodeSource('edited', { preserveDraft: false });
 syncSaveFormatUi();
 restorePanelLayoutState();
 syncAdvancedFormFromState();
+syncViewFeatureButtons();
 syncWorkspaceButtons();
 applyShortcutTooltips();
 setBeginnerMode(readFromLocalStorage(BEGINNER_MODE_STORAGE_KEY, '0') === '1', { silent: true });
