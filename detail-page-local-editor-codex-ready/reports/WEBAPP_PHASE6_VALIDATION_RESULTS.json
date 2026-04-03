@@ -2,10 +2,10 @@
   "summary": {
     "ok": false,
     "check_count": 166,
-    "passed": 161,
-    "failed": 5,
-    "bundle_bytes": 337964,
-    "bundle_sha256": "a6949515543a66dfa0134197d365ca94143b8b2235c7bf771a7997e4036d074a",
+    "passed": 164,
+    "failed": 2,
+    "bundle_bytes": 351218,
+    "bundle_sha256": "6254db3ab8f4aa852e23e9280b4523fde486e539db84b1561772a12c1334631a",
     "browser_smoke_status": "unavailable",
     "failure_type": "dependency_missing"
   },
@@ -522,12 +522,12 @@
     },
     {
       "name": "frame_editor_has_bringSelectedToFront",
-      "ok": false,
+      "ok": true,
       "detail": "bringSelectedToFront"
     },
     {
       "name": "frame_editor_has_sendSelectedToBack",
-      "ok": false,
+      "ok": true,
       "detail": "sendSelectedToBack"
     },
     {
@@ -607,7 +607,7 @@
     },
     {
       "name": "frame_layer_index_command_unified",
-      "ok": false,
+      "ok": true,
       "detail": "z-order should use layer-index command family"
     },
     {

@@ -951,9 +951,9 @@ function resolveCanvasContextScope(editorMeta) {
 function executeCanvasContextAction(action) {
   if (!activeEditor) return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
   if (action === 'duplicate' || action === 'delete') return executeEditorCommand(action);
-  if (action === 'bring-forward') return activeEditor.bringSelectedForward();
-  if (action === 'send-backward') return activeEditor.sendSelectedBackward();
-  if (action === 'text-edit') return activeEditor.toggleTextEdit();
+  if (action === 'layer-index-forward') return executeEditorCommand('layer-index-forward');
+  if (action === 'layer-index-backward') return executeEditorCommand('layer-index-backward');
+  if (action === 'toggle-text-edit') return executeEditorCommand('toggle-text-edit');
   if (action === 'image-cover') return activeEditor.applyImagePreset('cover');
   if (action === 'image-contain') return activeEditor.applyImagePreset('contain');
   if (action === 'image-nudge-left') return activeEditor.nudgeSelectedImage({ dx: -2, dy: 0 });
@@ -973,7 +973,7 @@ function executeCanvasContextAction(action) {
     'distribute-horizontal',
     'distribute-vertical',
   ].includes(action)) return activeEditor.applyBatchLayout(action);
-  return { ok: false, message: `지원하지 않는 캔버스 액션: ${action}` };
+  return { ok: false, message: `지원하지 않는 명령입니다: ${action}` };
 }
 
 function syncCanvasDirectUi(editorMeta) {
@@ -1116,13 +1116,7 @@ function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
     setStatus('먼저 미리보기를 로드해 주세요.');
     return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
   }
-  const fallback = {
-    duplicate: () => activeEditor.duplicateSelected(),
-    delete: () => activeEditor.deleteSelected(),
-    'group-selection': () => activeEditor.groupSelected?.() || { ok: false, message: 'group-selection 명령을 지원하지 않습니다.' },
-    'ungroup-selection': () => activeEditor.ungroupSelected?.() || { ok: false, message: 'ungroup-selection 명령을 지원하지 않습니다.' },
-  };
-  const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
+  const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : { ok: false, message: `지원하지 않는 명령입니다: ${command}` };
   setStatus(result.message);
   if (refresh && (store.getState().currentView === 'edited' || store.getState().currentView === 'report')) refreshComputedViews(store.getState());
   return result;
@@ -1626,29 +1620,20 @@ elements.redetectButton.addEventListener('click', () => {
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
 elements.textEditButton.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const result = activeEditor.toggleTextEdit();
-  setStatus(result.message);
-  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+  executeEditorCommand('toggle-text-edit');
 });
 elements.duplicateButton?.addEventListener('click', () => { executeEditorCommand('duplicate'); });
 elements.deleteButton?.addEventListener('click', () => { executeEditorCommand('delete'); });
 elements.groupButton?.addEventListener('click', () => { executeEditorCommand('group-selection'); });
 elements.ungroupButton?.addEventListener('click', () => { executeEditorCommand('ungroup-selection'); });
 elements.addTextButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const result = activeEditor.addTextElement();
-  setStatus(result.message);
+  executeEditorCommand('add-element-text');
 });
 elements.addBoxButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const result = activeEditor.addBoxElement();
-  setStatus(result.message);
+  executeEditorCommand('add-element-box');
 });
 elements.addSlotButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const result = activeEditor.addSlotElement();
-  setStatus(result.message);
+  executeEditorCommand('add-element-slot');
 });
 elements.applyGeometryButton?.addEventListener('click', () => {
   const result = applyGeometryFromInputs();
@@ -1666,24 +1651,16 @@ for (const input of [elements.geometryXInput, elements.geometryYInput, elements.
   });
 }
 elements.bringForwardButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const result = activeEditor.bringSelectedForward();
-  setStatus(result.message);
+  executeEditorCommand('layer-index-forward');
 });
 elements.sendBackwardButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const result = activeEditor.sendSelectedBackward();
-  setStatus(result.message);
+  executeEditorCommand('layer-index-backward');
 });
 elements.bringToFrontButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const result = activeEditor.bringSelectedToFront();
-  setStatus(result.message);
+  executeEditorCommand('layer-index-front');
 });
 elements.sendToBackButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const result = activeEditor.sendSelectedToBack();
-  setStatus(result.message);
+  executeEditorCommand('layer-index-back');
 });
 elements.imageNudgeLeftButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: -2, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
 elements.imageNudgeRightButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 2, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));

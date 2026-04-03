@@ -18,6 +18,7 @@ import { createEditorModel, patchModelNode, applyModelNodesToDom } from '../core
 import { restoreSerializedAssetRefs } from '../core/serialize-layer.js';
 
 const FRAME_CSS_URL_RE = /url\((['"]?)([^"'()]+)\1\)/gi;
+const UNSUPPORTED_COMMAND_MESSAGE_PREFIX = '지원하지 않는 명령입니다:';
 const ADD_ELEMENT_PRESETS = {
   text: {
     tagName: 'p',
@@ -813,6 +814,10 @@ export function createFrameEditor({
     onMutation({ type: 'command', id: nextId('cmd'), label, before, after, modelVersion: editorModel.version, at: new Date().toISOString() });
   }
 
+  function unsupportedCommandResult(command) {
+    return { ok: false, message: `${UNSUPPORTED_COMMAND_MESSAGE_PREFIX} ${command}` };
+  }
+
   function getElementByUid(uid) {
     if (!uid) return null;
     return doc.querySelector(`[data-node-uid="${uid}"]`);
@@ -1591,38 +1596,38 @@ export function createFrameEditor({
     return true;
   }
 
-  function applyLayerIndexCommand(command = 'forward') {
+  function applyLayerIndexCommand(direction = 'forward') {
     const target = selectedElement;
     if (!target || !target.parentElement) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
     const siblings = Array.from(target.parentElement.children);
     const currentIndex = siblings.indexOf(target);
     if (currentIndex < 0) return { ok: false, message: '레이어 순서를 계산하지 못했습니다.' };
-    const commandToIndex = {
+    const directionToIndex = {
       forward: currentIndex + 1,
       backward: currentIndex - 1,
       front: siblings.length - 1,
       back: 0,
     };
-    if (!Object.prototype.hasOwnProperty.call(commandToIndex, command)) {
+    if (!Object.prototype.hasOwnProperty.call(directionToIndex, direction)) {
       return { ok: false, message: '지원하지 않는 레이어 명령입니다.' };
     }
-    const moved = moveElementToLayerIndex(target, commandToIndex[command]);
+    const moved = moveElementToLayerIndex(target, directionToIndex[direction]);
     if (!moved) {
       const isFront = currentIndex === siblings.length - 1;
-      const blockedByEdge = (command === 'forward' || command === 'front') ? isFront : currentIndex === 0;
-      return { ok: false, message: blockedByEdge ? ((command === 'forward' || command === 'front') ? '이미 가장 앞 레이어입니다.' : '이미 가장 뒤 레이어입니다.') : '레이어 순서를 변경하지 못했습니다.' };
+      const blockedByEdge = (direction === 'forward' || direction === 'front') ? isFront : currentIndex === 0;
+      return { ok: false, message: blockedByEdge ? ((direction === 'forward' || direction === 'front') ? '이미 가장 앞 레이어입니다.' : '이미 가장 뒤 레이어입니다.') : '레이어 순서를 변경하지 못했습니다.' };
     }
     target.dataset.editorModified = '1';
     if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
     emitState();
-    emitMutation(`layer-index-${command}`);
+    emitMutation(`layer-index-${direction}`);
     const messageMap = {
       forward: '선택 요소를 한 단계 앞으로 보냈습니다.',
       backward: '선택 요소를 한 단계 뒤로 보냈습니다.',
       front: '선택 요소를 맨 앞으로 보냈습니다.',
       back: '선택 요소를 맨 뒤로 보냈습니다.',
     };
-    return { ok: true, message: messageMap[command] || '레이어 순서를 변경했습니다.' };
+    return { ok: true, message: messageMap[direction] || '레이어 순서를 변경했습니다.' };
   }
 
   function bringSelectedForward() {
@@ -2684,11 +2689,19 @@ export function createFrameEditor({
     if (command === 'group-selection') return groupSelected();
     if (command === 'ungroup-selection') return ungroupSelected();
     if (command === 'nudge-selection') return nudgeSelectedElements(payload.dx || 0, payload.dy || 0);
+    if (command === 'add-element-text') return addElement('text');
+    if (command === 'add-element-box') return addElement('box');
+    if (command === 'add-element-slot') return addElement('slot');
+    if (command === 'toggle-text-edit') return toggleTextEdit();
+    if (command === 'layer-index-forward') return applyLayerIndexCommand('forward');
+    if (command === 'layer-index-backward') return applyLayerIndexCommand('backward');
+    if (command === 'layer-index-front') return applyLayerIndexCommand('front');
+    if (command === 'layer-index-back') return applyLayerIndexCommand('back');
     if (command === 'undo' || command === 'redo' || command === 'save-edited') {
       onShortcut(command);
       return { ok: true, message: command };
     }
-    return { ok: false, message: `지원하지 않는 명령: ${command}` };
+    return unsupportedCommandResult(command);
   }
 
   function handleKeydown(event) {
@@ -2765,7 +2778,7 @@ export function createFrameEditor({
       const unit = event.altKey ? 1 : event.shiftKey ? 10 : 2;
       const dx = event.key === 'ArrowLeft' ? -unit : event.key === 'ArrowRight' ? unit : 0;
       const dy = event.key === 'ArrowUp' ? -unit : event.key === 'ArrowDown' ? unit : 0;
-      onStatus(nudgeSelectedElements(dx, dy).message);
+      onStatus(executeCommand('nudge-selection', { dx, dy }).message);
       return;
     }
     if (!editingTextElement) return;
@@ -2861,16 +2874,16 @@ export function createFrameEditor({
     deleteSelected,
     groupSelected,
     ungroupSelected,
-    addTextElement: () => addElement('text'),
-    addBoxElement: () => addElement('box'),
-    addSlotElement: () => addElement('slot'),
+    addTextElement: () => executeCommand('add-element-text'),
+    addBoxElement: () => executeCommand('add-element-box'),
+    addSlotElement: () => executeCommand('add-element-slot'),
     applyGeometryPatch,
-    nudgeSelectedElements,
+    nudgeSelectedElements: (dx = 0, dy = 0) => executeCommand('nudge-selection', { dx, dy }),
     getSelectionGeometry: () => summarizeGeometryForSelection(selectedElements),
-    bringSelectedForward,
-    sendSelectedBackward,
-    bringSelectedToFront,
-    sendSelectedToBack,
+    bringSelectedForward: () => executeCommand('layer-index-forward'),
+    sendSelectedBackward: () => executeCommand('layer-index-backward'),
+    bringSelectedToFront: () => executeCommand('layer-index-front'),
+    sendSelectedToBack: () => executeCommand('layer-index-back'),
     nudgeSelectedImage: ({ dx = 0, dy = 0 } = {}) => nudgeImagePosition(dx, dy),
     executeCommand,
     getEditedHtml: serializeEditedHtml,
