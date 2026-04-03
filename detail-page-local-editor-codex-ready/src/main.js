@@ -1855,15 +1855,17 @@ function applyTextStyleFromControls({ clear = false } = {}) {
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 }
 
-function applyTextStyleLive() {
+function applyTextStyleLive(event) {
   if (!activeEditor) return;
-  const result = activeEditor.applyTextStyle({
-    fontSize: elements.textFontSizeInput?.value?.trim() || '',
-    lineHeight: elements.textLineHeightInput?.value?.trim() || '',
-    letterSpacing: elements.textLetterSpacingInput?.value?.trim() || '',
-    fontWeight: elements.textWeightSelect?.value || '',
-    color: elements.textColorInput?.value || '',
-  });
+  const sourceControl = event?.currentTarget || null;
+  const patch = {};
+  if (sourceControl === elements.textFontSizeInput) patch.fontSize = elements.textFontSizeInput?.value?.trim() || '';
+  if (sourceControl === elements.textLineHeightInput) patch.lineHeight = elements.textLineHeightInput?.value?.trim() || '';
+  if (sourceControl === elements.textLetterSpacingInput) patch.letterSpacing = elements.textLetterSpacingInput?.value?.trim() || '';
+  if (sourceControl === elements.textWeightSelect) patch.fontWeight = elements.textWeightSelect?.value || '';
+  if (sourceControl === elements.textColorInput) patch.color = elements.textColorInput?.value || '';
+  if (!Object.keys(patch).length) return;
+  const result = activeEditor.applyTextStyle(patch);
   if (result?.ok) setStatus('텍스트 스타일을 실시간 반영했습니다.');
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 }
