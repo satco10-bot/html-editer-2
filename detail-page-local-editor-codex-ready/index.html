@@ -120,15 +120,8 @@
       </div>
 
       <div class="topbar__right">
-        <div class="topbar__group">
-          <span class="topbar__label">모드</span>
-          <button id="beginnerModeToggle" class="button" type="button" aria-pressed="false">초보 모드: OFF</button>
-          <details class="topbar__more" data-beginner-more-group="mode">
-            <summary>더보기</summary>
-            <div class="topbar__more-menu" data-beginner-more-target="mode"></div>
-          </details>
-        </div>
-
+        <button id="beginnerModeToggle" class="button button--secondary" type="button" aria-pressed="false">초보 모드: OFF</button>
+        <button id="onboardingReplayButton" class="button button--ghost" type="button">온보딩 다시보기</button>
         <div class="topbar__group">
           <span class="topbar__label">열기</span>
           <button id="openHtmlButton" class="button">HTML 열기</button>
@@ -330,8 +323,8 @@
             <button class="segmented__item" data-selection-mode="box" title="박스 도구 (R)" data-beginner-advanced>박스</button>
           </div>
           <div class="quick-actions button-row">
-            <button id="replaceImageButton" class="button button--secondary" data-beginner-advanced>이미지 넣기</button>
-            <button id="manualSlotButton" class="button button--ghost" data-beginner-advanced>슬롯 지정</button>
+            <button id="replaceImageButton" class="button button--secondary">이미지 넣기</button>
+            <button id="manualSlotButton" class="button button--ghost">슬롯 지정</button>
             <button id="demoteSlotButton" class="button button--warn" data-beginner-advanced>슬롯 해제</button>
             <button id="addTextButton" class="button button--ghost" title="텍스트 도구 (T)" data-beginner-advanced>텍스트 추가</button>
             <button id="addBoxButton" class="button button--ghost" title="박스 도구 (R)" data-beginner-advanced>박스 추가</button>
@@ -740,9 +733,14 @@
       <div class="button-row button-row--compact">
         <button id="beginnerTutorialPrevButton" class="button button--ghost button--small" type="button">이전</button>
         <button id="beginnerTutorialNextButton" class="button button--secondary button--small" type="button">다음</button>
-        <button id="beginnerTutorialCloseButton" class="button button--ghost button--small" type="button">닫기</button>
+        <button id="beginnerTutorialCloseButton" class="button button--ghost button--small" type="button">건너뛰기</button>
       </div>
     </div>
+  </div>
+  <div id="onboardingChecklist" class="onboarding-checklist" hidden>
+    <strong>온보딩 완료 ✅</strong>
+    <p id="onboardingChecklistItem"></p>
+    <button id="onboardingChecklistDoneButton" class="button button--small" type="button">완료 체크</button>
   </div>
 
   <script src="./app.bundle.js"></script>

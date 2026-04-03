@@ -69,26 +69,31 @@ const APP_STATES = Object.freeze({
   editor: 'editor',
 });
 const BEGINNER_MODE_STORAGE_KEY = 'detail_editor_beginner_mode_v1';
-const BEGINNER_MODE_TUTORIAL_SEEN_KEY = 'detail_editor_beginner_tutorial_seen_v1';
-const IMAGE_FILE_NAME_HINT_RE = /[\s_-]+/g;
-const SUPPORTED_IMAGE_EXTENSIONS_TEXT = '.png, .jpg, .jpeg, .gif, .webp, .bmp, .svg, .avif';
+const ONBOARDING_COMPLETED_STORAGE_KEY = 'detail_editor_onboarding_completed_v1';
+const ONBOARDING_SAMPLE_CHECKED_STORAGE_KEY = 'detail_editor_onboarding_sample_checked_v1';
 const BEGINNER_TUTORIAL_STEPS = Object.freeze([
   {
-    title: '1) 선택부터 시작',
-    body: '먼저 [선택] 버튼으로 요소를 클릭하세요. 선택 후 드래그하면 이동됩니다.',
+    id: 'slot-select',
+    title: '1) 슬롯 선택',
+    body: '먼저 [슬롯 지정] 버튼을 눌러 선택한 요소를 슬롯으로 지정하세요.',
+    targetElementKey: 'manualSlotButton',
   },
   {
-    title: '2) 크기 조절/정리',
-    body: '요소 테두리 핸들을 잡아 리사이즈하고, 필요하면 [복제]/[삭제]/[텍스트] 버튼만 사용하세요.',
+    id: 'replace-image',
+    title: '2) 이미지 교체',
+    body: '이제 [이미지 넣기] 버튼을 눌러 이미지를 교체하세요.',
+    targetElementKey: 'replaceImageButton',
   },
   {
-    title: '3) 결과 저장',
-    body: `완료하면 상단 [${OPEN_DOWNLOAD_MODAL_BUTTON_LABEL}] 버튼으로 결과를 바로 내보내세요.`,
+    id: 'save-png',
+    title: '3) PNG 저장',
+    body: '마지막으로 상단 [PNG] 버튼을 눌러 저장하면 온보딩이 끝나요.',
+    targetElementKey: 'exportPngButton',
   },
 ]);
 let isBeginnerMode = false;
 let beginnerTutorialStepIndex = 0;
-let currentAppState = APP_STATES.launch;
+let onboardingCompleted = false;
 
 const historyState = {
   baseSnapshot: null,
@@ -140,6 +145,7 @@ const elements = {
   addTextButton: document.getElementById('addTextButton'),
   addBoxButton: document.getElementById('addBoxButton'),
   addSlotButton: document.getElementById('addSlotButton'),
+  selectionSmartButton: document.getElementById('selectionSmartButton'),
   groupButton: document.getElementById('groupButton'),
   ungroupButton: document.getElementById('ungroupButton'),
   undoButton: document.getElementById('undoButton'),
@@ -161,6 +167,7 @@ const elements = {
   downloadNormalizedButton: document.getElementById('downloadNormalizedButton'),
   downloadLinkedZipButton: document.getElementById('downloadLinkedZipButton'),
   modalExportPngButton: document.getElementById('modalExportPngButton'),
+  exportPngButton: document.getElementById('exportPngButton'),
   exportPngButtons: Array.from(document.querySelectorAll('[data-download-action="export-full-png"]')),
   modalExportJpgButton: document.getElementById('modalExportJpgButton'),
   exportJpgButtons: Array.from(document.querySelectorAll('[data-download-action="export-full-jpg"]')),
@@ -290,9 +297,10 @@ const elements = {
   beginnerTutorialPrevButton: document.getElementById('beginnerTutorialPrevButton'),
   beginnerTutorialNextButton: document.getElementById('beginnerTutorialNextButton'),
   beginnerTutorialCloseButton: document.getElementById('beginnerTutorialCloseButton'),
-  beginnerMoreItems: Array.from(document.querySelectorAll('[data-beginner-more-item]')),
-  beginnerMoreTargets: Array.from(document.querySelectorAll('[data-beginner-more-target]')),
-  beginnerMoreMenus: Array.from(document.querySelectorAll('.topbar__more')),
+  onboardingReplayButton: document.getElementById('onboardingReplayButton'),
+  onboardingChecklist: document.getElementById('onboardingChecklist'),
+  onboardingChecklistItem: document.getElementById('onboardingChecklistItem'),
+  onboardingChecklistDoneButton: document.getElementById('onboardingChecklistDoneButton'),
 };
 
 const beginnerMoreItemAnchors = new WeakMap();
@@ -319,17 +327,49 @@ function writeToLocalStorage(key, value) {
   } catch {}
 }
 
-function hasSeenBeginnerTutorial() {
-  return readFromLocalStorage(BEGINNER_MODE_TUTORIAL_SEEN_KEY, '') === '1';
+function hasCompletedOnboarding() {
+  return readFromLocalStorage(ONBOARDING_COMPLETED_STORAGE_KEY, '') === '1';
 }
 
-function markBeginnerTutorialSeen() {
-  writeToLocalStorage(BEGINNER_MODE_TUTORIAL_SEEN_KEY, '1');
+function hasCompletedOnboardingSampleTask() {
+  return readFromLocalStorage(ONBOARDING_SAMPLE_CHECKED_STORAGE_KEY, '') === '1';
+}
+
+function markOnboardingCompleted() {
+  onboardingCompleted = true;
+  writeToLocalStorage(ONBOARDING_COMPLETED_STORAGE_KEY, '1');
+}
+
+function clearOnboardingHighlights() {
+  document.querySelectorAll('.onboarding-highlight').forEach((target) => target.classList.remove('onboarding-highlight'));
+}
+
+function applyOnboardingHighlightForCurrentStep() {
+  clearOnboardingHighlights();
+  if (onboardingCompleted) return;
+  const step = BEGINNER_TUTORIAL_STEPS[beginnerTutorialStepIndex] || null;
+  const target = step?.targetElementKey ? elements[step.targetElementKey] : null;
+  target?.classList.add('onboarding-highlight');
 }
 
 function closeBeginnerTutorial() {
   if (elements.beginnerTutorialTooltip) elements.beginnerTutorialTooltip.hidden = true;
-  markBeginnerTutorialSeen();
+  clearOnboardingHighlights();
+}
+
+function renderOnboardingChecklist() {
+  if (!elements.onboardingChecklist) return;
+  const done = hasCompletedOnboardingSampleTask();
+  elements.onboardingChecklist.hidden = !onboardingCompleted;
+  if (elements.onboardingChecklistItem) {
+    elements.onboardingChecklistItem.textContent = done
+      ? '✅ 샘플 작업 1회 실행 완료'
+      : '⬜ 샘플(F05)에서 슬롯 선택 → 이미지 교체 → PNG 저장을 1회 실행해 보세요.';
+  }
+  if (elements.onboardingChecklistDoneButton) {
+    elements.onboardingChecklistDoneButton.disabled = done;
+    elements.onboardingChecklistDoneButton.textContent = done ? '체크 완료' : '완료 체크';
+  }
 }
 
 function renderBeginnerTutorialStep() {
@@ -342,13 +382,38 @@ function renderBeginnerTutorialStep() {
     const isLast = beginnerTutorialStepIndex >= BEGINNER_TUTORIAL_STEPS.length - 1;
     elements.beginnerTutorialNextButton.textContent = isLast ? '완료' : '다음';
   }
+  applyOnboardingHighlightForCurrentStep();
 }
 
-function openBeginnerTutorialIfNeeded() {
-  if (!isBeginnerMode || hasSeenBeginnerTutorial()) return;
+function openBeginnerTutorial({ force = false } = {}) {
+  if (!force && onboardingCompleted) return;
   beginnerTutorialStepIndex = 0;
   renderBeginnerTutorialStep();
   if (elements.beginnerTutorialTooltip) elements.beginnerTutorialTooltip.hidden = false;
+}
+
+function openBeginnerTutorialIfNeeded() {
+  if (onboardingCompleted) return;
+  openBeginnerTutorial();
+}
+
+function completeOnboardingTutorial() {
+  markOnboardingCompleted();
+  closeBeginnerTutorial();
+  renderOnboardingChecklist();
+  setStatus('온보딩을 완료했습니다. 아래 체크리스트로 샘플 작업을 1회 실행해 보세요.');
+}
+
+function advanceOnboardingByAction(actionId) {
+  if (onboardingCompleted || elements.beginnerTutorialTooltip?.hidden) return;
+  const step = BEGINNER_TUTORIAL_STEPS[beginnerTutorialStepIndex] || null;
+  if (!step || step.id !== actionId) return;
+  if (beginnerTutorialStepIndex >= BEGINNER_TUTORIAL_STEPS.length - 1) {
+    completeOnboardingTutorial();
+    return;
+  }
+  beginnerTutorialStepIndex += 1;
+  renderBeginnerTutorialStep();
 }
 
 function applyBeginnerModeUi() {
@@ -358,44 +423,12 @@ function applyBeginnerModeUi() {
     elements.beginnerModeToggle.setAttribute('aria-pressed', isBeginnerMode ? 'true' : 'false');
   }
   if (isBeginnerMode && elements.advancedTopbarPanel) elements.advancedTopbarPanel.open = false;
-  if (!isBeginnerMode && elements.beginnerTutorialTooltip) elements.beginnerTutorialTooltip.hidden = true;
-  syncBeginnerMoreMenus();
-}
-
-function syncBeginnerMoreMenus() {
-  const targetByGroup = new Map();
-  elements.beginnerMoreTargets.forEach((target) => {
-    const group = target.dataset.beginnerMoreTarget;
-    if (group) targetByGroup.set(group, target);
-  });
-  elements.beginnerMoreItems.forEach((item) => {
-    const group = item.dataset.beginnerMoreItem;
-    if (!group) return;
-    if (isBeginnerMode) {
-      const target = targetByGroup.get(group);
-      if (target && item.parentElement !== target) target.append(item);
-      return;
-    }
-    const anchor = beginnerMoreItemAnchors.get(item);
-    if (!anchor?.parent) return;
-    if (anchor.nextSibling && anchor.nextSibling.parentNode === anchor.parent) {
-      anchor.parent.insertBefore(item, anchor.nextSibling);
-    } else {
-      anchor.parent.append(item);
-    }
-  });
-  if (!isBeginnerMode) {
-    elements.beginnerMoreMenus.forEach((menu) => {
-      menu.open = false;
-    });
-  }
 }
 
 function setBeginnerMode(next, { silent = false } = {}) {
   isBeginnerMode = !!next;
   applyBeginnerModeUi();
   writeToLocalStorage(BEGINNER_MODE_STORAGE_KEY, isBeginnerMode ? '1' : '0');
-  if (isBeginnerMode) openBeginnerTutorialIfNeeded();
   if (!silent) setStatus(`초보 모드를 ${isBeginnerMode ? '켰습니다' : '껐습니다'}.`);
 }
 
@@ -2066,6 +2099,8 @@ function safeBoot() {
 }
 
 safeBoot();
+onboardingCompleted = hasCompletedOnboarding();
+renderOnboardingChecklist();
 
 function bindEvents() {
   initNumericSteppers();
@@ -2113,14 +2148,10 @@ function bindEvents() {
     }
   }
 
-for (const button of elements.selectionModeButtons) button.addEventListener('click', () => setSelectionMode(button.dataset.selectionMode));
-if (elements.workflowGuideSelect) {
-  elements.workflowGuideSelect.addEventListener('change', () => {
-    const requestedTab = WORKFLOW_STEP_TO_LEFT_TAB[elements.workflowGuideSelect?.value || 'load'];
-    if (requestedTab) setSidebarTab(requestedTab, { syncWorkflow: false });
-    syncWorkflowGuide(store.getState(), { announce: true });
-  });
-}
+for (const button of elements.selectionModeButtons) button.addEventListener('click', () => {
+  setSelectionMode(button.dataset.selectionMode);
+});
+if (elements.workflowGuideSelect) elements.workflowGuideSelect.addEventListener('change', () => syncWorkflowGuide(store.getState(), { announce: true }));
 for (const button of elements.presetButtons) {
   button.addEventListener('click', () => {
     if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
@@ -2208,11 +2239,15 @@ for (const button of elements.launcherFixtureButtons) {
 elements.openFolderButton?.addEventListener('click', () => elements.folderInput?.click());
 elements.loadFixtureButton?.addEventListener('click', () => loadFixture(elements.fixtureSelect?.value));
 elements.applyPasteButton?.addEventListener('click', applyPastedHtml);
-elements.replaceImageButton?.addEventListener('click', () => elements.replaceImageInput?.click());
+elements.replaceImageButton?.addEventListener('click', () => {
+  elements.replaceImageInput?.click();
+  advanceOnboardingByAction('replace-image');
+});
 elements.manualSlotButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.markSelectedAsSlot();
   setStatus(result.message);
+  if (result?.ok !== false) advanceOnboardingByAction('slot-select');
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
 elements.toggleHideButton?.addEventListener('click', () => {
@@ -2316,7 +2351,10 @@ for (const button of elements.downloadEditedButtons) {
 elements.downloadNormalizedButton?.addEventListener('click', () => { runDownloadByChoice('download-normalized-html').catch((error) => setStatus(`정규화 HTML 저장 중 오류: ${error?.message || error}`)); });
 elements.downloadLinkedZipButton?.addEventListener('click', () => { runDownloadByChoice('download-linked-zip').catch((error) => setStatus(`ZIP 저장 중 오류: ${error?.message || error}`)); });
 for (const button of elements.exportPngButtons) {
-  button?.addEventListener('click', () => { runDownloadByChoice('export-full-png').catch((error) => setStatus(`PNG 저장 중 오류: ${error?.message || error}`)); });
+  button?.addEventListener('click', () => {
+    runDownloadByChoice('export-full-png').catch((error) => setStatus(`PNG 저장 중 오류: ${error?.message || error}`));
+    advanceOnboardingByAction('save-png');
+  });
 }
 for (const button of elements.exportJpgButtons) {
   button?.addEventListener('click', () => { runDownloadByChoice('export-full-jpg').catch((error) => setStatus(`JPG 저장 중 오류: ${error?.message || error}`)); });
@@ -2692,14 +2730,25 @@ elements.beginnerTutorialPrevButton?.addEventListener('click', () => {
 });
 elements.beginnerTutorialNextButton?.addEventListener('click', () => {
   if (beginnerTutorialStepIndex >= BEGINNER_TUTORIAL_STEPS.length - 1) {
-    closeBeginnerTutorial();
-    setStatus('초보 모드 튜토리얼을 완료했습니다.');
+    completeOnboardingTutorial();
     return;
   }
   beginnerTutorialStepIndex += 1;
   renderBeginnerTutorialStep();
 });
-elements.beginnerTutorialCloseButton?.addEventListener('click', closeBeginnerTutorial);
+elements.beginnerTutorialCloseButton?.addEventListener('click', () => {
+  closeBeginnerTutorial();
+  setStatus('온보딩을 건너뛰었습니다. 언제든 [온보딩 다시보기] 버튼으로 재시작할 수 있어요.');
+});
+elements.onboardingReplayButton?.addEventListener('click', () => {
+  openBeginnerTutorial({ force: true });
+  setStatus('온보딩을 다시 시작했습니다.');
+});
+elements.onboardingChecklistDoneButton?.addEventListener('click', () => {
+  writeToLocalStorage(ONBOARDING_SAMPLE_CHECKED_STORAGE_KEY, '1');
+  renderOnboardingChecklist();
+  setStatus('샘플 작업 1회 실행 체크리스트를 완료로 기록했습니다.');
+});
 elements.viewSnapToggleButton?.addEventListener('click', () => toggleViewFeatureFlag('snap', '스냅'));
 elements.viewGuideToggleButton?.addEventListener('click', () => toggleViewFeatureFlag('guide', '가이드'));
 elements.viewRulerToggleButton?.addEventListener('click', () => toggleViewFeatureFlag('ruler', '눈금자'));
@@ -2720,3 +2769,4 @@ syncViewFeatureButtons();
 syncWorkspaceButtons();
 applyShortcutTooltips();
 setBeginnerMode(readFromLocalStorage(BEGINNER_MODE_STORAGE_KEY, '0') === '1', { silent: true });
+openBeginnerTutorialIfNeeded();

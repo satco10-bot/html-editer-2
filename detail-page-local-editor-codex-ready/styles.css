@@ -313,6 +313,31 @@ body.beginner-mode [data-beginner-advanced] {
   justify-content: space-between;
   gap: 8px;
 }
+.onboarding-highlight {
+  position: relative;
+  outline: 3px solid #f59e0b !important;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.25) !important;
+}
+.onboarding-checklist {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 999997;
+  width: min(340px, calc(100vw - 36px));
+  background: #ffffff;
+  border: 1px solid #bbf7d0;
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+.onboarding-checklist p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
 
 .mini-control {
   display: inline-flex;
