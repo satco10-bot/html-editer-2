@@ -2229,10 +2229,20 @@ function createFrameEditor({
   function getDerivedMeta() {
     const selectedItems = selectedElements.map((element) => buildSelectionInfo(element)).filter(Boolean);
     const layerTree = buildLayerTree();
+    const sectionRecords = listEditableSections();
+    const sections = sectionRecords.map((section) => ({ uid: section.uid, name: section.name, index: section.index }));
+    const selectedSectionUid = selectedElements.map((element) => {
+      const uid = element?.dataset?.nodeUid || '';
+      const exact = sectionRecords.find((section) => section.uid === uid);
+      if (exact) return exact.uid;
+      return sectionRecords.find((section) => section.element.contains(element))?.uid || '';
+    }).find(Boolean) || '';
     return {
       selected: selectedInfo,
       selectedItems,
       selectionCount: selectedItems.length,
+      sections,
+      selectedSectionUid,
       slots: detection.candidates,
       nearMisses: detection.nearMisses,
       slotSummary: detection.summary,
@@ -3349,10 +3359,12 @@ function createFrameEditor({
   }
 
   function buildReport() {
+    const sections = listEditableSections().map((section) => ({ uid: section.uid, name: section.name, index: section.index }));
     return {
       selected: selectedInfo,
       selectedItems: selectedElements.map((element) => buildSelectionInfo(element)).filter(Boolean),
       selectionCount: selectedElements.length,
+      sections,
       slotSummary: detection.summary,
       slots: detection.candidates,
       nearMisses: detection.nearMisses,
@@ -3727,18 +3739,125 @@ function createFrameEditor({
     };
   }
 
-  function collectSectionRects() {
+  function collectSectionElements({ includeDescendants = true } = {}) {
     const metrics = measureExportRoot();
-    const docRect = doc.documentElement.getBoundingClientRect();
-    let candidates = Array.from(metrics.root.children || []).filter((element) => {
+    const root = metrics.root;
+    const directChildren = Array.from(root.children || []).filter((element) => {
       if (!isElement(element)) return false;
       const rect = element.getBoundingClientRect();
       if (rect.width < 20 || rect.height < 20) return false;
-      return element.tagName === 'SECTION' || element.classList.contains('section') || element.classList.contains('hero') || element.classList.contains('hb-info-wrap') || element.hasAttribute('data-export-section');
+      return isSectionLike(element) || element.hasAttribute('data-export-section');
     });
-    if (!candidates.length) {
-      candidates = Array.from(metrics.root.querySelectorAll('section, .hb-info-wrap')).filter((element) => isElement(element));
+    if (directChildren.length || !includeDescendants) return directChildren;
+    return Array.from(root.querySelectorAll('section, .hb-info-wrap, [data-export-section]')).filter((element) => {
+      if (!isElement(element)) return false;
+      const rect = element.getBoundingClientRect();
+      return rect.width >= 20 && rect.height >= 20;
+    });
+  }
+
+  function listEditableSections() {
+    return collectSectionElements().map((element, index) => {
+      const uid = element.dataset.nodeUid || nextId('node');
+      element.dataset.nodeUid = uid;
+      const rawName = buildLabel(element) || element.getAttribute('data-builder-section') || element.id || element.className || element.tagName.toLowerCase();
+      return {
+        uid,
+        name: rawName || `섹션 ${index + 1}`,
+        element,
+        index,
+      };
+    });
+  }
+
+  function resolveSectionByUid(uid) {
+    if (!uid) return null;
+    return listEditableSections().find((section) => section.uid === uid) || null;
+  }
+
+  function assignNodeUidDeep(rootElement) {
+    if (!isElement(rootElement)) return;
+    rootElement.dataset.nodeUid = nextId('node');
+    const descendants = Array.from(rootElement.querySelectorAll('*'));
+    descendants.forEach((element) => {
+      if (!isElement(element)) return;
+      element.dataset.nodeUid = nextId('node');
+    });
+  }
+
+  function duplicateSectionByUid(uid) {
+    const section = resolveSectionByUid(uid);
+    if (!section) return { ok: false, message: '복제할 섹션을 찾지 못했습니다.' };
+    const clone = section.element.cloneNode(true);
+    assignNodeUidDeep(clone);
+    section.element.insertAdjacentElement('afterend', clone);
+    const keepUid = clone.dataset.nodeUid || '';
+    redetect({ preserveSelectionUids: keepUid ? [keepUid] : [] });
+    emitMutation('section-duplicate');
+    return { ok: true, message: '섹션을 복제했습니다.', uid: keepUid };
+  }
+
+  function moveSectionByUid(uid, direction = 'up') {
+    const section = resolveSectionByUid(uid);
+    if (!section) return { ok: false, message: '이동할 섹션을 찾지 못했습니다.' };
+    const sections = listEditableSections();
+    const index = sections.findIndex((item) => item.uid === uid);
+    if (index < 0) return { ok: false, message: '이동할 섹션 인덱스를 찾지 못했습니다.' };
+    if (direction === 'up') {
+      if (index < 1) return { ok: false, message: '이미 맨 위 섹션입니다.' };
+      sections[index - 1].element.insertAdjacentElement('beforebegin', section.element);
+    } else {
+      if (index >= sections.length - 1) return { ok: false, message: '이미 맨 아래 섹션입니다.' };
+      sections[index + 1].element.insertAdjacentElement('afterend', section.element);
     }
+    redetect({ preserveSelectionUids: [uid] });
+    emitMutation(direction === 'up' ? 'section-move-up' : 'section-move-down');
+    return { ok: true, message: direction === 'up' ? '섹션을 위로 이동했습니다.' : '섹션을 아래로 이동했습니다.' };
+  }
+
+  function deleteSectionByUid(uid) {
+    const section = resolveSectionByUid(uid);
+    if (!section) return { ok: false, message: '삭제할 섹션을 찾지 못했습니다.' };
+    section.element.remove();
+    redetect({ preserveSelectionUids: [] });
+    emitMutation('section-delete');
+    return { ok: true, message: '섹션을 삭제했습니다.' };
+  }
+
+  function addSectionAfterUid(uid = '') {
+    const sections = listEditableSections();
+    const root = measureExportRoot().root;
+    const section = doc.createElement('section');
+    const sectionUid = nextId('node');
+    section.dataset.nodeUid = sectionUid;
+    section.dataset.editableBox = '새 섹션';
+    section.style.position = 'relative';
+    section.style.minHeight = '360px';
+    section.style.width = '100%';
+    section.style.borderTop = '1px dashed #e2e8f0';
+    const marker = doc.createElement('div');
+    marker.dataset.nodeUid = nextId('node');
+    marker.dataset.editableBox = '새 섹션 안내';
+    marker.dataset.editableText = '새 섹션 안내';
+    marker.textContent = '새 섹션 (내용을 추가하세요)';
+    marker.style.position = 'absolute';
+    marker.style.left = '32px';
+    marker.style.top = '32px';
+    marker.style.fontSize = '20px';
+    marker.style.fontWeight = '700';
+    marker.style.color = '#64748b';
+    section.appendChild(marker);
+    const target = uid ? sections.find((item) => item.uid === uid)?.element : null;
+    if (target?.parentElement) target.insertAdjacentElement('afterend', section);
+    else root.appendChild(section);
+    redetect({ preserveSelectionUids: [sectionUid] });
+    emitMutation('section-add');
+    return { ok: true, message: '새 섹션을 추가했습니다.', uid: sectionUid };
+  }
+
+  function collectSectionRects() {
+    const docRect = doc.documentElement.getBoundingClientRect();
+    const candidates = collectSectionElements();
     return candidates.map((element, index) => {
       const rect = element.getBoundingClientRect();
       const crop = elementRectToCrop(rect, docRect);
@@ -4380,6 +4499,11 @@ function createFrameEditor({
     async exportSectionPngEntries(scale = 1.5) {
       return await exportSectionPngEntries(scale);
     },
+    listEditableSections,
+    duplicateSectionByUid,
+    moveSectionByUid,
+    deleteSectionByUid,
+    addSectionAfterUid,
     async getExportFixtureIntegrityReport() {
       return await exportFixtureIntegrityReport();
     },
@@ -4529,6 +4653,23 @@ function renderSlotList(container, editorMeta) {
         <span class="slot-badge" data-kind="${escapeHtml(slot.type)}">${escapeHtml(slot.type)}</span>
       </div>
       <div class="slot-list-item__meta">score ${escapeHtml(String(slot.score ?? '-'))} · ${escapeHtml(truncate(slot.groupKey || '', 48))}</div>
+    </button>
+  `).join('');
+}
+function renderSectionFilmstrip(container, editorMeta) {
+  if (!container) return;
+  if (!editorMeta?.sections?.length) {
+    container.innerHTML = '<div class="asset-empty">감지된 섹션이 없습니다.</div>';
+    return;
+  }
+  const selectedUids = new Set((editorMeta.selectedItems || []).map((item) => item.uid));
+  container.innerHTML = editorMeta.sections.map((section, index) => `
+    <button class="slot-list-item section-film-item ${(selectedUids.has(section.uid) || editorMeta.selected?.uid === section.uid) ? 'is-active' : ''}" data-section-uid="${escapeHtml(section.uid)}">
+      <div class="slot-list-item__top">
+        <strong>#${index + 1} ${escapeHtml(truncate(section.name || section.uid, 42))}</strong>
+        <span class="slot-badge" data-kind="section">section</span>
+      </div>
+      <div class="slot-list-item__meta">uid ${escapeHtml(section.uid)}</div>
     </button>
   `).join('');
 }
@@ -4832,6 +4973,12 @@ const elements = {
   normalizeStats: document.getElementById('normalizeStats'),
   selectionInspector: document.getElementById('selectionInspector'),
   slotList: document.getElementById('slotList'),
+  sectionList: document.getElementById('sectionList'),
+  sectionDuplicateButton: document.getElementById('sectionDuplicateButton'),
+  sectionMoveUpButton: document.getElementById('sectionMoveUpButton'),
+  sectionMoveDownButton: document.getElementById('sectionMoveDownButton'),
+  sectionDeleteButton: document.getElementById('sectionDeleteButton'),
+  sectionAddButton: document.getElementById('sectionAddButton'),
   layerTree: document.getElementById('layerTree'),
   layerFilterInput: document.getElementById('layerFilterInput'),
   preflightContainer: document.getElementById('preflightContainer'),
@@ -5723,6 +5870,8 @@ function getEditorReport(project) {
     sourceType: project.sourceType,
     slotSummary: project.slotDetection?.summary || project.summary,
     slots: project.slotDetection?.candidates || [],
+    sections: [],
+    selectedSectionUid: '',
     nearMisses: project.slotDetection?.nearMisses || [],
     modifiedSlotCount: 0,
     layerTree: [],
@@ -5935,6 +6084,7 @@ function renderShell(state) {
   renderNormalizeStats(elements.normalizeStats, state.project);
   renderPreflight(elements.preflightContainer, state.editorMeta);
   renderSelectionInspector(elements.selectionInspector, state.editorMeta);
+  renderSectionFilmstrip(elements.sectionList, state.editorMeta);
   renderSlotList(elements.slotList, state.editorMeta);
   renderUploadLists(state);
   renderLayerTree(elements.layerTree, state.editorMeta, elements.layerFilterInput.value);
@@ -5978,22 +6128,19 @@ function renderShell(state) {
     const needed = requiresMany ? 2 : 1;
     button.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < needed;
   }
-  if (elements.openDownloadModalButton) elements.openDownloadModalButton.disabled = !hasProject;
-  if (elements.downloadEditedButton) elements.downloadEditedButton.disabled = !hasProject;
-  if (elements.downloadNormalizedButton) elements.downloadNormalizedButton.disabled = !hasProject;
-  if (elements.downloadLinkedZipButton) elements.downloadLinkedZipButton.disabled = !hasEditor;
-  if (elements.exportPngButton) elements.exportPngButton.disabled = !hasEditor;
-  if (elements.exportJpgButton) elements.exportJpgButton.disabled = !hasEditor;
-  if (elements.exportSectionsZipButton) elements.exportSectionsZipButton.disabled = !hasEditor;
-  if (elements.exportSelectionPngButton) elements.exportSelectionPngButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
-  if (elements.exportPresetPackageButton) elements.exportPresetPackageButton.disabled = !hasEditor;
-  if (elements.runDownloadChoiceButton) {
-    const choice = elements.downloadChoiceSelect?.value || 'save-edited';
-    const needsEditor = choice !== 'save-edited' && choice !== 'download-normalized-html';
-    const needsSelection = choice === 'export-selection-png';
-    const canRun = hasProject && (!needsEditor || hasEditor) && (!needsSelection || (state.editorMeta?.selectionCount || 0) > 0);
-    elements.runDownloadChoiceButton.disabled = !canRun;
-  }
+  elements.downloadEditedButton.disabled = !hasProject;
+  elements.downloadNormalizedButton.disabled = !hasProject;
+  elements.downloadLinkedZipButton.disabled = !hasEditor;
+  elements.exportPngButton.disabled = !hasEditor;
+  elements.exportJpgButton.disabled = !hasEditor;
+  elements.exportSectionsZipButton.disabled = !hasEditor;
+  elements.exportSelectionPngButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
+  elements.exportPresetPackageButton.disabled = !hasEditor;
+  if (elements.sectionDuplicateButton) elements.sectionDuplicateButton.disabled = !hasEditor || !state.editorMeta?.selectedSectionUid;
+  if (elements.sectionMoveUpButton) elements.sectionMoveUpButton.disabled = !hasEditor || !state.editorMeta?.selectedSectionUid;
+  if (elements.sectionMoveDownButton) elements.sectionMoveDownButton.disabled = !hasEditor || !state.editorMeta?.selectedSectionUid;
+  if (elements.sectionDeleteButton) elements.sectionDeleteButton.disabled = !hasEditor || !state.editorMeta?.selectedSectionUid;
+  if (elements.sectionAddButton) elements.sectionAddButton.disabled = !hasEditor;
   elements.downloadReportButton.disabled = !hasProject;
   if (elements.applyCodeToEditorButton) elements.applyCodeToEditorButton.disabled = !hasProject || currentCodeSource === 'report';
   if (elements.reloadCodeFromEditorButton) elements.reloadCodeFromEditorButton.disabled = !hasProject;
@@ -6738,44 +6885,42 @@ elements.slotList.addEventListener('click', (event) => {
   const ok = activeEditor.selectNodeByUid(button.dataset.slotUid, { additive: event.ctrlKey || event.metaKey || event.shiftKey, toggle: event.ctrlKey || event.metaKey, scroll: true });
   if (ok) setStatus('슬롯을 선택했습니다.');
 });
-const uploadListContainers = [
-  elements.uploadRecentList,
-  elements.uploadDocumentList,
-  elements.uploadUnassignedList,
-  elements.uploadBrokenList,
-].filter(Boolean);
-for (const container of uploadListContainers) {
-  container.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-upload-slot-uid]');
-    if (!button || !activeEditor) return;
-    const ok = activeEditor.selectNodeByUid(button.dataset.uploadSlotUid, {
-      additive: event.ctrlKey || event.metaKey || event.shiftKey,
-      toggle: event.ctrlKey || event.metaKey,
-      scroll: true,
-    });
-    if (ok) setStatus('업로드 대상 슬롯을 선택했습니다.');
-  });
-  container.addEventListener('dragover', (event) => {
-    if (!activeEditor) return;
-    if (!event.dataTransfer?.types || !Array.from(event.dataTransfer.types).includes('Files')) return;
-    const button = event.target.closest('[data-upload-slot-uid]');
-    if (!button) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'copy';
-  });
-  container.addEventListener('drop', async (event) => {
-    if (!activeEditor) return;
-    const button = event.target.closest('[data-upload-slot-uid]');
-    if (!button || !event.dataTransfer?.files?.length) return;
-    event.preventDefault();
-    try {
-      const applied = await activeEditor.applyFilesStartingAtSlotByUid(button.dataset.uploadSlotUid, Array.from(event.dataTransfer.files));
-      setStatus(applied ? `${applied}개 이미지를 슬롯부터 순차 적용했습니다.` : '적용 가능한 이미지 파일이 없습니다.');
-    } catch (error) {
-      setStatus(`업로드 리스트 드롭 오류: ${error?.message || error}`);
-    }
-  });
-}
+elements.sectionList?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-section-uid]');
+  if (!button || !activeEditor) return;
+  const ok = activeEditor.selectNodeByUid(button.dataset.sectionUid, { scroll: true });
+  if (ok) setStatus('섹션으로 이동했습니다.');
+});
+elements.sectionDuplicateButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const uid = store.getState().editorMeta?.selectedSectionUid || '';
+  const result = activeEditor.duplicateSectionByUid(uid);
+  setStatus(result.message);
+});
+elements.sectionMoveUpButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const uid = store.getState().editorMeta?.selectedSectionUid || '';
+  const result = activeEditor.moveSectionByUid(uid, 'up');
+  setStatus(result.message);
+});
+elements.sectionMoveDownButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const uid = store.getState().editorMeta?.selectedSectionUid || '';
+  const result = activeEditor.moveSectionByUid(uid, 'down');
+  setStatus(result.message);
+});
+elements.sectionDeleteButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const uid = store.getState().editorMeta?.selectedSectionUid || '';
+  const result = activeEditor.deleteSectionByUid(uid);
+  setStatus(result.message);
+});
+elements.sectionAddButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const uid = store.getState().editorMeta?.selectedSectionUid || '';
+  const result = activeEditor.addSectionAfterUid(uid);
+  setStatus(result.message);
+});
 elements.layerTree.addEventListener('click', (event) => {
   const actionButton = event.target.closest('[data-layer-action][data-layer-uid]');
   if (actionButton && activeEditor) {

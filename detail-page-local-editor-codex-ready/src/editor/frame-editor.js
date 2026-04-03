@@ -777,10 +777,20 @@ export function createFrameEditor({
   function getDerivedMeta() {
     const selectedItems = selectedElements.map((element) => buildSelectionInfo(element)).filter(Boolean);
     const layerTree = buildLayerTree();
+    const sectionRecords = listEditableSections();
+    const sections = sectionRecords.map((section) => ({ uid: section.uid, name: section.name, index: section.index }));
+    const selectedSectionUid = selectedElements.map((element) => {
+      const uid = element?.dataset?.nodeUid || '';
+      const exact = sectionRecords.find((section) => section.uid === uid);
+      if (exact) return exact.uid;
+      return sectionRecords.find((section) => section.element.contains(element))?.uid || '';
+    }).find(Boolean) || '';
     return {
       selected: selectedInfo,
       selectedItems,
       selectionCount: selectedItems.length,
+      sections,
+      selectedSectionUid,
       slots: detection.candidates,
       nearMisses: detection.nearMisses,
       slotSummary: detection.summary,
@@ -1897,10 +1907,12 @@ export function createFrameEditor({
   }
 
   function buildReport() {
+    const sections = listEditableSections().map((section) => ({ uid: section.uid, name: section.name, index: section.index }));
     return {
       selected: selectedInfo,
       selectedItems: selectedElements.map((element) => buildSelectionInfo(element)).filter(Boolean),
       selectionCount: selectedElements.length,
+      sections,
       slotSummary: detection.summary,
       slots: detection.candidates,
       nearMisses: detection.nearMisses,
@@ -2275,18 +2287,125 @@ export function createFrameEditor({
     };
   }
 
-  function collectSectionRects() {
+  function collectSectionElements({ includeDescendants = true } = {}) {
     const metrics = measureExportRoot();
-    const docRect = doc.documentElement.getBoundingClientRect();
-    let candidates = Array.from(metrics.root.children || []).filter((element) => {
+    const root = metrics.root;
+    const directChildren = Array.from(root.children || []).filter((element) => {
       if (!isElement(element)) return false;
       const rect = element.getBoundingClientRect();
       if (rect.width < 20 || rect.height < 20) return false;
-      return element.tagName === 'SECTION' || element.classList.contains('section') || element.classList.contains('hero') || element.classList.contains('hb-info-wrap') || element.hasAttribute('data-export-section');
+      return isSectionLike(element) || element.hasAttribute('data-export-section');
     });
-    if (!candidates.length) {
-      candidates = Array.from(metrics.root.querySelectorAll('section, .hb-info-wrap')).filter((element) => isElement(element));
+    if (directChildren.length || !includeDescendants) return directChildren;
+    return Array.from(root.querySelectorAll('section, .hb-info-wrap, [data-export-section]')).filter((element) => {
+      if (!isElement(element)) return false;
+      const rect = element.getBoundingClientRect();
+      return rect.width >= 20 && rect.height >= 20;
+    });
+  }
+
+  function listEditableSections() {
+    return collectSectionElements().map((element, index) => {
+      const uid = element.dataset.nodeUid || nextId('node');
+      element.dataset.nodeUid = uid;
+      const rawName = buildLabel(element) || element.getAttribute('data-builder-section') || element.id || element.className || element.tagName.toLowerCase();
+      return {
+        uid,
+        name: rawName || `섹션 ${index + 1}`,
+        element,
+        index,
+      };
+    });
+  }
+
+  function resolveSectionByUid(uid) {
+    if (!uid) return null;
+    return listEditableSections().find((section) => section.uid === uid) || null;
+  }
+
+  function assignNodeUidDeep(rootElement) {
+    if (!isElement(rootElement)) return;
+    rootElement.dataset.nodeUid = nextId('node');
+    const descendants = Array.from(rootElement.querySelectorAll('*'));
+    descendants.forEach((element) => {
+      if (!isElement(element)) return;
+      element.dataset.nodeUid = nextId('node');
+    });
+  }
+
+  function duplicateSectionByUid(uid) {
+    const section = resolveSectionByUid(uid);
+    if (!section) return { ok: false, message: '복제할 섹션을 찾지 못했습니다.' };
+    const clone = section.element.cloneNode(true);
+    assignNodeUidDeep(clone);
+    section.element.insertAdjacentElement('afterend', clone);
+    const keepUid = clone.dataset.nodeUid || '';
+    redetect({ preserveSelectionUids: keepUid ? [keepUid] : [] });
+    emitMutation('section-duplicate');
+    return { ok: true, message: '섹션을 복제했습니다.', uid: keepUid };
+  }
+
+  function moveSectionByUid(uid, direction = 'up') {
+    const section = resolveSectionByUid(uid);
+    if (!section) return { ok: false, message: '이동할 섹션을 찾지 못했습니다.' };
+    const sections = listEditableSections();
+    const index = sections.findIndex((item) => item.uid === uid);
+    if (index < 0) return { ok: false, message: '이동할 섹션 인덱스를 찾지 못했습니다.' };
+    if (direction === 'up') {
+      if (index < 1) return { ok: false, message: '이미 맨 위 섹션입니다.' };
+      sections[index - 1].element.insertAdjacentElement('beforebegin', section.element);
+    } else {
+      if (index >= sections.length - 1) return { ok: false, message: '이미 맨 아래 섹션입니다.' };
+      sections[index + 1].element.insertAdjacentElement('afterend', section.element);
     }
+    redetect({ preserveSelectionUids: [uid] });
+    emitMutation(direction === 'up' ? 'section-move-up' : 'section-move-down');
+    return { ok: true, message: direction === 'up' ? '섹션을 위로 이동했습니다.' : '섹션을 아래로 이동했습니다.' };
+  }
+
+  function deleteSectionByUid(uid) {
+    const section = resolveSectionByUid(uid);
+    if (!section) return { ok: false, message: '삭제할 섹션을 찾지 못했습니다.' };
+    section.element.remove();
+    redetect({ preserveSelectionUids: [] });
+    emitMutation('section-delete');
+    return { ok: true, message: '섹션을 삭제했습니다.' };
+  }
+
+  function addSectionAfterUid(uid = '') {
+    const sections = listEditableSections();
+    const root = measureExportRoot().root;
+    const section = doc.createElement('section');
+    const sectionUid = nextId('node');
+    section.dataset.nodeUid = sectionUid;
+    section.dataset.editableBox = '새 섹션';
+    section.style.position = 'relative';
+    section.style.minHeight = '360px';
+    section.style.width = '100%';
+    section.style.borderTop = '1px dashed #e2e8f0';
+    const marker = doc.createElement('div');
+    marker.dataset.nodeUid = nextId('node');
+    marker.dataset.editableBox = '새 섹션 안내';
+    marker.dataset.editableText = '새 섹션 안내';
+    marker.textContent = '새 섹션 (내용을 추가하세요)';
+    marker.style.position = 'absolute';
+    marker.style.left = '32px';
+    marker.style.top = '32px';
+    marker.style.fontSize = '20px';
+    marker.style.fontWeight = '700';
+    marker.style.color = '#64748b';
+    section.appendChild(marker);
+    const target = uid ? sections.find((item) => item.uid === uid)?.element : null;
+    if (target?.parentElement) target.insertAdjacentElement('afterend', section);
+    else root.appendChild(section);
+    redetect({ preserveSelectionUids: [sectionUid] });
+    emitMutation('section-add');
+    return { ok: true, message: '새 섹션을 추가했습니다.', uid: sectionUid };
+  }
+
+  function collectSectionRects() {
+    const docRect = doc.documentElement.getBoundingClientRect();
+    const candidates = collectSectionElements();
     return candidates.map((element, index) => {
       const rect = element.getBoundingClientRect();
       const crop = elementRectToCrop(rect, docRect);
@@ -2928,6 +3047,11 @@ export function createFrameEditor({
     async exportSectionPngEntries(scale = 1.5) {
       return await exportSectionPngEntries(scale);
     },
+    listEditableSections,
+    duplicateSectionByUid,
+    moveSectionByUid,
+    deleteSectionByUid,
+    addSectionAfterUid,
     async getExportFixtureIntegrityReport() {
       return await exportFixtureIntegrityReport();
     },

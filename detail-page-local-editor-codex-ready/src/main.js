@@ -12,6 +12,7 @@ import {
   renderNormalizeStats,
   renderPreflight,
   renderProjectMeta,
+  renderSectionFilmstrip,
   renderSelectionInspector,
   renderSlotList,
   renderSummaryCards,
@@ -143,6 +144,12 @@ const elements = {
   normalizeStats: document.getElementById('normalizeStats'),
   selectionInspector: document.getElementById('selectionInspector'),
   slotList: document.getElementById('slotList'),
+  sectionList: document.getElementById('sectionList'),
+  sectionDuplicateButton: document.getElementById('sectionDuplicateButton'),
+  sectionMoveUpButton: document.getElementById('sectionMoveUpButton'),
+  sectionMoveDownButton: document.getElementById('sectionMoveDownButton'),
+  sectionDeleteButton: document.getElementById('sectionDeleteButton'),
+  sectionAddButton: document.getElementById('sectionAddButton'),
   layerTree: document.getElementById('layerTree'),
   layerFilterInput: document.getElementById('layerFilterInput'),
   preflightContainer: document.getElementById('preflightContainer'),
@@ -1025,6 +1032,8 @@ function getEditorReport(project) {
     sourceType: project.sourceType,
     slotSummary: project.slotDetection?.summary || project.summary,
     slots: project.slotDetection?.candidates || [],
+    sections: [],
+    selectedSectionUid: '',
     nearMisses: project.slotDetection?.nearMisses || [],
     modifiedSlotCount: 0,
     layerTree: [],
@@ -1237,6 +1246,7 @@ function renderShell(state) {
   renderNormalizeStats(elements.normalizeStats, state.project);
   renderPreflight(elements.preflightContainer, state.editorMeta);
   renderSelectionInspector(elements.selectionInspector, state.editorMeta);
+  renderSectionFilmstrip(elements.sectionList, state.editorMeta);
   renderSlotList(elements.slotList, state.editorMeta);
   renderUploadLists(state);
   renderLayerTree(elements.layerTree, state.editorMeta, elements.layerFilterInput.value);
@@ -1285,22 +1295,19 @@ function renderShell(state) {
     const needed = requiresMany ? 2 : 1;
     button.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < needed;
   }
-  if (elements.openDownloadModalButton) elements.openDownloadModalButton.disabled = !hasProject;
-  if (elements.downloadEditedButton) elements.downloadEditedButton.disabled = !hasProject;
-  if (elements.downloadNormalizedButton) elements.downloadNormalizedButton.disabled = !hasProject;
-  if (elements.downloadLinkedZipButton) elements.downloadLinkedZipButton.disabled = !hasEditor;
-  if (elements.exportPngButton) elements.exportPngButton.disabled = !hasEditor;
-  if (elements.exportJpgButton) elements.exportJpgButton.disabled = !hasEditor;
-  if (elements.exportSectionsZipButton) elements.exportSectionsZipButton.disabled = !hasEditor;
-  if (elements.exportSelectionPngButton) elements.exportSelectionPngButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
-  if (elements.exportPresetPackageButton) elements.exportPresetPackageButton.disabled = !hasEditor;
-  if (elements.runDownloadChoiceButton) {
-    const choice = elements.downloadChoiceSelect?.value || 'save-edited';
-    const needsEditor = choice !== 'save-edited' && choice !== 'download-normalized-html';
-    const needsSelection = choice === 'export-selection-png';
-    const canRun = hasProject && (!needsEditor || hasEditor) && (!needsSelection || (state.editorMeta?.selectionCount || 0) > 0);
-    elements.runDownloadChoiceButton.disabled = !canRun;
-  }
+  elements.downloadEditedButton.disabled = !hasProject;
+  elements.downloadNormalizedButton.disabled = !hasProject;
+  elements.downloadLinkedZipButton.disabled = !hasEditor;
+  elements.exportPngButton.disabled = !hasEditor;
+  elements.exportJpgButton.disabled = !hasEditor;
+  elements.exportSectionsZipButton.disabled = !hasEditor;
+  elements.exportSelectionPngButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
+  elements.exportPresetPackageButton.disabled = !hasEditor;
+  if (elements.sectionDuplicateButton) elements.sectionDuplicateButton.disabled = !hasEditor || !state.editorMeta?.selectedSectionUid;
+  if (elements.sectionMoveUpButton) elements.sectionMoveUpButton.disabled = !hasEditor || !state.editorMeta?.selectedSectionUid;
+  if (elements.sectionMoveDownButton) elements.sectionMoveDownButton.disabled = !hasEditor || !state.editorMeta?.selectedSectionUid;
+  if (elements.sectionDeleteButton) elements.sectionDeleteButton.disabled = !hasEditor || !state.editorMeta?.selectedSectionUid;
+  if (elements.sectionAddButton) elements.sectionAddButton.disabled = !hasEditor;
   elements.downloadReportButton.disabled = !hasProject;
   if (elements.applyCodeToEditorButton) elements.applyCodeToEditorButton.disabled = !hasProject || currentCodeSource === 'report';
   if (elements.reloadCodeFromEditorButton) elements.reloadCodeFromEditorButton.disabled = !hasProject;
@@ -2043,44 +2050,42 @@ elements.slotList.addEventListener('click', (event) => {
   const ok = activeEditor.selectNodeByUid(button.dataset.slotUid, { additive: event.ctrlKey || event.metaKey || event.shiftKey, toggle: event.ctrlKey || event.metaKey, scroll: true });
   if (ok) setStatus('슬롯을 선택했습니다.');
 });
-const uploadListContainers = [
-  elements.uploadRecentList,
-  elements.uploadDocumentList,
-  elements.uploadUnassignedList,
-  elements.uploadBrokenList,
-].filter(Boolean);
-for (const container of uploadListContainers) {
-  container.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-upload-slot-uid]');
-    if (!button || !activeEditor) return;
-    const ok = activeEditor.selectNodeByUid(button.dataset.uploadSlotUid, {
-      additive: event.ctrlKey || event.metaKey || event.shiftKey,
-      toggle: event.ctrlKey || event.metaKey,
-      scroll: true,
-    });
-    if (ok) setStatus('업로드 대상 슬롯을 선택했습니다.');
-  });
-  container.addEventListener('dragover', (event) => {
-    if (!activeEditor) return;
-    if (!event.dataTransfer?.types || !Array.from(event.dataTransfer.types).includes('Files')) return;
-    const button = event.target.closest('[data-upload-slot-uid]');
-    if (!button) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'copy';
-  });
-  container.addEventListener('drop', async (event) => {
-    if (!activeEditor) return;
-    const button = event.target.closest('[data-upload-slot-uid]');
-    if (!button || !event.dataTransfer?.files?.length) return;
-    event.preventDefault();
-    try {
-      const applied = await activeEditor.applyFilesStartingAtSlotByUid(button.dataset.uploadSlotUid, Array.from(event.dataTransfer.files));
-      setStatus(applied ? `${applied}개 이미지를 슬롯부터 순차 적용했습니다.` : '적용 가능한 이미지 파일이 없습니다.');
-    } catch (error) {
-      setStatus(`업로드 리스트 드롭 오류: ${error?.message || error}`);
-    }
-  });
-}
+elements.sectionList?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-section-uid]');
+  if (!button || !activeEditor) return;
+  const ok = activeEditor.selectNodeByUid(button.dataset.sectionUid, { scroll: true });
+  if (ok) setStatus('섹션으로 이동했습니다.');
+});
+elements.sectionDuplicateButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const uid = store.getState().editorMeta?.selectedSectionUid || '';
+  const result = activeEditor.duplicateSectionByUid(uid);
+  setStatus(result.message);
+});
+elements.sectionMoveUpButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const uid = store.getState().editorMeta?.selectedSectionUid || '';
+  const result = activeEditor.moveSectionByUid(uid, 'up');
+  setStatus(result.message);
+});
+elements.sectionMoveDownButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const uid = store.getState().editorMeta?.selectedSectionUid || '';
+  const result = activeEditor.moveSectionByUid(uid, 'down');
+  setStatus(result.message);
+});
+elements.sectionDeleteButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const uid = store.getState().editorMeta?.selectedSectionUid || '';
+  const result = activeEditor.deleteSectionByUid(uid);
+  setStatus(result.message);
+});
+elements.sectionAddButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const uid = store.getState().editorMeta?.selectedSectionUid || '';
+  const result = activeEditor.addSectionAfterUid(uid);
+  setStatus(result.message);
+});
 elements.layerTree.addEventListener('click', (event) => {
   const actionButton = event.target.closest('[data-layer-action][data-layer-uid]');
   if (actionButton && activeEditor) {
