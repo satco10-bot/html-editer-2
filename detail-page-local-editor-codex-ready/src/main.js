@@ -115,15 +115,12 @@ const elements = {
   saveFormatGuide: document.getElementById('saveFormatGuide'),
   saveFormatPreview: document.getElementById('saveFormatPreview'),
   saveMetaSummary: document.getElementById('saveMetaSummary'),
-  topbarDownloadEditedButton: document.getElementById('topbarDownloadEditedButton'),
   modalDownloadEditedButton: document.getElementById('modalDownloadEditedButton'),
   downloadEditedButtons: Array.from(document.querySelectorAll('[data-download-action="save-edited"]')),
   downloadNormalizedButton: document.getElementById('downloadNormalizedButton'),
   downloadLinkedZipButton: document.getElementById('downloadLinkedZipButton'),
-  topbarExportPngButton: document.getElementById('topbarExportPngButton'),
   modalExportPngButton: document.getElementById('modalExportPngButton'),
   exportPngButtons: Array.from(document.querySelectorAll('[data-download-action="export-full-png"]')),
-  topbarExportJpgButton: document.getElementById('topbarExportJpgButton'),
   modalExportJpgButton: document.getElementById('modalExportJpgButton'),
   exportJpgButtons: Array.from(document.querySelectorAll('[data-download-action="export-full-jpg"]')),
   exportSectionsZipButton: document.getElementById('exportSectionsZipButton'),
@@ -1250,9 +1247,13 @@ function renderShell(state) {
   renderSelectionModeButtons(state.selectionMode);
   renderSummaryCards(elements.summaryCards, state.project, state.editorMeta);
   renderIssueList(elements.issueList, state.project);
-  if (elements.normalizeStats) renderNormalizeStats(elements.normalizeStats, state.project);
+  if (elements.normalizeStats) {
+    renderNormalizeStats(elements.normalizeStats, state.project);
+  }
   renderPreflight(elements.preflightContainer, state.editorMeta);
-  if (elements.selectionInspector) renderSelectionInspector(elements.selectionInspector, state.editorMeta);
+  if (elements.selectionInspector) {
+    renderSelectionInspector(elements.selectionInspector, state.editorMeta);
+  }
   renderSectionFilmstrip(elements.sectionList, state.editorMeta);
   renderSlotList(elements.slotList, state.editorMeta);
   renderUploadLists(state);
@@ -1269,7 +1270,9 @@ function renderShell(state) {
     exportPresetLabel: currentExportPreset().label,
     preflightBlockingErrors: state.editorMeta?.preflight?.blockingErrors || 0,
   });
-  if (elements.assetTableWrap) renderAssetTable(elements.assetTableWrap, state.project, elements.assetFilterInput?.value || '');
+  if (elements.assetTableWrap) {
+    renderAssetTable(elements.assetTableWrap, state.project, elements.assetFilterInput?.value || '');
+  }
   syncTextStyleControls(state.editorMeta);
   syncBatchSummary(state.editorMeta);
   syncGeometryControls();
@@ -1811,6 +1814,17 @@ function safeBoot() {
 safeBoot();
 
 function bindEvents() {
+  const logMissingElement = (elementName, context) => {
+    console.warn(`[${context}] 필수 요소 누락: #${elementName}`);
+  };
+  const bindElementEvent = (elementName, eventName, handler, options) => {
+    const target = elements[elementName];
+    if (!target) {
+      logMissingElement(elementName, 'bindEvents');
+      return;
+    }
+    target.addEventListener(eventName, handler, options);
+  };
   const requiredElementNames = [
     'openHtmlButton',
     'openFolderButton',
@@ -1840,7 +1854,7 @@ function bindEvents() {
   ];
   for (const elementName of requiredElementNames) {
     if (!elements[elementName]) {
-      console.warn(`[bindEvents] 필수 요소 누락: #${elementName}`);
+      logMissingElement(elementName, 'bindEvents');
     }
   }
 
@@ -2035,7 +2049,7 @@ elements.saveFormatSelect?.addEventListener('change', () => {
   syncSaveFormatUi();
   setStatus(`저장 포맷을 ${currentSaveFormat}로 변경했습니다.`);
 });
-elements.downloadReportButton?.addEventListener('click', downloadReportJson);
+bindElementEvent('downloadReportButton', 'click', downloadReportJson);
 elements.exportPresetSelect?.addEventListener('change', () => {
   currentExportPresetId = elements.exportPresetSelect.value || 'default';
   syncExportPresetUi({ forceScale: true });
@@ -2095,7 +2109,13 @@ elements.replaceImageInput?.addEventListener('change', async (event) => {
   }
 });
 
-elements.assetFilterInput?.addEventListener('input', () => renderAssetTable(elements.assetTableWrap, store.getState().project, elements.assetFilterInput?.value || ''));
+bindElementEvent('assetFilterInput', 'input', () => {
+  if (!elements.assetTableWrap) {
+    logMissingElement('assetTableWrap', 'assetFilterInput');
+    return;
+  }
+  renderAssetTable(elements.assetTableWrap, store.getState().project, elements.assetFilterInput?.value || '');
+});
 elements.layerFilterInput?.addEventListener('input', () => renderLayerTree(elements.layerTree, store.getState().editorMeta, elements.layerFilterInput?.value || ''));
 elements.slotList?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-slot-uid]');
