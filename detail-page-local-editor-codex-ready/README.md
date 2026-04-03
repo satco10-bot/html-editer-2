@@ -49,6 +49,13 @@ node --check app.bundle.js
 python3 scripts/validate_phase6.py
 ```
 
+## Phase8 파이프라인 실행 가이드 (CI/로컬 5줄 요약)
+1. `python3 -m pip install -r requirements-regression.txt` 로 공통 의존성을 먼저 설치합니다.
+2. Playwright는 패키지 설치만으로 끝나지 않으므로 `python3 -m playwright install chromium` 를 추가 실행합니다.
+3. 로컬/CI 모두 동일하게 `python3 scripts/run_phase8_regression_pipeline.py` 를 실행하면 JSON + Dashboard 리포트가 생성됩니다.
+4. 대시보드에서 🟠(의존성 실패)와 🔴(시나리오 실패)를 분리해서 보고, F05 경고의 실패 원인 라벨을 먼저 확인합니다.
+5. `quality_confidence` 가 `high` 인 실행만 “신뢰 가능한 결과”로 판단하고 배포/병합 의사결정에 사용합니다.
+
 ## 왜 zip 하나만 올리면 안 되나요?
 Codex는 저장소 안의 **실제 파일들**을 읽고 바꾸는 방식입니다.
 그래서 `프로젝트.zip` 하나만 올리면, HTML/JS/CSS를 바로 고치기 어렵습니다.

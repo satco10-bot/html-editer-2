@@ -1466,6 +1466,16 @@ function closestElement(node) {
   return node?.parentElement || null;
 }
 
+function isTypingInputTarget(target) {
+  if (!target || !isElement(target)) return false;
+  if (target.closest('[contenteditable="true"]')) return true;
+  const tagName = target.tagName;
+  if (tagName === 'TEXTAREA' || tagName === 'SELECT') return true;
+  if (tagName !== 'INPUT') return false;
+  const inputType = String(target.getAttribute('type') || 'text').toLowerCase();
+  return inputType !== 'checkbox' && inputType !== 'radio' && inputType !== 'button' && inputType !== 'submit' && inputType !== 'reset';
+}
+
 function buildLabel(element) {
   return (
     element?.getAttribute?.('data-slot-label') ||
@@ -3934,6 +3944,40 @@ function createFrameEditor({
 
   function handleKeydown(event) {
     const withModifier = event.ctrlKey || event.metaKey;
+    const typingInput = isTypingInputTarget(closestElement(event.target));
+    if (typingInput && !editingTextElement) return;
+
+    if (!withModifier && !event.altKey && !event.shiftKey && !editingTextElement) {
+      const plainKey = String(event.key || '').toLowerCase();
+      if (plainKey === 'v') {
+        event.preventDefault();
+        setSelectionMode('smart');
+        onStatus('선택 도구(V)로 전환했습니다.');
+        return;
+      }
+      if (plainKey === 't') {
+        event.preventDefault();
+        setSelectionMode('text');
+        onStatus('텍스트 도구(T)로 전환했습니다.');
+        return;
+      }
+      if (plainKey === 'r') {
+        event.preventDefault();
+        setSelectionMode('box');
+        onStatus('박스 도구(R)로 전환했습니다.');
+        return;
+      }
+      if (plainKey === '?') {
+        event.preventDefault();
+        onShortcut('toggle-shortcut-help');
+        return;
+      }
+    }
+    if (!withModifier && event.shiftKey && String(event.key || '') === '/' && !editingTextElement) {
+      event.preventDefault();
+      onShortcut('toggle-shortcut-help');
+      return;
+    }
     if (withModifier && !event.altKey) {
       const key = String(event.key || '').toLowerCase();
       if (key === 'z') {
@@ -4443,8 +4487,14 @@ let currentCodeSource = 'edited';
 let codeEditorDirty = false;
 let geometryCoordMode = 'relative';
 let currentSaveFormat = 'linked';
+let currentWorkflowStep = 'load';
 let lastSaveConversion = null;
 const zoomState = { mode: 'fit', value: 1 };
+const WORKFLOW_STEP_GUIDES = Object.freeze({
+  load: 'HTML 파일이나 폴더를 먼저 불러오세요.',
+  edit: '요소를 클릭한 뒤 드래그하세요.',
+  save: '결과를 확인한 뒤 저장/출력을 실행하세요.',
+});
 const BOOT_LOCAL_POLICY = Object.freeze({
   requiresStartupFetch: false,
   requiresFileSystemAccessApi: false,
@@ -4455,6 +4505,14 @@ const historyState = {
   baseSnapshot: null,
   undoStack: [],
   redoStack: [],
+};
+
+const advancedSettings = {
+  geometryCoordMode: 'relative',
+  exportScale: 1,
+  exportJpgQuality: 0.92,
+  selectionExportPadding: 16,
+  selectionExportBackground: 'transparent',
 };
 
 const elements = {
@@ -4535,6 +4593,12 @@ const elements = {
   geometryCoordModeSelect: document.getElementById('geometryCoordModeSelect'),
   geometryRuleHint: document.getElementById('geometryRuleHint'),
   applyGeometryButton: document.getElementById('applyGeometryButton'),
+  arrangeToggleHideButton: document.getElementById('arrangeToggleHideButton'),
+  arrangeToggleLockButton: document.getElementById('arrangeToggleLockButton'),
+  basicAttributeSection: document.getElementById('basicAttributeSection'),
+  advancedAttributeSection: document.getElementById('advancedAttributeSection'),
+  applyAdvancedSettingsButton: document.getElementById('applyAdvancedSettingsButton'),
+  advancedSettingsState: document.getElementById('advancedSettingsState'),
   bringForwardButton: document.getElementById('bringForwardButton'),
   sendBackwardButton: document.getElementById('sendBackwardButton'),
   bringToFrontButton: document.getElementById('bringToFrontButton'),
@@ -4546,6 +4610,9 @@ const elements = {
   toggleLeftSidebarButton: document.getElementById('toggleLeftSidebarButton'),
   toggleRightSidebarButton: document.getElementById('toggleRightSidebarButton'),
   focusModeButton: document.getElementById('focusModeButton'),
+  workflowGuideLine: document.getElementById('workflowGuideLine'),
+  workflowStepButtons: Array.from(document.querySelectorAll('[data-workflow-step]')),
+  workflowPanels: Array.from(document.querySelectorAll('[data-workflow-panel]')),
   zoomOutButton: document.getElementById('zoomOutButton'),
   zoomInButton: document.getElementById('zoomInButton'),
   zoomResetButton: document.getElementById('zoomResetButton'),
@@ -4579,14 +4646,59 @@ const elements = {
   batchActionButtons: Array.from(document.querySelectorAll('[data-batch-action]')),
   textAlignButtons: Array.from(document.querySelectorAll('[data-text-align]')),
   canvasActionButtons: Array.from(document.querySelectorAll('[data-canvas-action]')),
+  shortcutHelpOverlay: document.getElementById('shortcutHelpOverlay'),
+  shortcutHelpCloseButton: document.getElementById('shortcutHelpCloseButton'),
 };
+
+function evaluateWorkflowStepReadiness(step, state) {
+  const hasProject = !!state?.project;
+  const hasEditor = !!activeEditor;
+  const selectionCount = Number(state?.editorMeta?.selectionCount || 0);
+  if (step === 'edit' && !hasProject) {
+    return { ok: false, message: '[단계 안내] 2) 편집으로 가기 전, 1) 불러오기에서 HTML/폴더를 먼저 열어 주세요.' };
+  }
+  if (step === 'save' && (!hasProject || !hasEditor)) {
+    return { ok: false, message: '[단계 안내] 3) 저장/출력 전, 1) 불러오기와 2) 편집 준비가 필요합니다.' };
+  }
+  if (step === 'save' && selectionCount < 1) {
+    return { ok: true, message: '[단계 안내] 선택 요소가 없습니다. 전체 저장/출력은 가능하며, 선택 PNG는 요소를 선택한 뒤 사용하세요.' };
+  }
+  return { ok: true, message: '' };
+}
+
+function syncWorkflowUi(state, { announce = false } = {}) {
+  for (const button of elements.workflowStepButtons) {
+    const active = button.dataset.workflowStep === currentWorkflowStep;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+  }
+  for (const panel of elements.workflowPanels) {
+    const scope = String(panel.dataset.workflowPanel || '').trim();
+    const steps = scope.split(/\s+/).filter(Boolean);
+    const visible = steps.length < 1 || steps.includes(currentWorkflowStep);
+    panel.classList.toggle('is-hidden', !visible);
+  }
+  if (elements.workflowGuideLine) {
+    elements.workflowGuideLine.textContent = WORKFLOW_STEP_GUIDES[currentWorkflowStep] || WORKFLOW_STEP_GUIDES.load;
+  }
+  if (announce) {
+    const check = evaluateWorkflowStepReadiness(currentWorkflowStep, state);
+    if (check.message) setStatus(check.message);
+  }
+}
+
+function setWorkflowStep(step) {
+  const normalized = step === 'edit' || step === 'save' ? step : 'load';
+  currentWorkflowStep = normalized;
+  syncWorkflowUi(store.getState(), { announce: true });
+}
 
 function projectBaseName(project) {
   return sanitizeFilename((project?.sourceName || 'detail-page').replace(/\.html?$/i, '') || 'detail-page');
 }
 
 function exportScale() {
-  const value = Number.parseFloat(elements.exportScaleSelect?.value || '1');
+  const value = Number.parseFloat(String(advancedSettings.exportScale || 1));
   if (!Number.isFinite(value)) return 1;
   if (value >= 2.5) return 3;
   if (value >= 1.5) return 2;
@@ -4594,24 +4706,56 @@ function exportScale() {
 }
 
 function exportJpgQuality() {
-  const raw = Number.parseFloat(elements.exportJpgQualityInput?.value || String(DEFAULT_JPG_QUALITY));
+  const raw = Number.parseFloat(String(advancedSettings.exportJpgQuality || DEFAULT_JPG_QUALITY));
   if (!Number.isFinite(raw)) return DEFAULT_JPG_QUALITY;
   return Math.min(1, Math.max(0.1, raw));
 }
 
 function selectionExportPadding() {
-  const raw = Number.parseFloat(elements.selectionExportPaddingInput?.value || '16');
+  const raw = Number.parseFloat(String(advancedSettings.selectionExportPadding || 16));
   if (!Number.isFinite(raw)) return 0;
   return Math.max(0, Math.min(240, Math.round(raw)));
 }
 
 function selectionExportBackground() {
-  const raw = String(elements.selectionExportBackgroundSelect?.value || 'transparent');
+  const raw = String(advancedSettings.selectionExportBackground || 'transparent');
   return raw === 'opaque' ? 'opaque' : 'transparent';
 }
 
 function setStatus(text) {
   store.setStatus(text);
+}
+
+function isTypingInputTarget(target) {
+  if (!target || !(target instanceof Element)) return false;
+  if (target.closest('[contenteditable="true"]')) return true;
+  const tagName = target.tagName;
+  if (tagName === 'TEXTAREA' || tagName === 'SELECT') return true;
+  if (tagName !== 'INPUT') return false;
+  const inputType = String(target.getAttribute('type') || 'text').toLowerCase();
+  return inputType !== 'checkbox' && inputType !== 'radio' && inputType !== 'button' && inputType !== 'submit' && inputType !== 'reset';
+}
+
+function toggleShortcutHelp(forceOpen = null) {
+  const overlay = elements.shortcutHelpOverlay;
+  if (!overlay) return false;
+  const shouldOpen = forceOpen == null ? overlay.hidden : !!forceOpen;
+  overlay.hidden = !shouldOpen;
+  if (shouldOpen) {
+    elements.shortcutHelpCloseButton?.focus();
+    setStatus('단축키 치트시트를 열었습니다.');
+  }
+  return shouldOpen;
+}
+
+function applyShortcutTooltips() {
+  for (const [selector, label] of Object.entries(SHORTCUT_TOOLTIP_MAP)) {
+    for (const node of Array.from(document.querySelectorAll(selector))) {
+      node.title = label;
+      const originalAria = node.getAttribute('aria-label') || node.textContent?.trim() || '';
+      if (!originalAria.includes('(')) node.setAttribute('aria-label', `${originalAria} ${label.match(/\(.+\)/)?.[0] || ''}`.trim());
+    }
+  }
 }
 
 function evaluateLocalBootEnvironment() {
@@ -4684,6 +4828,75 @@ function syncSaveFormatUi() {
     const modeLabel = currentSaveFormat === 'embedded' ? 'embedded (data URL 내장)' : 'linked (경로 유지)';
     elements.saveFormatStatus.textContent = `현재 저장 포맷: ${modeLabel}`;
   }
+}
+
+function markAdvancedSettingsDirty(isDirty) {
+  if (!elements.advancedSettingsState) return;
+  elements.advancedSettingsState.textContent = isDirty ? '고급값 변경됨 · 적용 필요' : '고급값 대기 없음';
+}
+
+function syncAdvancedFormFromState() {
+  if (elements.geometryCoordModeSelect) elements.geometryCoordModeSelect.value = advancedSettings.geometryCoordMode;
+  if (elements.exportScaleSelect) elements.exportScaleSelect.value = String(advancedSettings.exportScale);
+  if (elements.exportJpgQualityInput) elements.exportJpgQualityInput.value = String(advancedSettings.exportJpgQuality);
+  if (elements.selectionExportPaddingInput) elements.selectionExportPaddingInput.value = String(advancedSettings.selectionExportPadding);
+  if (elements.selectionExportBackgroundSelect) elements.selectionExportBackgroundSelect.value = advancedSettings.selectionExportBackground;
+  markAdvancedSettingsDirty(false);
+}
+
+function applyAdvancedSettingsFromForm() {
+  const nextCoordMode = elements.geometryCoordModeSelect?.value === 'absolute' ? 'absolute' : 'relative';
+  const nextScaleRaw = Number.parseFloat(elements.exportScaleSelect?.value || '1');
+  const nextScale = nextScaleRaw >= 2.5 ? 3 : (nextScaleRaw >= 1.5 ? 2 : 1);
+  const nextJpgRaw = Number.parseFloat(elements.exportJpgQualityInput?.value || String(DEFAULT_JPG_QUALITY));
+  const nextJpgQuality = Number.isFinite(nextJpgRaw) ? Math.min(1, Math.max(0.1, nextJpgRaw)) : DEFAULT_JPG_QUALITY;
+  const nextPaddingRaw = Number.parseFloat(elements.selectionExportPaddingInput?.value || '16');
+  const nextPadding = Number.isFinite(nextPaddingRaw) ? Math.max(0, Math.min(240, Math.round(nextPaddingRaw))) : 16;
+  const nextBackground = elements.selectionExportBackgroundSelect?.value === 'opaque' ? 'opaque' : 'transparent';
+
+  advancedSettings.geometryCoordMode = nextCoordMode;
+  advancedSettings.exportScale = nextScale;
+  advancedSettings.exportJpgQuality = nextJpgQuality;
+  advancedSettings.selectionExportPadding = nextPadding;
+  advancedSettings.selectionExportBackground = nextBackground;
+  geometryCoordMode = nextCoordMode;
+  syncGeometryControls();
+  syncAdvancedFormFromState();
+  return {
+    ok: true,
+    message: `고급값 적용 완료 (좌표 ${nextCoordMode}, 배율 ${nextScale}x, JPG ${nextJpgQuality.toFixed(2)})`,
+  };
+}
+
+function readPanelLayoutState() {
+  try {
+    const raw = window.localStorage.getItem(PANEL_LAYOUT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return {
+      basicOpen: parsed.basicOpen !== false,
+      advancedOpen: parsed.advancedOpen === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistPanelLayoutState() {
+  try {
+    window.localStorage.setItem(PANEL_LAYOUT_STORAGE_KEY, JSON.stringify({
+      basicOpen: !!elements.basicAttributeSection?.open,
+      advancedOpen: !!elements.advancedAttributeSection?.open,
+    }));
+  } catch {}
+}
+
+function restorePanelLayoutState() {
+  const saved = readPanelLayoutState();
+  if (!saved) return;
+  if (elements.basicAttributeSection) elements.basicAttributeSection.open = saved.basicOpen;
+  if (elements.advancedAttributeSection) elements.advancedAttributeSection.open = saved.advancedOpen;
 }
 
 function setSidebarTab(panelId) {
@@ -4768,12 +4981,12 @@ function syncWorkspaceButtons() {
 function syncExportPresetUi({ forceScale = false } = {}) {
   const preset = currentExportPreset();
   if (elements.exportPresetSelect.value !== preset.id) elements.exportPresetSelect.value = preset.id;
-  const shouldSyncScale = forceScale || elements.exportScaleSelect.dataset.boundPreset !== preset.id;
+  const shouldSyncScale = forceScale;
   const presetScale = Number.parseFloat(String(preset.scale));
   const normalizedScale = presetScale >= 2.5 ? '3' : presetScale >= 1.5 ? '2' : '1';
-  if (shouldSyncScale && EXPORT_SCALE_OPTIONS.includes(Number.parseFloat(normalizedScale))) {
+  if (shouldSyncScale && EXPORT_SCALE_OPTIONS.includes(Number.parseFloat(normalizedScale)) && elements.exportScaleSelect) {
     elements.exportScaleSelect.value = normalizedScale;
-    elements.exportScaleSelect.dataset.boundPreset = preset.id;
+    markAdvancedSettingsDirty(true);
   }
   if (elements.exportPresetPackageButton) elements.exportPresetPackageButton.title = preset.description || '';
 }
@@ -5165,6 +5378,8 @@ function renderShell(state) {
   elements.redetectButton.disabled = !hasEditor;
   elements.toggleHideButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
   elements.toggleLockButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
+  if (elements.arrangeToggleHideButton) elements.arrangeToggleHideButton.disabled = elements.toggleHideButton.disabled;
+  if (elements.arrangeToggleLockButton) elements.arrangeToggleLockButton.disabled = elements.toggleLockButton.disabled;
   elements.textEditButton.disabled = !hasEditor;
   elements.groupButton.disabled = !hasEditor || !state.editorMeta?.canGroupSelection;
   elements.ungroupButton.disabled = !hasEditor || !state.editorMeta?.canUngroupSelection;
@@ -5186,9 +5401,11 @@ function renderShell(state) {
   if (elements.applyCodeToEditorButton) elements.applyCodeToEditorButton.disabled = !hasProject || currentCodeSource === 'report';
   if (elements.reloadCodeFromEditorButton) elements.reloadCodeFromEditorButton.disabled = !hasProject;
   if (elements.saveFormatSelect) elements.saveFormatSelect.disabled = !hasProject;
+  if (elements.applyAdvancedSettingsButton) elements.applyAdvancedSettingsButton.disabled = !hasProject;
   syncExportPresetUi();
   syncSaveFormatUi();
   syncWorkspaceButtons();
+  syncWorkflowUi(state);
   applyPreviewZoom();
   refreshHistoryButtons();
 }
@@ -5621,9 +5838,13 @@ if (bootEnvironmentReport.errorCount || bootEnvironmentReport.warningCount) {
   setStatus(`환경 점검: 오류 ${bootEnvironmentReport.errorCount}개 · 경고 ${bootEnvironmentReport.warningCount}개`);
 }
 renderEmptyPreview();
+syncWorkflowUi(store.getState());
 
 for (const button of elements.viewButtons) button.addEventListener('click', () => setView(button.dataset.view));
 for (const button of elements.selectionModeButtons) button.addEventListener('click', () => setSelectionMode(button.dataset.selectionMode));
+for (const button of elements.workflowStepButtons) {
+  button.addEventListener('click', () => setWorkflowStep(button.dataset.workflowStep));
+}
 for (const button of elements.presetButtons) {
   button.addEventListener('click', () => {
     if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
@@ -5697,12 +5918,14 @@ elements.toggleHideButton.addEventListener('click', () => {
   setStatus(result.message);
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
+elements.arrangeToggleHideButton?.addEventListener('click', () => elements.toggleHideButton?.click());
 elements.toggleLockButton.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.toggleSelectedLocked();
   setStatus(result.message);
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
+elements.arrangeToggleLockButton?.addEventListener('click', () => elements.toggleLockButton?.click());
 elements.demoteSlotButton.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.demoteSelectedSlot();
@@ -5745,9 +5968,8 @@ elements.applyGeometryButton?.addEventListener('click', () => {
   setStatus(result.message);
 });
 elements.geometryCoordModeSelect?.addEventListener('change', () => {
-  geometryCoordMode = elements.geometryCoordModeSelect.value === 'absolute' ? 'absolute' : 'relative';
-  syncGeometryControls();
-  setStatus(geometryCoordMode === 'absolute' ? '절대 좌표 모드로 전환했습니다.' : '상대 좌표 모드로 전환했습니다.');
+  markAdvancedSettingsDirty(true);
+  setStatus('좌표 기준 변경 대기 중입니다. "고급값 적용" 버튼을 눌러 반영하세요.');
 });
 for (const input of [elements.geometryXInput, elements.geometryYInput, elements.geometryWInput, elements.geometryHInput]) {
   input?.addEventListener('input', () => {
@@ -5807,10 +6029,17 @@ elements.downloadReportButton.addEventListener('click', downloadReportJson);
 elements.exportPresetSelect.addEventListener('change', () => {
   currentExportPresetId = elements.exportPresetSelect.value || 'default';
   syncExportPresetUi({ forceScale: true });
-  setStatus(`Export preset: ${currentExportPreset().label}`);
+  setStatus(`Export preset: ${currentExportPreset().label} (배율은 고급값 적용 버튼으로 반영)`);
 });
 elements.exportScaleSelect.addEventListener('change', () => {
-  elements.exportScaleSelect.dataset.boundPreset = '';
+  markAdvancedSettingsDirty(true);
+});
+elements.exportJpgQualityInput?.addEventListener('input', () => markAdvancedSettingsDirty(true));
+elements.selectionExportPaddingInput?.addEventListener('input', () => markAdvancedSettingsDirty(true));
+elements.selectionExportBackgroundSelect?.addEventListener('change', () => markAdvancedSettingsDirty(true));
+elements.applyAdvancedSettingsButton?.addEventListener('click', () => {
+  const result = applyAdvancedSettingsFromForm();
+  setStatus(result.message);
 });
 
 elements.htmlFileInput.addEventListener('change', async (event) => {
@@ -5901,13 +6130,55 @@ elements.zoomInButton?.addEventListener('click', () => nudgeZoom(0.1));
 elements.zoomResetButton?.addEventListener('click', () => setZoom('manual', 1));
 elements.zoomFitButton?.addEventListener('click', () => setZoom('fit'));
 window.addEventListener('resize', applyPreviewZoom);
+elements.basicAttributeSection?.addEventListener('toggle', persistPanelLayoutState);
+elements.advancedAttributeSection?.addEventListener('toggle', persistPanelLayoutState);
 
 window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !elements.shortcutHelpOverlay?.hidden) {
+    event.preventDefault();
+    toggleShortcutHelp(false);
+    return;
+  }
+  const questionMarkPressed = event.key === '?' || (event.key === '/' && event.shiftKey);
+  if (questionMarkPressed) {
+    if (isTypingInputTarget(event.target)) return;
+    event.preventDefault();
+    toggleShortcutHelp();
+    return;
+  }
+  if (!elements.shortcutHelpOverlay?.hidden) return;
+
   const withModifier = event.ctrlKey || event.metaKey;
+  if (!withModifier && !isTypingInputTarget(event.target)) {
+    const key = String(event.key || '').toLowerCase();
+    if (key === 'v') {
+      event.preventDefault();
+      setSelectionMode('smart');
+      return setStatus('선택 도구(V)로 전환했습니다.');
+    }
+    if (key === 't') {
+      event.preventDefault();
+      setSelectionMode('text');
+      return setStatus('텍스트 도구(T)로 전환했습니다.');
+    }
+    if (key === 'r') {
+      event.preventDefault();
+      setSelectionMode('box');
+      return setStatus('박스 도구(R)로 전환했습니다.');
+    }
+  }
+
   if (!withModifier || event.altKey) return;
-  const tagName = document.activeElement?.tagName || '';
-  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tagName)) return;
+  if (isTypingInputTarget(event.target)) return;
   const key = String(event.key || '').toLowerCase();
+  if (key === 'd') {
+    event.preventDefault();
+    return executeEditorCommand('duplicate');
+  }
+  if (key === 'g') {
+    event.preventDefault();
+    return executeEditorCommand(event.shiftKey ? 'ungroup-selection' : 'group-selection');
+  }
   if (key === 'z') {
     event.preventDefault();
     return event.shiftKey ? redoHistory() : undoHistory();
@@ -5956,11 +6227,19 @@ window.addEventListener('keydown', (event) => {
   }
 });
 
+elements.shortcutHelpOverlay?.addEventListener('click', (event) => {
+  if (event.target === elements.shortcutHelpOverlay) toggleShortcutHelp(false);
+});
+elements.shortcutHelpCloseButton?.addEventListener('click', () => toggleShortcutHelp(false));
+
 setSidebarTab('left-import');
 setSidebarTab('right-inspect');
 setCodeSource('edited', { preserveDraft: false });
 syncSaveFormatUi();
+restorePanelLayoutState();
+syncAdvancedFormFromState();
 syncWorkspaceButtons();
+applyShortcutTooltips();
 loadFixture('F05');
 
 

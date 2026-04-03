@@ -1,3 +1,6 @@
+# Phase8 회귀 파이프라인 Python 의존성
+# 설치: python3 -m pip install -r requirements-regression.txt
+# Playwright 브라우저는 별도 설치: python3 -m playwright install chromium
 beautifulsoup4>=4.12.0
 lxml>=5.0.0
 playwright>=1.42.0
