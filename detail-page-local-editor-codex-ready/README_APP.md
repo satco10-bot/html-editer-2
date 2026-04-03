@@ -94,7 +94,7 @@
 - `src/` : 소스 코드
 - `data/fixtures/` : 고정 fixture 샘플
 - `scripts/build_local_bundle.py` : 번들 생성 스크립트
-- `scripts/validate_phase6.py` : 6단계 정적/계약 검증 스크립트
+- `scripts/validate_phase8.py` : 8단계 정적/계약 검증 스크립트
 - `reports/WEBAPP_PHASE6_IMPLEMENTATION_REPORT.md` : 구현 보고서
 - `reports/WEBAPP_PHASE6_VALIDATION_RESULTS.json` : 검증 결과
 
@@ -118,13 +118,13 @@
 ```bash
 python3 scripts/build_local_bundle.py
 node --check app.bundle.js
-python3 scripts/validate_phase6.py
+python3 scripts/validate_phase8.py
 ```
 
 ## 필수 게이트(수동/CI)
 
 - `file://` 직접 실행이 통과해야 합니다. (필수)
-  - 자동 체크: `python3 scripts/validate_phase6.py` 내 Playwright smoke는 `index.html`의 `file://` URI로 실행
+  - 자동 체크: `python3 scripts/validate_phase8.py` 내 Playwright smoke는 `index.html`의 `file://` URI로 실행
   - 수동 체크: 브라우저에서 `index.html`을 직접 열고, 초기 로딩/슬롯 목록/상태 텍스트를 확인
 
 ## 현재 남겨둔 범위
