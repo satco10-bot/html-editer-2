@@ -1,0 +1,71 @@
+{
+  "generatedAt": "2026-04-03T16:21:34.516Z",
+  "matrix": [
+    {
+      "id": "explicit_selector_100pct",
+      "pass": true,
+      "required": true,
+      "expected": {
+        "explicitCount": 3,
+        "heuristicCount": 0,
+        "nearMissCount": 0
+      },
+      "actual": {
+        "explicitCount": 3,
+        "heuristicCount": 0,
+        "nearMissCount": 0
+      }
+    },
+    {
+      "id": "heuristic_threshold_gate",
+      "pass": true,
+      "required": true,
+      "threshold": 72,
+      "evaluateCandidate": {
+        "score": 172,
+        "qualified": true
+      },
+      "actual": {
+        "explicitCount": 0,
+        "heuristicCount": 1,
+        "nearMissCount": 0
+      }
+    },
+    {
+      "id": "near_miss_not_promoted",
+      "pass": true,
+      "required": true,
+      "nearMissMin": 48,
+      "evaluateCandidate": {
+        "score": 56,
+        "nearMiss": true
+      },
+      "actual": {
+        "explicitCount": 0,
+        "heuristicCount": 0,
+        "nearMissCount": 1
+      }
+    },
+    {
+      "id": "fixture_05_regression_gate",
+      "pass": true,
+      "required": true,
+      "fixture": "fixture_05_user_melting_cheese_compact.html",
+      "expected": {
+        "explicitCount": 0,
+        "heuristicCount": 13,
+        "nearMissCount": 2
+      },
+      "actual": {
+        "explicitCount": 0,
+        "heuristicCount": 13,
+        "nearMissCount": 2
+      }
+    }
+  ],
+  "summary": {
+    "total": 4,
+    "passed": 4,
+    "failed": 0
+  }
+}

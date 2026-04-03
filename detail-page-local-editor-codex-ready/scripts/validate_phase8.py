@@ -28,6 +28,8 @@ CONFIG_SRC = ROOT / 'src' / 'config.js'
 SLOT_DETECTOR_SRC = ROOT / 'src' / 'core' / 'slot-detector.js'
 REPORT = ROOT / 'reports' / 'WEBAPP_PHASE8_VALIDATION_RESULTS.json'
 SPEC_COMPARE_REPORT = ROOT / 'reports' / 'WEBAPP_PHASE8_SPEC_COMPARE.md'
+SLOT_MATRIX_SCRIPT = ROOT / 'scripts' / 'test_slot_detection_matrix.mjs'
+SLOT_MATRIX_REPORT = ROOT / 'reports' / 'SLOT_DETECTION_MATRIX_RESULTS.json'
 
 CHECK_VERSIONS = {
     'selection_png': 'v2_computeUnionBoundingBoxFromSelectedNodeUids+selectionExportPolicy',
@@ -312,6 +314,22 @@ def main() -> None:
         add_check(checks, 'bundle_node_syntax_check', False, f'node dependency missing: {error}')
         node_missing = True
 
+    slot_matrix_payload: dict[str, Any] = {}
+    try:
+        matrix_run = subprocess.run(['node', str(SLOT_MATRIX_SCRIPT)], capture_output=True, text=True)
+        matrix_stdout = (matrix_run.stdout or '').strip()
+        if matrix_stdout:
+            try:
+                slot_matrix_payload = json.loads(matrix_stdout)
+            except Exception:
+                slot_matrix_payload = {}
+        if not slot_matrix_payload and SLOT_MATRIX_REPORT.exists():
+            slot_matrix_payload = json.loads(SLOT_MATRIX_REPORT.read_text(encoding='utf-8'))
+        add_check(checks, 'slot_detection_matrix_script', matrix_run.returncode == 0, (matrix_run.stderr or matrix_stdout)[-500:])
+    except FileNotFoundError as error:
+        add_check(checks, 'slot_detection_matrix_script', False, f'node dependency missing: {error}')
+        slot_matrix_payload = {}
+
     add_check(checks, 'index_has_bundle_script', 'app.bundle.js' in index_html, 'index.html should load app.bundle.js')
     add_check(checks, 'index_no_module_script', 'type="module"' not in index_html and "type='module'" not in index_html, 'local mode avoids ESM requirement')
     add_check(checks, 'bundle_has_no_es_import', re.search(r'^\s*import\s', bundle_js, re.M) is None, 'bundle should be plain script')
@@ -458,6 +476,24 @@ def main() -> None:
     f05_html = f05_path.read_text(encoding='utf-8')
     add_check(checks, 'F05_has_two_uploaded_img_refs', f05_html.count('uploaded:') >= 2, f"uploaded_count={f05_html.count('uploaded:')}")
     add_check(checks, 'F05_has_media_shells', all(token in f05_html for token in ['media-shell', 'hero-shot', 'opt-thumb', 'visual']), 'expected real-world slot patterns')
+    matrix_rows = {item.get('id'): item for item in slot_matrix_payload.get('matrix', []) if isinstance(item, dict)}
+    add_check(checks, 'slot_matrix_has_required_cases', all(key in matrix_rows for key in [
+        'explicit_selector_100pct',
+        'heuristic_threshold_gate',
+        'near_miss_not_promoted',
+        'fixture_05_regression_gate',
+    ]), json.dumps(sorted(matrix_rows.keys()), ensure_ascii=False))
+    for required_case in ['explicit_selector_100pct', 'heuristic_threshold_gate', 'near_miss_not_promoted', 'fixture_05_regression_gate']:
+        row = matrix_rows.get(required_case, {})
+        add_check(checks, f'slot_matrix_case_{required_case}', bool(row.get('pass')), json.dumps(row, ensure_ascii=False))
+    f05_row = matrix_rows.get('fixture_05_regression_gate', {})
+    f05_actual = f05_row.get('actual', {}) if isinstance(f05_row, dict) else {}
+    add_check(
+        checks,
+        'F05_slot_detection_summary_standardized',
+        all(key in f05_actual for key in ['explicitCount', 'heuristicCount', 'nearMissCount']),
+        json.dumps(f05_actual, ensure_ascii=False),
+    )
 
     browser_smoke = try_browser_smoke()
     add_check(checks, 'playwright_smoke_uses_file_protocol', INDEX.resolve().as_uri().startswith('file://'), INDEX.resolve().as_uri())
