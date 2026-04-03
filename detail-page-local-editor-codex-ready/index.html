@@ -82,6 +82,7 @@
 
       <div class="topbar__right">
         <button id="beginnerModeToggle" class="button button--secondary" type="button" aria-pressed="false">초보 모드: OFF</button>
+        <button id="onboardingReplayButton" class="button button--ghost" type="button">온보딩 다시보기</button>
         <div class="topbar__group">
           <span class="topbar__label">열기</span>
           <button id="openHtmlButton" class="button">HTML 열기</button>
@@ -657,9 +658,14 @@
       <div class="button-row button-row--compact">
         <button id="beginnerTutorialPrevButton" class="button button--ghost button--small" type="button">이전</button>
         <button id="beginnerTutorialNextButton" class="button button--secondary button--small" type="button">다음</button>
-        <button id="beginnerTutorialCloseButton" class="button button--ghost button--small" type="button">닫기</button>
+        <button id="beginnerTutorialCloseButton" class="button button--ghost button--small" type="button">건너뛰기</button>
       </div>
     </div>
+  </div>
+  <div id="onboardingChecklist" class="onboarding-checklist" hidden>
+    <strong>온보딩 완료 ✅</strong>
+    <p id="onboardingChecklistItem"></p>
+    <button id="onboardingChecklistDoneButton" class="button button--small" type="button">완료 체크</button>
   </div>
 
   <script src="./app.bundle.js"></script>
