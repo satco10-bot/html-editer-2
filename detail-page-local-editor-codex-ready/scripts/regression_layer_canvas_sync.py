@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import shutil
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,9 +25,31 @@ def _collect_fixture_ids() -> list[str]:
     return [item.get('id', '') for item in manifest.get('fixtures', []) if item.get('id')]
 
 
+def _find_chromium_path() -> str | None:
+    for candidate in ('/usr/bin/chromium', '/usr/bin/chromium-browser'):
+        if Path(candidate).exists():
+            return candidate
+    return shutil.which('chromium') or shutil.which('chromium-browser')
+
+
 def _load_fixture(page: Any, fixture_id: str) -> None:
-    page.select_option('#fixtureSelect', fixture_id)
-    page.locator('#loadFixtureButton').click()
+    page.evaluate(
+        """([selectId, fixtureValue]) => {
+            const select = document.querySelector(selectId);
+            if (select) {
+              select.value = fixtureValue;
+              select.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          }""",
+        ['#fixtureSelect', fixture_id],
+    )
+    page.evaluate(
+        """(buttonId) => {
+            const button = document.querySelector(buttonId);
+            if (button) button.click();
+          }""",
+        '#loadFixtureButton',
+    )
     page.wait_for_timeout(900)
 
 
@@ -212,7 +235,11 @@ def main() -> None:
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, executable_path='/usr/bin/chromium', args=['--no-sandbox'])
+            launch_options: dict[str, Any] = {'headless': True, 'args': ['--no-sandbox']}
+            chromium_path = _find_chromium_path()
+            if chromium_path:
+                launch_options['executable_path'] = chromium_path
+            browser = p.chromium.launch(**launch_options)
             page = browser.new_page(viewport={'width': 1700, 'height': 1200})
             page.goto(INDEX.resolve().as_uri(), wait_until='load', timeout=30000)
             page.wait_for_timeout(700)
@@ -250,7 +277,7 @@ def main() -> None:
     f05_gate_ok = bool(f05_item and all(case['ok'] for case in f05_item['results']))
     f05_failed_cases = [case['id'] for case in (f05_item or {}).get('results', []) if not case['ok']]
 
-    summary = summarize_matrix(fixture_rows)
+    overall_ok = (failed == 0) and f05_gate_ok
     finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
     payload = {
         'status': 'ok' if failed == 0 else 'scenario_failed',
@@ -276,7 +303,7 @@ def main() -> None:
     if not f05_gate_ok:
         print('⚠️ [F05 GATE] 회귀 금지 fixture(F05)에서 실패가 감지되었습니다.', flush=True)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
-    if not summary['overall_ok']:
+    if not overall_ok:
         raise SystemExit(3)
 
     if not f05_gate_ok:

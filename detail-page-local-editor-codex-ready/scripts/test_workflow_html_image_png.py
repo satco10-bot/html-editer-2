@@ -133,9 +133,7 @@ def run() -> dict[str, object]:
                 html_chooser_info.value.set_files(str(html_path))
                 wait_status_contains(page, 'HTML 파일', 30000, 'HTML 업로드')
 
-                with page.expect_file_chooser(timeout=10000) as image_chooser_info:
-                    page.click('#replaceImageButton')
-                image_chooser_info.value.set_files(str(image_path))
+                set_file_with_fallback(page, '#replaceImageButton', '#replaceImageInput', image_path)
                 wait_status_contains(page, '이미지를 적용', 30000, '이미지 적용')
 
                 try:

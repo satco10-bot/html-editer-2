@@ -217,7 +217,9 @@ const SLOT_NEAR_MISS_MIN = 48;
 const FRAME_STYLE_ID = '__phase5_local_editor_style';
 const FRAME_OVERLAY_ID = '__phase5_local_editor_overlay';
 const AUTOSAVE_KEY = 'detail-local-webapp-autosave-v6';
+const PROJECT_SNAPSHOT_KEY = 'detail-local-webapp-project-snapshots-v1';
 const HISTORY_LIMIT = 80;
+const PROJECT_SNAPSHOT_LIMIT = 30;
 const EXPORT_PRESETS = [
   { id: 'default', label: '기본 패키지', scale: 1, bundleMode: 'basic', description: '편집 HTML + 전체 PNG + 리포트' },
   { id: 'market', label: '마켓 업로드', scale: 1, bundleMode: 'market', description: '링크형 HTML + 섹션 PNG + 리포트' },
@@ -5259,6 +5261,7 @@ const viewFeatureFlags = {
   ruler: false,
 };
 const OPEN_DOWNLOAD_MODAL_BUTTON_LABEL = '저장/출력 열기';
+const DEFAULT_JPG_QUALITY = 0.92;
 const WORKFLOW_STEP_GUIDES = Object.freeze({
   load: 'HTML 파일이나 폴더를 먼저 불러오세요.',
   edit: '요소를 클릭한 뒤 드래그하세요.',
@@ -5282,6 +5285,8 @@ const BOOT_LOCAL_POLICY = Object.freeze({
   requiresFileSystemAccessApi: false,
   requiresServerEndpoint: false,
 });
+const SUPPORTED_IMAGE_EXTENSIONS = Object.freeze(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.avif']);
+const SUPPORTED_IMAGE_EXTENSIONS_TEXT = SUPPORTED_IMAGE_EXTENSIONS.join(', ');
 const APP_STATES = Object.freeze({
   launch: 'launch',
   editor: 'editor',
@@ -5401,6 +5406,7 @@ const elements = {
   undoButton: document.getElementById('undoButton'),
   redoButton: document.getElementById('redoButton'),
   restoreAutosaveButton: document.getElementById('restoreAutosaveButton'),
+  saveProjectSnapshotButton: document.getElementById('saveProjectSnapshotButton'),
   openDownloadModalButton: document.getElementById('openDownloadModalButton'),
   downloadModal: document.getElementById('downloadModal'),
   closeDownloadModalButton: document.getElementById('closeDownloadModalButton'),
@@ -5442,6 +5448,9 @@ const elements = {
   uploadDocumentList: document.getElementById('uploadDocumentList'),
   uploadUnassignedList: document.getElementById('uploadUnassignedList'),
   uploadBrokenList: document.getElementById('uploadBrokenList'),
+  snapshotNameInput: document.getElementById('snapshotNameInput'),
+  saveSnapshotFromPanelButton: document.getElementById('saveSnapshotFromPanelButton'),
+  snapshotList: document.getElementById('snapshotList'),
   normalizeStats: document.getElementById('normalizeStats'),
   selectionInspector: document.getElementById('selectionInspector'),
   slotList: document.getElementById('slotList'),
@@ -5565,6 +5574,7 @@ const elements = {
   onboardingChecklist: document.getElementById('onboardingChecklist'),
   onboardingChecklistItem: document.getElementById('onboardingChecklistItem'),
   onboardingChecklistDoneButton: document.getElementById('onboardingChecklistDoneButton'),
+  beginnerMoreItems: Array.from(document.querySelectorAll('[data-beginner-more-item]')),
 };
 
 const beginnerMoreItemAnchors = new WeakMap();
@@ -5770,6 +5780,36 @@ function selectionExportBackground() {
 
 function setStatus(text, options = undefined) {
   store.setStatus(text, options);
+}
+
+function setImageApplyDiagnostic(diagnostic) {
+  store.setImageApplyDiagnostic(diagnostic || null);
+}
+
+function buildImageFailureDiagnostic({ files = [], editorMeta = null, statusMessage = '' } = {}) {
+  const firstFile = files[0] || null;
+  const fileName = firstFile?.name || '';
+  const selected = editorMeta?.selected || null;
+  const selectedSlotLabel = selected?.label || selected?.uid || '';
+  const extension = fileName.includes('.') ? fileName.slice(fileName.lastIndexOf('.')).toLowerCase() : '';
+  const unsupportedFormat = !!extension && !SUPPORTED_IMAGE_EXTENSIONS.includes(extension);
+  const filenameMismatch = !!fileName && !!selectedSlotLabel && !fileName.toLowerCase().includes(String(selectedSlotLabel).toLowerCase());
+  const slotUnselected = !selected || selected.type !== 'slot';
+
+  return {
+    status: 'failed',
+    message: statusMessage || '이미지 적용 실패 원인을 확인해 주세요.',
+    reasons: {
+      slotUnselected,
+      filenameMismatch,
+      unsupportedFormat,
+    },
+    details: {
+      slotUnselected: slotUnselected ? '슬롯을 먼저 선택한 뒤 이미지를 넣어 주세요.' : '',
+      filenameMismatch: filenameMismatch ? `선택 슬롯(${selectedSlotLabel})과 파일명(${fileName})이 다릅니다.` : '',
+      unsupportedFormat: unsupportedFormat ? `지원하지 않는 확장자입니다: ${extension}` : '',
+    },
+  };
 }
 
 function setAppState(nextState) {
@@ -6343,6 +6383,37 @@ function renderUploadLists(state) {
   renderUploadBucket(elements.uploadBrokenList, broken, selectedUidSet, '깨진 자산 슬롯이 없습니다.');
 }
 
+function renderProjectSnapshotList(state) {
+  if (!elements.snapshotList) return;
+  const entries = getSnapshotEntriesForProject(state?.project || null);
+  if (!entries.length) {
+    elements.snapshotList.innerHTML = '<div class="upload-slot-empty">저장된 스냅샷이 없습니다.</div>';
+    return;
+  }
+  elements.snapshotList.innerHTML = entries.map((entry) => {
+    const createdText = entry.createdAt ? new Date(entry.createdAt).toLocaleString() : '-';
+    const previewText = escapeHtml(entry.thumbnail?.text || '미리보기 없음');
+    const imageSrc = String(entry.thumbnail?.imageSrc || '').trim();
+    const thumb = imageSrc
+      ? `<img src="${escapeHtml(imageSrc)}" alt="스냅샷 썸네일" loading="lazy" />`
+      : `<span>${previewText}</span>`;
+    return `
+      <article class="snapshot-item" data-snapshot-id="${escapeHtml(entry.id)}">
+        <div class="snapshot-item__top">
+          <strong class="snapshot-item__title">${escapeHtml(entry.title || '이름 없음')}</strong>
+          <span class="snapshot-item__time">${escapeHtml(createdText)}</span>
+        </div>
+        <div class="snapshot-item__thumb">${thumb}</div>
+        <p class="snapshot-item__desc">${escapeHtml(entry.note || previewText)}</p>
+        <div class="snapshot-item__actions">
+          <button class="button button--small button--secondary" type="button" data-snapshot-action="restore">복원</button>
+          <button class="button button--small button--ghost" type="button" data-snapshot-action="delete">삭제</button>
+        </div>
+      </article>
+    `;
+  }).join('');
+}
+
 function setCodeSource(nextSource, { preserveDraft = true } = {}) {
   currentCodeSource = nextSource || 'edited';
   for (const button of elements.codeSourceButtons) {
@@ -6492,6 +6563,111 @@ function persistAutosave(snapshot) {
   try {
     localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(payload));
   } catch {}
+}
+
+function resolveSnapshotProjectKey(project) {
+  if (!project) return '';
+  return [project.fixtureId || '', project.sourceType || '', project.sourceName || ''].join('::');
+}
+
+function readProjectSnapshotPayload() {
+  try {
+    const raw = localStorage.getItem(PROJECT_SNAPSHOT_KEY);
+    if (!raw) return { entries: [] };
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed?.entries)) return { entries: [] };
+    return { entries: parsed.entries.filter((entry) => entry?.snapshot?.html) };
+  } catch {
+    return { entries: [] };
+  }
+}
+
+function writeProjectSnapshotPayload(payload) {
+  try {
+    localStorage.setItem(PROJECT_SNAPSHOT_KEY, JSON.stringify(payload));
+  } catch {}
+}
+
+function buildSnapshotThumbnail(snapshotHtml = '') {
+  try {
+    const doc = new DOMParser().parseFromString(snapshotHtml, 'text/html');
+    const img = doc.querySelector('img[src]');
+    const text = (doc.body?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    return {
+      imageSrc: String(img?.getAttribute('src') || '').trim(),
+      text: text || '텍스트 미리보기가 없습니다.',
+    };
+  } catch {
+    return { imageSrc: '', text: '미리보기를 읽을 수 없습니다.' };
+  }
+}
+
+function getSnapshotEntriesForProject(project) {
+  const key = resolveSnapshotProjectKey(project);
+  if (!key) return [];
+  return readProjectSnapshotPayload().entries.filter((entry) => entry.projectKey === key);
+}
+
+function createProjectSnapshot({
+  title = '',
+  note = '',
+  auto = false,
+  statusMessage = '스냅샷을 저장했습니다.',
+} = {}) {
+  const project = store.getState().project;
+  if (!project || !activeEditor) {
+    setStatus('먼저 프로젝트를 불러와 주세요.');
+    return null;
+  }
+  const snapshot = activeEditor.captureSnapshot(auto ? 'snapshot-auto' : 'snapshot-manual');
+  if (!snapshot?.html) {
+    setStatus('스냅샷 저장에 실패했습니다. 다시 시도해 주세요.');
+    return null;
+  }
+  const now = new Date();
+  const thumbnail = buildSnapshotThumbnail(snapshot.html);
+  const entry = {
+    id: `snap_${Math.random().toString(36).slice(2, 10)}`,
+    projectKey: resolveSnapshotProjectKey(project),
+    sourceName: project.sourceName || '',
+    createdAt: now.toISOString(),
+    title: (title || '').trim() || (auto ? `자동백업 ${now.toLocaleString()}` : `수동 스냅샷 ${now.toLocaleString()}`),
+    note: (note || '').trim(),
+    auto: !!auto,
+    thumbnail,
+    snapshot,
+  };
+  const payload = readProjectSnapshotPayload();
+  payload.entries = [entry, ...payload.entries].slice(0, PROJECT_SNAPSHOT_LIMIT);
+  writeProjectSnapshotPayload(payload);
+  renderProjectSnapshotList(store.getState());
+  setStatus(statusMessage);
+  return entry;
+}
+
+function restoreProjectSnapshotById(snapshotId) {
+  const state = store.getState();
+  const project = state.project;
+  if (!project) return setStatus('먼저 프로젝트를 불러와 주세요.');
+  const entry = getSnapshotEntriesForProject(project).find((item) => item.id === snapshotId);
+  if (!entry?.snapshot?.html) return setStatus('복원할 스냅샷을 찾지 못했습니다.');
+  createProjectSnapshot({
+    auto: true,
+    title: `복원 전 자동백업 (${entry.title || '스냅샷'})`,
+    statusMessage: '복원 전 자동백업을 저장했습니다.',
+  });
+  mountProject(project, { snapshot: entry.snapshot, preserveHistory: false, force: true });
+  setStatus(`스냅샷 "${entry.title || '이름 없음'}" 상태로 복원했습니다.`);
+}
+
+function deleteProjectSnapshotById(snapshotId) {
+  const payload = readProjectSnapshotPayload();
+  const nextEntries = payload.entries.filter((entry) => entry.id !== snapshotId);
+  if (nextEntries.length === payload.entries.length) return;
+  payload.entries = nextEntries;
+  writeProjectSnapshotPayload(payload);
+  renderProjectSnapshotList(store.getState());
+  setStatus('스냅샷을 삭제했습니다.');
 }
 
 function refreshHistoryButtons() {
@@ -6861,6 +7037,7 @@ function renderShell(state) {
   renderSectionFilmstrip(elements.sectionList, state.editorMeta);
   renderSlotList(elements.slotList, state.editorMeta);
   renderUploadLists(state);
+  renderProjectSnapshotList(state);
   renderLayerTree(elements.layerTree, state.editorMeta, elements.layerFilterInput?.value || '');
   renderProjectMeta(elements.projectMeta, state.project, {
     selectionMode: state.selectionMode,
@@ -6905,6 +7082,8 @@ function renderShell(state) {
   elements.groupButton.disabled = !hasEditor || !state.editorMeta?.canGroupSelection;
   elements.ungroupButton.disabled = !hasEditor || !state.editorMeta?.canUngroupSelection;
   elements.preflightRefreshButton.disabled = !hasEditor;
+  if (elements.saveProjectSnapshotButton) elements.saveProjectSnapshotButton.disabled = !hasEditor;
+  if (elements.saveSnapshotFromPanelButton) elements.saveSnapshotFromPanelButton.disabled = !hasEditor;
   for (const button of elements.batchActionButtons) {
     const requiresMany = button.dataset.batchAction !== 'reset-transform';
     const needed = requiresMany ? 2 : 1;
@@ -7559,6 +7738,8 @@ function bindEvents() {
     'undoButton',
     'redoButton',
     'restoreAutosaveButton',
+    'saveProjectSnapshotButton',
+    'saveSnapshotFromPanelButton',
     'downloadReportButton',
     'exportPresetSelect',
     'htmlFileInput',
@@ -7568,6 +7749,7 @@ function bindEvents() {
     'layerFilterInput',
     'slotList',
     'layerTree',
+    'snapshotList',
   ];
   for (const elementName of requiredElementNames) {
     if (!elements[elementName]) {
@@ -7781,6 +7963,32 @@ elements.clearTextStyleButton?.addEventListener('click', () => applyTextStyleFro
 elements.undoButton?.addEventListener('click', undoHistory);
 elements.redoButton?.addEventListener('click', redoHistory);
 elements.restoreAutosaveButton?.addEventListener('click', restoreAutosave);
+elements.saveProjectSnapshotButton?.addEventListener('click', () => {
+  createProjectSnapshot({
+    title: elements.snapshotNameInput?.value || '',
+    note: '',
+    auto: false,
+    statusMessage: '작업 시점을 스냅샷으로 저장했습니다.',
+  });
+});
+elements.saveSnapshotFromPanelButton?.addEventListener('click', () => {
+  createProjectSnapshot({
+    title: elements.snapshotNameInput?.value || '',
+    note: '',
+    auto: false,
+    statusMessage: '스냅샷 목록에 새 시점을 추가했습니다.',
+  });
+});
+elements.snapshotList?.addEventListener('click', (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  const action = target?.closest?.('[data-snapshot-action]')?.getAttribute('data-snapshot-action') || '';
+  if (!action) return;
+  const card = target.closest('[data-snapshot-id]');
+  const snapshotId = card?.getAttribute('data-snapshot-id') || '';
+  if (!snapshotId) return;
+  if (action === 'restore') return restoreProjectSnapshotById(snapshotId);
+  if (action === 'delete') return deleteProjectSnapshotById(snapshotId);
+});
 elements.openDownloadModalButton?.addEventListener('click', () => toggleDownloadModal(true));
 elements.closeDownloadModalButton?.addEventListener('click', () => toggleDownloadModal(false));
 elements.downloadChoiceSelect?.addEventListener('change', () => renderShell(store.getState()));
