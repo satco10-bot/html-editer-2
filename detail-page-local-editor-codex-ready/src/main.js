@@ -25,6 +25,7 @@ let pendingMountOptions = null;
 let currentExportPresetId = 'market';
 let currentCodeSource = 'edited';
 let codeEditorDirty = false;
+let geometryCoordMode = 'relative';
 const zoomState = { mode: 'fit', value: 1 };
 
 const historyState = {
@@ -100,6 +101,8 @@ const elements = {
   geometryYInput: document.getElementById('geometryYInput'),
   geometryWInput: document.getElementById('geometryWInput'),
   geometryHInput: document.getElementById('geometryHInput'),
+  geometryCoordModeSelect: document.getElementById('geometryCoordModeSelect'),
+  geometryRuleHint: document.getElementById('geometryRuleHint'),
   applyGeometryButton: document.getElementById('applyGeometryButton'),
   bringForwardButton: document.getElementById('bringForwardButton'),
   sendBackwardButton: document.getElementById('sendBackwardButton'),
@@ -328,6 +331,18 @@ function resetHistory() {
 function recordHistorySnapshot(snapshot, { clearRedo = true } = {}) {
   if (!snapshot?.html) return;
   const last = historyState.undoStack.at(-1);
+  const isGeometryLive = snapshot.label === 'geometry-live';
+  const canMergeGeometryLive = isGeometryLive
+    && last?.label === 'geometry-live'
+    && last.selectedUid === snapshot.selectedUid
+    && last.selectionMode === snapshot.selectionMode;
+  if (canMergeGeometryLive) {
+    historyState.undoStack[historyState.undoStack.length - 1] = snapshot;
+    if (clearRedo) historyState.redoStack = [];
+    persistAutosave(snapshot);
+    refreshHistoryButtons();
+    return;
+  }
   if (last && last.html === snapshot.html && last.selectedUid === snapshot.selectedUid && last.selectionMode === snapshot.selectionMode) {
     persistAutosave(snapshot);
     refreshHistoryButtons();
@@ -463,6 +478,7 @@ function syncGeometryControls() {
   const geometry = activeEditor?.getSelectionGeometry?.() || null;
   const enabled = !!geometry;
   const controls = [
+    elements.geometryCoordModeSelect,
     elements.geometryXInput,
     elements.geometryYInput,
     elements.geometryWInput,
@@ -479,11 +495,57 @@ function syncGeometryControls() {
     if (!control) continue;
     control.disabled = !enabled;
   }
-  if (!enabled) return;
-  elements.geometryXInput.value = String(geometry.x ?? 0);
-  elements.geometryYInput.value = String(geometry.y ?? 0);
-  elements.geometryWInput.value = String(geometry.w ?? 0);
-  elements.geometryHInput.value = String(geometry.h ?? 0);
+  if (!enabled) {
+    for (const input of [elements.geometryXInput, elements.geometryYInput, elements.geometryWInput, elements.geometryHInput]) {
+      if (!input) continue;
+      input.value = '';
+      input.placeholder = '';
+      input.dataset.mixed = '0';
+    }
+    if (elements.geometryRuleHint) elements.geometryRuleHint.textContent = '요소를 선택하면 좌표/크기를 표시합니다.';
+    return;
+  }
+  const mode = geometryCoordMode === 'absolute' ? 'absolute' : 'relative';
+  const group = geometry[mode] || geometry.relative;
+  const mapping = [
+    [elements.geometryXInput, 'x'],
+    [elements.geometryYInput, 'y'],
+    [elements.geometryWInput, 'w'],
+    [elements.geometryHInput, 'h'],
+  ];
+  for (const [input, key] of mapping) {
+    if (!input) continue;
+    const mixed = !!group?.mixed?.[key];
+    input.dataset.mixed = mixed ? '1' : '0';
+    input.placeholder = mixed ? '혼합' : '';
+    input.value = mixed ? '' : String(group?.[key] ?? '');
+  }
+  const modeText = mode === 'absolute'
+    ? '절대 좌표: 문서의 왼쪽/위(0,0) 기준'
+    : '상대 좌표: 각 요소의 transform 이동값 기준';
+  if (elements.geometryRuleHint) {
+    elements.geometryRuleHint.textContent = `${modeText} · Shift=10px, Alt=1px, 기본=2px`;
+  }
+}
+
+function applyGeometryFromInputs({ live = false } = {}) {
+  if (!activeEditor) return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
+  const values = {
+    x: Number.parseFloat(elements.geometryXInput.value),
+    y: Number.parseFloat(elements.geometryYInput.value),
+    w: Number.parseFloat(elements.geometryWInput.value),
+    h: Number.parseFloat(elements.geometryHInput.value),
+  };
+  const patch = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (!Number.isFinite(value)) continue;
+    patch[key] = value;
+  }
+  if (!Object.keys(patch).length) return { ok: false, message: '적용할 숫자 값을 입력해 주세요.' };
+  return activeEditor.applyGeometryPatch(patch, {
+    coordinateSpace: geometryCoordMode,
+    mutationLabel: live ? 'geometry-live' : 'geometry-patch',
+  });
 }
 
 function renderShell(state) {
@@ -1001,16 +1063,21 @@ elements.addSlotButton?.addEventListener('click', () => {
   setStatus(result.message);
 });
 elements.applyGeometryButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const patch = {
-    x: Number.parseFloat(elements.geometryXInput.value),
-    y: Number.parseFloat(elements.geometryYInput.value),
-    w: Number.parseFloat(elements.geometryWInput.value),
-    h: Number.parseFloat(elements.geometryHInput.value),
-  };
-  const result = activeEditor.applyGeometryPatch(patch);
+  const result = applyGeometryFromInputs({ live: false });
   setStatus(result.message);
 });
+elements.geometryCoordModeSelect?.addEventListener('change', () => {
+  geometryCoordMode = elements.geometryCoordModeSelect.value === 'absolute' ? 'absolute' : 'relative';
+  syncGeometryControls();
+  setStatus(geometryCoordMode === 'absolute' ? '절대 좌표 모드로 전환했습니다.' : '상대 좌표 모드로 전환했습니다.');
+});
+for (const input of [elements.geometryXInput, elements.geometryYInput, elements.geometryWInput, elements.geometryHInput]) {
+  input?.addEventListener('input', () => {
+    if (!activeEditor) return;
+    const result = applyGeometryFromInputs({ live: true });
+    if (result.ok) setStatus(result.message);
+  });
+}
 elements.bringForwardButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.bringSelectedForward();
