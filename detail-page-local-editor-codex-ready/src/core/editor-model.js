@@ -90,6 +90,8 @@ export function applyModelNodesToDom(doc, model, uids = []) {
     const styleText = serializeStyle(styleMap);
     if (styleText) element.setAttribute('style', styleText);
     else element.removeAttribute('style');
+    if (styleText) element.dataset.exportStyle = styleText;
+    else element.removeAttribute('data-export-style');
     element.dataset.editorTx = String(Math.round(state.bounds.x || 0));
     element.dataset.editorTy = String(Math.round(state.bounds.y || 0));
     if (state.slotMeta?.label) element.setAttribute('data-slot-label', state.slotMeta.label);

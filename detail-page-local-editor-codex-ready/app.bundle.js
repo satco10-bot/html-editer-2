@@ -1360,6 +1360,8 @@ function applyModelNodesToDom(doc, model, uids = []) {
     const styleText = serializeStyle(styleMap);
     if (styleText) element.setAttribute('style', styleText);
     else element.removeAttribute('style');
+    if (styleText) element.dataset.exportStyle = styleText;
+    else element.removeAttribute('data-export-style');
     element.dataset.editorTx = String(Math.round(state.bounds.x || 0));
     element.dataset.editorTy = String(Math.round(state.bounds.y || 0));
     if (state.slotMeta?.label) element.setAttribute('data-slot-label', state.slotMeta.label);
@@ -2026,7 +2028,7 @@ function createFrameEditor({
     const before = lastCommittedSnapshot || captureSnapshot('before-command');
     const after = captureSnapshot(label);
     lastCommittedSnapshot = after;
-    onMutation({ type: 'command', label, before, after, at: new Date().toISOString() });
+    onMutation({ type: 'command', id: nextId('cmd'), label, before, after, modelVersion: editorModel.version, at: new Date().toISOString() });
   }
 
   function getElementByUid(uid) {
@@ -2528,7 +2530,13 @@ function createFrameEditor({
     const translate = (tx || ty) ? `translate(${Number(tx.toFixed(3))}px, ${Number(ty.toFixed(3))}px)` : '';
     const base = state.base && state.base !== 'none' ? state.base : '';
     const nextTransform = [base, translate].filter(Boolean).join(' ').trim();
-    setInlineStyle(element, { transform: nextTransform || null });
+    const uid = element.dataset.nodeUid || nextId('node');
+    element.dataset.nodeUid = uid;
+    patchModelNode(editorModel, uid, {
+      bounds: { x: Number(tx.toFixed(3)), y: Number(ty.toFixed(3)) },
+      style: { transform: nextTransform || null },
+    });
+    applyModelNodesToDom(doc, editorModel, [uid]);
     element.dataset.editorModified = '1';
   }
 
@@ -2555,10 +2563,23 @@ function createFrameEditor({
     if (!target) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
     if (isLockedElement(target)) return { ok: false, message: '잠긴 요소는 편집할 수 없습니다.' };
     if (Number.isFinite(patch.w) || Number.isFinite(patch.h)) {
+      const uid = target.dataset.nodeUid || nextId('node');
+      target.dataset.nodeUid = uid;
+      const boundsPatch = {};
       const stylePatch = {};
-      if (Number.isFinite(patch.w)) stylePatch.width = `${Math.max(8, patch.w)}px`;
-      if (Number.isFinite(patch.h)) stylePatch.height = `${Math.max(8, patch.h)}px`;
-      setInlineStyle(target, stylePatch);
+      if (Number.isFinite(patch.w)) {
+        boundsPatch.width = Math.max(8, patch.w);
+        stylePatch.width = `${Math.max(8, patch.w)}px`;
+      }
+      if (Number.isFinite(patch.h)) {
+        boundsPatch.height = Math.max(8, patch.h);
+        stylePatch.height = `${Math.max(8, patch.h)}px`;
+      }
+      patchModelNode(editorModel, uid, {
+        bounds: boundsPatch,
+        style: stylePatch,
+      });
+      applyModelNodesToDom(doc, editorModel, [uid]);
     }
     const state = readTransformState(target);
     const nextX = Number.isFinite(patch.x) ? patch.x : state.tx;
@@ -3295,7 +3316,13 @@ function createFrameEditor({
     }
     width = Math.max(8, width);
     height = Math.max(8, height);
-    setInlineStyle(target, { width: `${Math.round(width)}px`, height: `${Math.round(height)}px` });
+    const uid = target.dataset.nodeUid || nextId('node');
+    target.dataset.nodeUid = uid;
+    patchModelNode(editorModel, uid, {
+      bounds: { width, height },
+      style: { width: `${Math.round(width)}px`, height: `${Math.round(height)}px` },
+    });
+    applyModelNodesToDom(doc, editorModel, [uid]);
     writeTransformState(target, tx, ty);
     target.dataset.editorModified = '1';
     if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
