@@ -2479,19 +2479,30 @@ function createFrameEditor({
   }
 
   function duplicateSelected() {
-    const target = selectedElement;
-    if (!target) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
-    const clone = target.cloneNode(true);
-    clone.dataset.nodeUid = nextId('node');
-    clone.removeAttribute('id');
-    target.after(clone);
-    const state = readTransformState(target);
-    writeTransformState(clone, state.tx + 10, state.ty + 10);
-    clone.dataset.editorModified = '1';
-    modifiedSlots.add(clone.dataset.nodeUid);
-    redetect({ preserveSelectionUids: [clone.dataset.nodeUid] });
+    const targets = uniqueConnectedElements(selectedElements);
+    if (!targets.length) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
+    const createdUids = [];
+    for (const target of targets) {
+      if (!target.isConnected || target === doc.body || target.tagName === 'HTML' || target.tagName === 'BODY') continue;
+      const clone = target.cloneNode(true);
+      clone.dataset.nodeUid = nextId('node');
+      clone.removeAttribute('id');
+      target.after(clone);
+      const state = readTransformState(target);
+      writeTransformState(clone, state.tx + 10, state.ty + 10);
+      clone.dataset.editorModified = '1';
+      modifiedSlots.add(clone.dataset.nodeUid);
+      createdUids.push(clone.dataset.nodeUid);
+    }
+    if (!createdUids.length) return { ok: false, message: '복제할 수 있는 요소가 없습니다.' };
+    redetect({ preserveSelectionUids: createdUids });
     emitMutation('duplicate');
-    return { ok: true, message: '선택 요소를 복제했습니다.' };
+    return {
+      ok: true,
+      message: createdUids.length > 1
+        ? `선택 요소 ${createdUids.length}개를 복제했습니다.`
+        : '선택 요소를 복제했습니다.',
+    };
   }
 
   function deleteSelected() {
@@ -2529,26 +2540,40 @@ function createFrameEditor({
     return { ok: true, message: `${kind === 'text' ? '텍스트' : kind === 'box' ? '박스' : '이미지 슬롯'}를 추가했습니다.` };
   }
 
+  function moveElementToLayerIndex(element, nextIndex) {
+    if (!element?.parentElement) return false;
+    const parent = element.parentElement;
+    const siblings = Array.from(parent.children);
+    const currentIndex = siblings.indexOf(element);
+    if (currentIndex < 0) return false;
+    const clampedIndex = Math.max(0, Math.min(siblings.length - 1, nextIndex));
+    if (clampedIndex === currentIndex) return false;
+    siblings.splice(currentIndex, 1);
+    siblings.splice(clampedIndex, 0, element);
+    for (const child of siblings) parent.appendChild(child);
+    return true;
+  }
+
   function applyLayerIndexCommand(command = 'forward') {
     const target = selectedElement;
     if (!target || !target.parentElement) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
-    const parent = target.parentElement;
-    if (command === 'forward') {
-      const next = target.nextElementSibling;
-      if (next) next.after(target);
-      else return { ok: false, message: '이미 가장 앞 레이어입니다.' };
-    } else if (command === 'backward') {
-      const prev = target.previousElementSibling;
-      if (prev) prev.before(target);
-      else return { ok: false, message: '이미 가장 뒤 레이어입니다.' };
-    } else if (command === 'front') {
-      if (!target.nextElementSibling) return { ok: false, message: '이미 가장 앞 레이어입니다.' };
-      parent.appendChild(target);
-    } else if (command === 'back') {
-      if (!target.previousElementSibling) return { ok: false, message: '이미 가장 뒤 레이어입니다.' };
-      parent.insertBefore(target, parent.firstElementChild);
-    } else {
+    const siblings = Array.from(target.parentElement.children);
+    const currentIndex = siblings.indexOf(target);
+    if (currentIndex < 0) return { ok: false, message: '레이어 순서를 계산하지 못했습니다.' };
+    const commandToIndex = {
+      forward: currentIndex + 1,
+      backward: currentIndex - 1,
+      front: siblings.length - 1,
+      back: 0,
+    };
+    if (!Object.prototype.hasOwnProperty.call(commandToIndex, command)) {
       return { ok: false, message: '지원하지 않는 레이어 명령입니다.' };
+    }
+    const moved = moveElementToLayerIndex(target, commandToIndex[command]);
+    if (!moved) {
+      const isFront = currentIndex === siblings.length - 1;
+      const blockedByEdge = (command === 'forward' || command === 'front') ? isFront : currentIndex === 0;
+      return { ok: false, message: blockedByEdge ? ((command === 'forward' || command === 'front') ? '이미 가장 앞 레이어입니다.' : '이미 가장 뒤 레이어입니다.') : '레이어 순서를 변경하지 못했습니다.' };
     }
     target.dataset.editorModified = '1';
     if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
