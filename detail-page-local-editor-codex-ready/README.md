@@ -49,6 +49,14 @@ node --check app.bundle.js
 python3 scripts/validate_phase6.py
 ```
 
+### `build_local_bundle` 실행 기준(입력/출력)
+- 입력(Entry): `src/main.js` (내부에서 `src/` 상대 import를 따라가며 하나로 합칩니다)
+- 출력(Output): `app.bundle.js` (브라우저가 `index.html`에서 직접 읽는 단일 번들 파일)
+- 주의: `src/` 안의 JS를 수정했다면 **반드시** 아래 명령을 다시 실행해 `app.bundle.js`를 최신 상태로 맞춰야 합니다.
+  ```bash
+  python3 scripts/build_local_bundle.py
+  ```
+
 ## Phase8 파이프라인 실행 가이드 (처음 실행도 바로 동작)
 1. 먼저 아래 **한 줄**만 실행합니다.
    ```bash
