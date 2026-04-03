@@ -1,0 +1,255 @@
+{
+  "summary": {
+    "launcher_total": 5,
+    "launcher_failed": 0,
+    "editor_total": 36,
+    "editor_failed": 2,
+    "page_error_count": 0
+  },
+  "launcher": [
+    {
+      "label": "런처-새로 만들기",
+      "ok": true,
+      "error": ""
+    },
+    {
+      "label": "런처-HTML 업로드",
+      "ok": true,
+      "error": ""
+    },
+    {
+      "label": "런처-최근 작업 열기",
+      "ok": true,
+      "error": ""
+    },
+    {
+      "label": "런처-퀵 F01",
+      "ok": true,
+      "error": ""
+    },
+    {
+      "label": "런처-퀵 F05",
+      "ok": true,
+      "error": ""
+    }
+  ],
+  "editor": [
+    {
+      "label": "상단-초보모드",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "상단-온보딩 다시보기",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "상단-HTML 열기",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "상단-폴더 열기",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "상단-불러오기",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "상단-저장/출력 열기",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "상단-문서 저장",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "상단-PNG",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "상단-JPG",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "상단-되돌리기",
+      "ok": false,
+      "enabled": false,
+      "error": "Locator.click: Timeout 3000ms exceeded."
+    },
+    {
+      "label": "상단-다시하기",
+      "ok": false,
+      "enabled": false,
+      "error": "Locator.click: Timeout 3000ms exceeded."
+    },
+    {
+      "label": "상단-자동저장 복구",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "상단-스냅샷 저장",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "상단-왼쪽 패널",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "상단-오른쪽 패널",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "상단-캔버스 집중",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "캔버스-줌아웃",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "캔버스-줌인",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "캔버스-줌리셋",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "캔버스-폭맞춤",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "캔버스-스냅 토글",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "캔버스-가이드 토글",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "캔버스-눈금자 토글",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "왼쪽탭-시작",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "왼쪽탭-이미지",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "왼쪽탭-텍스트",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "왼쪽탭-레이어",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "왼쪽탭-내보내기",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "오른쪽탭-선택/검사",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "오른쪽탭-텍스트",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "오른쪽탭-정렬/간격",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "오른쪽탭-레이어",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "선택모드-선택",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "퀵액션-이미지 넣기",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "퀵액션-슬롯 지정",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    },
+    {
+      "label": "퀵액션-다시 감지",
+      "ok": true,
+      "enabled": true,
+      "error": ""
+    }
+  ],
+  "page_errors": []
+}

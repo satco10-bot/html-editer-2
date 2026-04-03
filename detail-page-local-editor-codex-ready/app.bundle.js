@@ -5562,6 +5562,7 @@ const elements = {
   tidyVerticalButton: document.getElementById('tidyVerticalButton'),
   beginnerMoreItems: Array.from(document.querySelectorAll('[data-beginner-more-item]')),
   beginnerModeToggle: document.getElementById('beginnerModeToggle'),
+  beginnerMoreItems: Array.from(document.querySelectorAll('[data-beginner-more-item]')),
   advancedTopbarPanel: document.getElementById('advancedTopbarPanel'),
   beginnerTutorialTooltip: document.getElementById('beginnerTutorialTooltip'),
   beginnerTutorialTitle: document.getElementById('beginnerTutorialTitle'),
@@ -5579,12 +5580,12 @@ const elements = {
 
 const beginnerMoreItemAnchors = new WeakMap();
 
-elements.beginnerMoreItems.forEach((item) => {
+for (const item of elements.beginnerMoreItems || []) {
   beginnerMoreItemAnchors.set(item, {
     parent: item.parentElement,
     nextSibling: item.nextSibling,
   });
-});
+}
 
 function readFromLocalStorage(key, fallback = null) {
   try {
@@ -5824,7 +5825,9 @@ function setAppState(nextState) {
 function refreshLauncherRecentButton() {
   if (!elements.launcherRecentButton) return;
   const payload = readAutosavePayload();
-  elements.launcherRecentButton.disabled = !payload?.snapshot?.html;
+  const hasSnapshot = !!payload?.snapshot?.html;
+  elements.launcherRecentButton.disabled = false;
+  elements.launcherRecentButton.dataset.available = hasSnapshot ? 'true' : 'false';
 }
 
 function extractErrorMessage(error) {
