@@ -5155,6 +5155,10 @@ const BOOT_LOCAL_POLICY = Object.freeze({
   requiresFileSystemAccessApi: false,
   requiresServerEndpoint: false,
 });
+const APP_STATES = Object.freeze({
+  launch: 'launch',
+  editor: 'editor',
+});
 const BEGINNER_MODE_STORAGE_KEY = 'detail_editor_beginner_mode_v1';
 const BEGINNER_MODE_TUTORIAL_SEEN_KEY = 'detail_editor_beginner_tutorial_seen_v1';
 const IMAGE_FILE_NAME_HINT_RE = /[\s_-]+/g;
@@ -5175,6 +5179,7 @@ const BEGINNER_TUTORIAL_STEPS = Object.freeze([
 ]);
 let isBeginnerMode = false;
 let beginnerTutorialStepIndex = 0;
+let currentAppState = APP_STATES.launch;
 
 const historyState = {
   baseSnapshot: null,
@@ -5202,6 +5207,13 @@ const EXPORT_NEXT_ACTION_HINTS = Object.freeze({
 });
 
 const elements = {
+  appLauncher: document.getElementById('appLauncher'),
+  appShell: document.getElementById('appShell'),
+  appStatusbar: document.getElementById('appStatusbar'),
+  launcherNewButton: document.getElementById('launcherNewButton'),
+  launcherUploadButton: document.getElementById('launcherUploadButton'),
+  launcherRecentButton: document.getElementById('launcherRecentButton'),
+  launcherFixtureButtons: Array.from(document.querySelectorAll('[data-launch-fixture]')),
   fixtureSelect: document.getElementById('fixtureSelect'),
   openHtmlButton: document.getElementById('openHtmlButton'),
   openFolderButton: document.getElementById('openFolderButton'),
@@ -5512,49 +5524,19 @@ function setStatus(text, options = undefined) {
   store.setStatus(text, options);
 }
 
-function setImageApplyDiagnostic(diagnostic) {
-  store.setImageApplyDiagnostic(diagnostic);
+function setAppState(nextState) {
+  const normalized = nextState === APP_STATES.editor ? APP_STATES.editor : APP_STATES.launch;
+  currentAppState = normalized;
+  const isEditor = normalized === APP_STATES.editor;
+  if (elements.appLauncher) elements.appLauncher.hidden = isEditor;
+  if (elements.appShell) elements.appShell.hidden = !isEditor;
+  if (elements.appStatusbar) elements.appStatusbar.hidden = !isEditor;
 }
 
-function isSupportedImageFile(file) {
-  const type = String(file?.type || '');
-  const name = String(file?.name || '');
-  return /^image\//i.test(type) || /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i.test(name);
-}
-
-function normalizeNameForCompare(value) {
-  return String(value || '').toLowerCase().replace(/\.[^.]+$/, '').replace(IMAGE_FILE_NAME_HINT_RE, '');
-}
-
-function buildImageFailureDiagnostic({ files, editorMeta, statusMessage }) {
-  const safeFiles = Array.from(files || []);
-  const selected = editorMeta?.selected || null;
-  const selectedType = selected?.type || '';
-  const selectedLabel = selected?.label || selected?.uid || '';
-  const firstFile = safeFiles[0] || null;
-  const firstFileName = firstFile?.name || '';
-  const unsupportedCount = safeFiles.filter((file) => !isSupportedImageFile(file)).length;
-  const supportedCount = safeFiles.length - unsupportedCount;
-  const normalizedFileName = normalizeNameForCompare(firstFileName);
-  const normalizedSlotName = normalizeNameForCompare(selectedLabel);
-  const filenameMismatch = Boolean(firstFileName && selectedLabel && normalizedFileName && normalizedSlotName && !normalizedFileName.includes(normalizedSlotName) && !normalizedSlotName.includes(normalizedFileName));
-  const slotUnselected = selectedType !== 'slot';
-  return {
-    status: 'failed',
-    createdAt: new Date().toISOString(),
-    message: statusMessage || '이미지를 적용하지 못했습니다.',
-    files: safeFiles.map((file) => ({ name: file?.name || '', type: file?.type || '' })),
-    reasons: {
-      slotUnselected,
-      filenameMismatch,
-      unsupportedFormat: unsupportedCount > 0 || supportedCount < 1,
-    },
-    details: {
-      slotUnselected: slotUnselected ? '현재 선택이 이미지 슬롯이 아닙니다. 슬롯을 먼저 선택해 주세요.' : '',
-      filenameMismatch: filenameMismatch ? `선택 슬롯 "${selectedLabel}"과 파일 "${firstFileName}" 이름이 달라 자동 연결이 어려울 수 있습니다.` : '',
-      unsupportedFormat: unsupportedCount > 0 ? `지원하지 않는 파일 ${unsupportedCount}개가 포함되어 있습니다. (${SUPPORTED_IMAGE_EXTENSIONS_TEXT})` : '',
-    },
-  };
+function refreshLauncherRecentButton() {
+  if (!elements.launcherRecentButton) return;
+  const payload = readAutosavePayload();
+  elements.launcherRecentButton.disabled = !payload?.snapshot?.html;
 }
 
 function extractErrorMessage(error) {
@@ -6134,6 +6116,7 @@ function refreshHistoryButtons() {
   if (elements.undoButton) elements.undoButton.disabled = !hasProject || historyState.undoStack.length === 0;
   if (elements.redoButton) elements.redoButton.disabled = !hasProject || historyState.redoStack.length === 0;
   if (elements.restoreAutosaveButton) elements.restoreAutosaveButton.disabled = !readAutosavePayload();
+  refreshLauncherRecentButton();
 }
 
 function resetHistory(baseSnapshot = null) {
@@ -6722,6 +6705,7 @@ function loadFixture(fixtureId) {
     pendingMountOptions = { snapshot: null, preserveHistory: false };
     const project = normalizeProject({ html, sourceName: fixtureMeta.name, sourceType: 'fixture', fixtureMeta });
     store.setProject(project);
+    setAppState(APP_STATES.editor);
     setStatus(`Fixture ${fixtureId}를 불러왔습니다. 슬롯 후보 ${project.summary.totalSlotCandidates}개, 자산 ${project.summary.assetsTotal}개입니다.`);
   } catch (error) {
     setStatusWithError('초기 로딩 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'LOAD_FIXTURE_ERROR' });
@@ -6739,6 +6723,7 @@ async function openHtmlFile(file) {
     const project = normalizeProject({ html, sourceName: file.name, sourceType: 'html-file', fileIndex, htmlEntryPath: file.name });
     if (requestId !== importRequestSequence) return;
     store.setProject(project);
+    setAppState(APP_STATES.editor);
     setStatus(`HTML 파일 ${file.name}을 불러왔습니다. 미해결 자산 ${project.summary.assetsUnresolved}개입니다.`);
   } catch (error) {
     setStatusWithError('HTML 파일 열기 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'OPEN_HTML_FILE_ERROR' });
@@ -6774,6 +6759,7 @@ async function handleFolderImport(files) {
     }
     if (requestId !== importRequestSequence) return;
     store.setProject(project);
+    setAppState(APP_STATES.editor);
     setStatus(`프로젝트 폴더 import 완료: ${htmlEntry.relativePath}. resolved ${project.summary.assetsResolved}개, unresolved ${project.summary.assetsUnresolved}개입니다.`);
   } catch (error) {
     setStatusWithError('폴더 import 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'FOLDER_IMPORT_ERROR' });
@@ -6790,6 +6776,7 @@ function applyPastedHtml() {
     pendingMountOptions = { snapshot: null, preserveHistory: false };
     const project = normalizeProject({ html, sourceName: 'pasted-html', sourceType: 'paste' });
     store.setProject(project);
+    setAppState(APP_STATES.editor);
     setStatus(`붙여넣기 HTML을 정규화했습니다. 슬롯 후보 ${project.summary.totalSlotCandidates}개를 찾았습니다.`);
   } catch (error) {
     setStatusWithError('붙여넣기 적용 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'APPLY_PASTED_HTML_ERROR' });
@@ -7004,6 +6991,7 @@ function restoreAutosave() {
     sourceType: 'autosave',
   });
   store.setProject(project);
+  setAppState(APP_STATES.editor);
   setStatus(`자동저장본을 복구했습니다. 저장 시각: ${payload.savedAt || '-'}`);
 }
 
@@ -7108,9 +7096,11 @@ store.subscribe((state) => {
 
 function safeBoot() {
   try {
+    setAppState(APP_STATES.launch);
     populateFixtureSelect();
     populateExportPresetSelect();
     syncExportPresetUi({ forceScale: true });
+    refreshLauncherRecentButton();
     const bootEnvironmentReport = evaluateLocalBootEnvironment();
     renderLocalModeNotice(elements.localModeNotice, bootEnvironmentReport);
     if (bootEnvironmentReport.errorCount || bootEnvironmentReport.warningCount) {
@@ -7118,7 +7108,6 @@ function safeBoot() {
     }
     renderEmptyPreview();
     syncWorkflowGuide(store.getState());
-    loadFixture('F05');
   } catch (error) {
     console.error('[BOOT_ERROR]', error);
     setStatusWithError('초기 로딩 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: '' });
@@ -7248,6 +7237,23 @@ for (const [canvasInput, sourceInput] of [
 }
 
 elements.openHtmlButton?.addEventListener('click', () => elements.htmlFileInput?.click());
+elements.launcherUploadButton?.addEventListener('click', () => elements.htmlFileInput?.click());
+elements.launcherRecentButton?.addEventListener('click', () => {
+  const payload = readAutosavePayload();
+  if (!payload?.snapshot?.html) {
+    refreshLauncherRecentButton();
+    setStatus('복구할 자동저장본이 없습니다.');
+    return;
+  }
+  restoreAutosave();
+});
+for (const button of elements.launcherFixtureButtons) {
+  button.addEventListener('click', () => {
+    const fixtureId = button.dataset.launchFixture || '';
+    if (!fixtureId) return;
+    loadFixture(fixtureId);
+  });
+}
 elements.openFolderButton?.addEventListener('click', () => elements.folderInput?.click());
 elements.loadFixtureButton?.addEventListener('click', () => loadFixture(elements.fixtureSelect?.value));
 elements.applyPasteButton?.addEventListener('click', applyPastedHtml);
