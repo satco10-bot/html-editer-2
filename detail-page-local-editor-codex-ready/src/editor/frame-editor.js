@@ -14,6 +14,8 @@ import {
   truncate,
 } from '../utils.js';
 import { collectSlotCandidates } from '../core/slot-detector.js';
+import { createEditorModel, patchModelNode, applyModelNodesToDom } from '../core/editor-model.js';
+import { restoreSerializedAssetRefs } from '../core/serialize-layer.js';
 
 const FRAME_CSS_URL_RE = /url\((['"]?)([^"'()]+)\1\)/gi;
 
@@ -282,6 +284,8 @@ export function createFrameEditor({
   let overlayNodes = null;
   const slotBackupMap = new Map();
   const modifiedSlots = new Set();
+  const editorModel = createEditorModel(doc);
+  let lastCommittedSnapshot = initialSnapshot?.html ? { ...initialSnapshot } : null;
 
   function uniqueConnectedElements(items) {
     const seen = new Set();
@@ -635,7 +639,10 @@ export function createFrameEditor({
   }
 
   function emitMutation(label) {
-    onMutation(captureSnapshot(label));
+    const before = lastCommittedSnapshot || captureSnapshot('before-command');
+    const after = captureSnapshot(label);
+    lastCommittedSnapshot = after;
+    onMutation({ type: 'command', label, before, after, at: new Date().toISOString() });
   }
 
   function getElementByUid(uid) {
@@ -799,6 +806,10 @@ export function createFrameEditor({
     const keepUids = preserveSelectionUids || selectedElements.map((element) => element.dataset.nodeUid).filter(Boolean) || [];
     detection = collectSlotCandidates(doc, { markDom: true });
     slotMap = new Map(detection.candidates.map((item) => [item.uid, item]));
+    const refreshedModel = createEditorModel(doc);
+    editorModel.nodes.clear();
+    for (const [uid, node] of refreshedModel.nodes.entries()) editorModel.nodes.set(uid, node);
+    editorModel.version = refreshedModel.version;
     const keepElements = uniqueConnectedElements(keepUids.map((uid) => getElementByUid(uid)));
     if (keepElements.length) selectElements(keepElements, { silent: true });
     else if (preserveSelectionUid || initialSnapshot?.selectedUid) {
@@ -826,7 +837,8 @@ export function createFrameEditor({
     if (hidden) element.dataset.editorHidden = '1';
     else element.removeAttribute('data-editor-hidden');
     const baseDisplay = decodeData(element.dataset.editorBaseDisplay || '');
-    setInlineStyle(element, { display: hidden ? 'none' : (baseDisplay && baseDisplay !== 'none' ? baseDisplay : null) });
+    patchModelNode(editorModel, uid, { style: { display: hidden ? 'none' : (baseDisplay && baseDisplay !== 'none' ? baseDisplay : null) } });
+    applyModelNodesToDom(doc, editorModel, [uid]);
     element.dataset.editorModified = '1';
     modifiedSlots.add(uid);
     return true;
@@ -838,6 +850,7 @@ export function createFrameEditor({
     element.dataset.nodeUid = uid;
     if (locked) element.dataset.editorLocked = '1';
     else element.removeAttribute('data-editor-locked');
+    patchModelNode(editorModel, uid, {});
     element.dataset.editorModified = '1';
     modifiedSlots.add(uid);
     return true;
@@ -1473,30 +1486,7 @@ export function createFrameEditor({
     const parser = new DOMParser();
     const currentHtml = createDoctypeHtml(doc);
     const exportDoc = parser.parseFromString(currentHtml, 'text/html');
-
-    for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
-      if (img.dataset.exportSrc) img.setAttribute('src', img.dataset.exportSrc);
-      else if (img.dataset.originalSrc) img.setAttribute('src', img.dataset.originalSrc);
-      if (img.dataset.originalSrcset && !img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.originalSrcset);
-      else if (!img.dataset.originalSrcset) img.removeAttribute('srcset');
-      img.removeAttribute('sizes');
-    }
-
-    for (const source of Array.from(exportDoc.querySelectorAll('source'))) {
-      if (source.dataset.originalSrcset) source.setAttribute('srcset', source.dataset.originalSrcset);
-    }
-
-    for (const element of Array.from(exportDoc.querySelectorAll('[style]'))) {
-      if (element.dataset.exportStyle) element.setAttribute('style', element.dataset.exportStyle);
-      else if (element.dataset.originalStyle) element.setAttribute('style', element.dataset.originalStyle);
-    }
-
-    for (const styleBlock of Array.from(exportDoc.querySelectorAll('style'))) {
-      if (styleBlock.dataset.originalCss) {
-        try { styleBlock.textContent = decodeURIComponent(styleBlock.dataset.originalCss); } catch {}
-      }
-    }
-
+    restoreSerializedAssetRefs(exportDoc, { keepEditedAssets: true });
     if (persistDetectedSlots) persistSlotLabels(exportDoc);
     stripFinalEditorRuntime(exportDoc);
     return createDoctypeHtml(exportDoc);
@@ -1506,21 +1496,7 @@ export function createFrameEditor({
     const parser = new DOMParser();
     const currentHtml = createDoctypeHtml(doc);
     const exportDoc = parser.parseFromString(currentHtml, 'text/html');
-
-    for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
-      if (img.dataset.exportSrc) img.setAttribute('src', img.dataset.exportSrc);
-      if (img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.exportSrcset);
-      img.removeAttribute('sizes');
-    }
-
-    for (const source of Array.from(exportDoc.querySelectorAll('source'))) {
-      if (source.dataset.exportSrcset) source.setAttribute('srcset', source.dataset.exportSrcset);
-    }
-
-    for (const element of Array.from(exportDoc.querySelectorAll('[style]'))) {
-      if (element.dataset.exportStyle) element.setAttribute('style', element.dataset.exportStyle);
-    }
-
+    restoreSerializedAssetRefs(exportDoc, { keepEditedAssets: true });
     if (persistDetectedSlots) persistSlotLabels(exportDoc);
     stripFinalEditorRuntime(exportDoc);
     return exportDoc;
@@ -2198,7 +2174,7 @@ export function createFrameEditor({
     getReport: buildReport,
     getPreflightReport: buildPreflightReport,
     getMeta() {
-      return getDerivedMeta();
+      return { ...getDerivedMeta(), modelVersion: editorModel.version };
     },
     destroy() {
       if (destroyed) return;
