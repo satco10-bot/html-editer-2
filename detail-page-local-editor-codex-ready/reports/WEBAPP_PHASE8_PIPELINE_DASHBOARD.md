@@ -2,14 +2,18 @@
 
 - run_date: 2026-04-03
 - overall_status: FAIL
-- dependency_failures: 2
-- scenario_failures: 0
+- quality_confidence: low
+- dependency_failures: 3 (🟠)
+- scenario_failures: 0 (🔴)
+- runtime_failures: 0 (🟣)
 - f05_gate_passed: False
 
-| step | status | failure_type |
-|---|---|---|
-| validate_phase6 | FAIL | dependency_missing |
-| regression_layer_canvas_sync | FAIL | dependency_missing |
+| step | status | failure_label | failure_type |
+|---|---|---|---|
+| dependency_check | FAIL | 🟠 DEPENDENCY | dependency_missing |
+| validate_phase6 | SKIP | 🟠 DEPENDENCY | dependency_missing |
+| regression_layer_canvas_sync | SKIP | 🟠 DEPENDENCY | dependency_missing |
 
 ## ⚠️ F05 Gate Alert
-- F05(회귀 금지 fixture)에서 실패가 발생했습니다. 즉시 확인이 필요합니다.
+- 원인 분류: 의존성
+- 메시지: 의존성 부족으로 F05 게이트를 실행하지 못했습니다.
