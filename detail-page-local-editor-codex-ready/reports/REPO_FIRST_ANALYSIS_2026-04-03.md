@@ -2,6 +2,8 @@
 
 ## 1) 현재 편집 흐름 요약
 
+최신 기준 요약: 리사이즈, 요소 추가, 복제/삭제, XYWH, z-order, JPG/선택 PNG/3x는 구현 완료 상태이며, 미구현 핵심은 그룹 편집과 고급 템플릿화다.
+
 1. 사용자는 `index.html`을 `file://`로 직접 열고, 상단에서 HTML/폴더/fixture/붙여넣기로 입력을 시작한다.
 2. `src/main.js`가 입력 경로별로 `normalizeProject()`를 호출해 프로젝트를 만든다.
 3. `normalizeProject()`는 script 제거, 자산 경로 해석, 미해결 자산 치환, 슬롯 후보 감지(명시/휴리스틱)를 수행한다.
@@ -28,7 +30,7 @@
 
 ---
 
-## 3) 데스크톱 원본 대비 누락 기능 목록
+## 3) 데스크톱 원본 대비 누락 기능 목록 (당시 1차 파악 기록)
 
 `reports/WEBAPP_GAP_MATRIX.csv` 기준 누락/부분 누락은 아래가 핵심이다.
 
@@ -74,4 +76,3 @@
 - `uploaded:`/상대경로/placeholder 슬롯 관련 핵심: `src/core/asset-resolver.js`, `src/core/slot-detector.js`, `src/core/normalize-project.js`
 - F05 회귀 계약 근거: `data/WEBAPP_PHASE1_FIXTURE_MANIFEST.json`, `data/fixtures/fixture_05_user_melting_cheese_compact.html`, `scripts/validate_phase6.py`
 - 데스크톱 대비 누락 목록 근거: `reports/WEBAPP_GAP_MATRIX.csv`, `reports/WEBAPP_GAP_AUDIT_AND_REBOOT_PLAN.md`, `reports/WEBAPP_PHASE7_REBOOT_IMPLEMENTATION_REPORT.md`
-

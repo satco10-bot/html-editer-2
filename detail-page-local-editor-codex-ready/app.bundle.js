@@ -1737,6 +1737,31 @@ function createFrameEditor({
     return result;
   }
 
+  function isGroupElement(element) {
+    return !!element && isElement(element) && element.dataset?.nodeRole === 'group';
+  }
+
+  function filterTopLevelSelection(items) {
+    const selected = uniqueConnectedElements(items);
+    return selected.filter((element) => !selected.some((other) => other !== element && other.contains(element)));
+  }
+
+  function canGroupSelection() {
+    const targets = filterTopLevelSelection(selectedElements).filter((element) => !isLockedElement(element));
+    if (targets.length < 2) return false;
+    const parent = targets[0]?.parentElement;
+    if (!parent || parent === doc.body || parent.tagName === 'HTML' || parent.tagName === 'BODY') return false;
+    if (isGroupElement(parent)) return false;
+    return targets.every((element) => element.parentElement === parent && !isGroupElement(element));
+  }
+
+  function canUngroupSelection() {
+    const targets = filterTopLevelSelection(selectedElements);
+    if (!targets.length) return false;
+    if (targets.some((element) => isGroupElement(element) && !isLockedElement(element))) return true;
+    return targets.some((element) => isGroupElement(element.parentElement) && !isLockedElement(element.parentElement));
+  }
+
   function placeholderTextValue(element) {
     return [
       element?.getAttribute?.('data-slot-label') || '',
@@ -1937,6 +1962,7 @@ function createFrameEditor({
 
   function layerTypeOf(element) {
     if (!element || !isElement(element)) return 'box';
+    if (isGroupElement(element)) return 'group';
     if (element.hasAttribute('data-detected-slot') || element.matches(EXPLICIT_SLOT_SELECTOR) || element.dataset.manualSlot === '1') return 'slot';
     if (isTextyElement(element)) return 'text';
     if (isSectionLike(element)) return 'section';
@@ -1963,6 +1989,7 @@ function createFrameEditor({
         if (!child.dataset.nodeUid) child.dataset.nodeUid = nextId('node');
         const expose = shouldExposeLayer(child, depth);
         if (expose) {
+          const selectedViaGroup = selectedElements.some((selected) => isGroupElement(selected) && selected !== child && selected.contains(child));
           items.push({
             uid: child.dataset.nodeUid,
             label: buildLabel(child),
@@ -1971,6 +1998,7 @@ function createFrameEditor({
             depth,
             childCount: child.children?.length || 0,
             selected: selectedUids.has(child.dataset.nodeUid),
+            selectedViaGroup,
             hidden: child.dataset.editorHidden === '1',
             locked: child.dataset.editorLocked === '1',
           });
@@ -2062,6 +2090,8 @@ function createFrameEditor({
       layerTree,
       textStyle: getTextStyleState(),
       preflight: buildPreflightReport(),
+      canGroupSelection: canGroupSelection(),
+      canUngroupSelection: canUngroupSelection(),
     };
   }
 
@@ -2098,6 +2128,7 @@ function createFrameEditor({
 
   function selectionTypeOf(element) {
     if (!element) return '';
+    if (isGroupElement(element)) return 'group';
     if (element.hasAttribute('data-detected-slot') || element.matches(EXPLICIT_SLOT_SELECTOR) || element.dataset.manualSlot === '1') return 'slot';
     if (isTextyElement(element)) return 'text';
     return 'box';
@@ -2715,18 +2746,12 @@ function createFrameEditor({
   }
 
   function deleteSelected() {
-    const targets = uniqueConnectedElements(selectedElements);
-    if (!targets.length) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
-    let removed = 0;
-    for (const element of targets) {
-      if (!element.isConnected || element === doc.body || element.tagName === 'HTML' || element.tagName === 'BODY') continue;
-      element.remove();
-      removed += 1;
-    }
-    if (!removed) return { ok: false, message: '삭제할 수 있는 요소가 없습니다.' };
-    redetect({ preserveSelectionUids: [] });
-    emitMutation('delete');
-    return { ok: true, message: `선택 요소 ${removed}개를 삭제했습니다.` };
+    return deleteSelection({
+      selectedElements: () => uniqueConnectedElements(selectedElements),
+      doc,
+      redetect,
+      emitMutation,
+    });
   }
 
   function addElement(kind) {
@@ -2795,6 +2820,15 @@ function createFrameEditor({
       back: '선택 요소를 맨 뒤로 보냈습니다.',
     };
     return { ok: true, message: messageMap[command] || '레이어 순서를 변경했습니다.' };
+  }
+
+  function nudgeSelectedElements(dx = 0, dy = 0) {
+    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
+    if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
+    for (const element of targets) shiftElementBy(element, dx, dy);
+    emitState();
+    emitMutation('nudge-selection');
+    return { ok: true, message: `선택 요소 ${targets.length}개를 ${dx}, ${dy}만큼 이동했습니다.` };
   }
 
   function nudgeImagePosition(dx = 0, dy = 0) {
@@ -3056,6 +3090,8 @@ function createFrameEditor({
       layerTree: buildLayerTree(),
       textStyle: getTextStyleState(),
       preflight: buildPreflightReport(),
+      canGroupSelection: canGroupSelection(),
+      canUngroupSelection: canUngroupSelection(),
       generatedAt: new Date().toISOString(),
     };
   }
@@ -3109,15 +3145,36 @@ function createFrameEditor({
 
   async function rewriteBlobRefsToPortableUrls(exportDoc) {
     const cache = new Map();
+    const stats = {
+      blobConvertedToDataUrl: 0,
+      blobConversionFailed: 0,
+      touchedImgSrc: 0,
+      touchedSrcset: 0,
+      touchedInlineStyleUrl: 0,
+      touchedStyleBlockUrl: 0,
+    };
+
+    function trackBlobRewrite(original, replacement, key) {
+      if (!String(original || '').startsWith('blob:')) return;
+      if (String(replacement || '').startsWith('data:')) stats.blobConvertedToDataUrl += 1;
+      else stats.blobConversionFailed += 1;
+      if (key && Object.prototype.hasOwnProperty.call(stats, key)) stats[key] += 1;
+    }
 
     for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
       const src = img.getAttribute('src') || '';
-      if (src) img.setAttribute('src', await resolvePortableUrl(src, cache));
+      if (src) {
+        const replacement = await resolvePortableUrl(src, cache);
+        trackBlobRewrite(src, replacement, 'touchedImgSrc');
+        img.setAttribute('src', replacement);
+      }
       const srcset = img.getAttribute('srcset') || '';
       if (srcset) {
         const rewritten = [];
         for (const item of parseSrcsetCandidates(srcset)) {
-          rewritten.push({ ...item, url: await resolvePortableUrl(item.url, cache) });
+          const replacement = await resolvePortableUrl(item.url, cache);
+          trackBlobRewrite(item.url, replacement, 'touchedSrcset');
+          rewritten.push({ ...item, url: replacement });
         }
         img.setAttribute('srcset', serializeSrcsetCandidates(rewritten));
       }
@@ -3126,7 +3183,9 @@ function createFrameEditor({
     for (const source of Array.from(exportDoc.querySelectorAll('source[srcset]'))) {
       const items = [];
       for (const item of parseSrcsetCandidates(source.getAttribute('srcset') || '')) {
-        items.push({ ...item, url: await resolvePortableUrl(item.url, cache) });
+        const replacement = await resolvePortableUrl(item.url, cache);
+        trackBlobRewrite(item.url, replacement, 'touchedSrcset');
+        items.push({ ...item, url: replacement });
       }
       source.setAttribute('srcset', serializeSrcsetCandidates(items));
     }
@@ -3138,6 +3197,7 @@ function createFrameEditor({
       let nextStyle = styleValue;
       for (const match of matches) {
         const replacement = await resolvePortableUrl(match[2], cache);
+        trackBlobRewrite(match[2], replacement, 'touchedInlineStyleUrl');
         nextStyle = nextStyle.replace(match[2], replacement);
       }
       element.setAttribute('style', nextStyle);
@@ -3150,10 +3210,31 @@ function createFrameEditor({
       let nextCss = css;
       for (const match of matches) {
         const replacement = await resolvePortableUrl(match[2], cache);
+        trackBlobRewrite(match[2], replacement, 'touchedStyleBlockUrl');
         nextCss = nextCss.replace(match[2], replacement);
       }
       styleBlock.textContent = nextCss;
     }
+    return stats;
+  }
+
+  function collectLinkedPathWarnings(exportDoc) {
+    const warnings = [];
+    const unresolvedTokenRe = /%EB%AF%B8%ED%95%B4%EA%B2%B0|미해결/i;
+    for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
+      const src = img.getAttribute('src') || '';
+      const kind = classifyAssetPath(src);
+      if (!['relative', 'uploaded'].includes(kind)) continue;
+      const unresolved = img.dataset.normalizedUnresolvedImage === '1' || unresolvedTokenRe.test(src);
+      if (!unresolved) continue;
+      warnings.push({
+        code: 'BROKEN_LINKED_PATH',
+        kind,
+        uid: img.dataset.nodeUid || '',
+        ref: src,
+      });
+    }
+    return warnings;
   }
 
   function measureExportRoot() {
@@ -3188,18 +3269,87 @@ function createFrameEditor({
     };
   }
 
-  function computeSelectionBoundingCrop() {
-    const targets = uniqueConnectedElements(selectedElements).filter((element) => isElement(element) && element.isConnected);
-    if (!targets.length) return null;
-    const rects = targets.map((element) => element.getBoundingClientRect()).filter((rect) => rect.width > 0 && rect.height > 0);
-    if (!rects.length) return null;
-    const bounds = unionRect(rects);
-    if (!bounds) return null;
-    const docRect = doc.documentElement.getBoundingClientRect();
-    return elementRectToCrop(bounds, docRect);
+  function selectionExportPolicy() {
+    return {
+      excludeHidden: true,
+      excludeLocked: true,
+    };
   }
 
-  async function renderHtmlToCanvas(html, { fullWidth, fullHeight, crop, scale = 1 }) {
+  function resolveSelectionTargetsByUid({ selectedNodeUids = [], includeHidden = false, includeLocked = false } = {}) {
+    const uidList = Array.isArray(selectedNodeUids) ? selectedNodeUids.filter(Boolean) : [];
+    const uidSet = new Set(uidList);
+    const seedTargets = uidSet.size
+      ? Array.from(uidSet).map((uid) => getElementByUid(uid)).filter(Boolean)
+      : uniqueConnectedElements(selectedElements);
+    const targets = uniqueConnectedElements(seedTargets).filter((element) => isElement(element) && element.isConnected);
+    const filtered = [];
+    let skippedHidden = 0;
+    let skippedLocked = 0;
+    for (const element of targets) {
+      if (!includeHidden && isHiddenElement(element)) {
+        skippedHidden += 1;
+        continue;
+      }
+      if (!includeLocked && isLockedElement(element)) {
+        skippedLocked += 1;
+        continue;
+      }
+      filtered.push(element);
+    }
+    return {
+      requestedUids: uidList,
+      allTargets: targets,
+      targets: filtered,
+      skippedHidden,
+      skippedLocked,
+    };
+  }
+
+  function computeUnionBoundingBoxFromSelectedNodeUids({ selectedNodeUids = [], includeHidden = false, includeLocked = false } = {}) {
+    const resolved = resolveSelectionTargetsByUid({ selectedNodeUids, includeHidden, includeLocked });
+    const rects = resolved.targets
+      .map((element) => element.getBoundingClientRect())
+      .filter((rect) => rect.width > 0 && rect.height > 0);
+    const bounds = unionRect(rects);
+    return {
+      ...resolved,
+      rects,
+      bounds,
+    };
+  }
+
+  function resolveCropFromBoundingBox({ bounds, metrics, padding = 0 }) {
+    if (!bounds || !metrics) return null;
+    const safePadding = Math.max(0, Number.parseFloat(String(padding)) || 0);
+    const docRect = doc.documentElement.getBoundingClientRect();
+    const base = {
+      left: bounds.left - docRect.left,
+      top: bounds.top - docRect.top,
+      right: bounds.right - docRect.left,
+      bottom: bounds.bottom - docRect.top,
+    };
+    const expanded = {
+      left: base.left - safePadding,
+      top: base.top - safePadding,
+      right: base.right + safePadding,
+      bottom: base.bottom + safePadding,
+    };
+    const clamped = {
+      left: Math.max(0, expanded.left),
+      top: Math.max(0, expanded.top),
+      right: Math.min(metrics.fullWidth, expanded.right),
+      bottom: Math.min(metrics.fullHeight, expanded.bottom),
+    };
+    return {
+      x: Math.max(0, clamped.left),
+      y: Math.max(0, clamped.top),
+      width: Math.max(1, clamped.right - clamped.left),
+      height: Math.max(1, clamped.bottom - clamped.top),
+    };
+  }
+
+  async function renderHtmlToCanvas(html, { fullWidth, fullHeight, crop, scale = 1, background = 'transparent' }) {
     const parsed = new DOMParser().parseFromString(html, 'text/html');
     parsed.documentElement.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
     const serialized = new XMLSerializer().serializeToString(parsed.documentElement);
@@ -3219,6 +3369,10 @@ function createFrameEditor({
     canvas.width = Math.max(1, Math.round(crop.width * scale));
     canvas.height = Math.max(1, Math.round(crop.height * scale));
     const context = canvas.getContext('2d');
+    if (background === 'opaque') {
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+    }
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     URL.revokeObjectURL(svgUrl);
     return canvas;
@@ -3234,7 +3388,7 @@ function createFrameEditor({
     };
   }
 
-  async function renderExportBlob({ area = null, scale = 1, format = 'png', quality = 0.92, context = null } = {}) {
+  async function renderExportBlob({ area = null, scale = 1, format = 'png', quality = 0.92, background = 'transparent', context = null } = {}) {
     const renderContext = context || (await buildExportRenderContext());
     const resolvedArea = area || {
       x: renderContext.metrics.x,
@@ -3247,6 +3401,7 @@ function createFrameEditor({
       fullHeight: renderContext.metrics.fullHeight,
       crop: resolvedArea,
       scale: normalizeExportScale(scale),
+      background,
     });
     const mime = format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : 'image/png';
     return await canvasToBlob(canvas, mime, mime === 'image/jpeg' ? quality : undefined);
@@ -3260,10 +3415,40 @@ function createFrameEditor({
     return await renderExportBlob({ format: 'jpg', scale, quality });
   }
 
-  async function exportSelectionPngBlob(scale = 1.5) {
-    const crop = computeSelectionBoundingCrop();
-    if (!crop) throw new Error('먼저 요소를 선택해 주세요.');
-    return await renderExportBlob({ format: 'png', area: crop, scale });
+  async function exportSelectionPngBlob(scale = 1.5, options = {}) {
+    const policy = selectionExportPolicy();
+    const selectedNodeUids = uniqueConnectedElements(selectedElements).map((element) => element.dataset.nodeUid).filter(Boolean);
+    if (!selectedNodeUids.length) throw new Error('선택 PNG 정책: 선택 없음(빈 선택은 export하지 않습니다).');
+    const context = await buildExportRenderContext();
+    const resolvedBounds = computeUnionBoundingBoxFromSelectedNodeUids({
+      selectedNodeUids,
+      includeHidden: !policy.excludeHidden,
+      includeLocked: !policy.excludeLocked,
+    });
+    if (!resolvedBounds.targets.length) {
+      throw new Error(`선택 PNG 정책: 선택 ${resolvedBounds.allTargets.length}개가 모두 제외되었습니다. (숨김 제외 ${policy.excludeHidden ? 'ON' : 'OFF'}, 잠금 제외 ${policy.excludeLocked ? 'ON' : 'OFF'})`);
+    }
+    if (!resolvedBounds.bounds) throw new Error('선택 PNG 정책: 선택 요소의 유효 크기를 찾지 못했습니다.');
+    const padding = Math.max(0, Math.round(Number.parseFloat(String(options?.padding ?? 0)) || 0));
+    const crop = resolveCropFromBoundingBox({ bounds: resolvedBounds.bounds, metrics: context.metrics, padding });
+    const background = options?.background === 'opaque' ? 'opaque' : 'transparent';
+    const blob = await renderExportBlob({ format: 'png', area: crop, scale, background, context });
+    return {
+      blob,
+      meta: {
+        mode: resolvedBounds.targets.length > 1 ? 'multi-union' : 'single',
+        selectedNodeUids,
+        targetCount: resolvedBounds.targets.length,
+        crop,
+        scale: normalizeExportScale(scale),
+        policy: {
+          excludeHidden: policy.excludeHidden,
+          excludeLocked: policy.excludeLocked,
+          skippedHidden: resolvedBounds.skippedHidden,
+          skippedLocked: resolvedBounds.skippedLocked,
+        },
+      },
+    };
   }
 
   function collectSectionRects() {
@@ -3342,11 +3527,15 @@ function createFrameEditor({
     };
   }
 
-  async function buildLinkedPackageEntries() {
-    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
-    await rewriteBlobRefsToPortableUrls(exportDoc);
+  async function convertEmbeddedToLinked(exportDoc) {
     const assetEntries = [];
     const assetPathMap = new Map();
+    const stats = {
+      format: 'linked',
+      convertedDataUrlCount: 0,
+      generatedAssetCount: 0,
+      brokenLinkedPathWarnings: [],
+    };
 
     async function materializeUrl(url, hint = 'asset') {
       const value = String(url || '').trim();
@@ -3359,6 +3548,7 @@ function createFrameEditor({
       const name = `assets/${String(assetEntries.length + 1).padStart(3, '0')}_${sanitizeFilename(slugify(hint) || 'asset')}${ext}`;
       assetEntries.push({ name, data: bytes });
       assetPathMap.set(value, name);
+      stats.convertedDataUrlCount += 1;
       return name;
     }
 
@@ -3409,12 +3599,44 @@ function createFrameEditor({
       styleBlock.textContent = nextCss;
     }
 
+    stats.generatedAssetCount = assetEntries.length;
+    stats.brokenLinkedPathWarnings = collectLinkedPathWarnings(exportDoc);
+    return { exportDoc, assetEntries, stats };
+  }
+
+  async function buildSavePackageEntries(format = 'linked') {
+    const saveFormat = format === 'embedded' ? 'embedded' : 'linked';
     const baseName = sanitizeFilename(project?.sourceName?.replace(/\.html?$/i, '') || 'detail-page');
-    const html = createDoctypeHtml(exportDoc);
-    return [
-      { name: `${baseName}__linked.html`, data: new TextEncoder().encode(html) },
-      ...assetEntries,
-    ];
+    if (saveFormat === 'embedded') {
+      const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
+      const rewriteStats = await rewriteBlobRefsToPortableUrls(exportDoc);
+      const html = createDoctypeHtml(exportDoc);
+      return {
+        format: 'embedded',
+        entries: [{ name: `${baseName}__embedded.html`, data: new TextEncoder().encode(html) }],
+        conversion: {
+          format: 'embedded',
+          portableRewrite: rewriteStats,
+          generatedAssetCount: 0,
+          brokenLinkedPathWarnings: [],
+        },
+      };
+    }
+    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
+    const rewriteStats = await rewriteBlobRefsToPortableUrls(exportDoc);
+    const converted = await convertEmbeddedToLinked(exportDoc);
+    const html = createDoctypeHtml(converted.exportDoc);
+    return {
+      format: 'linked',
+      entries: [
+        { name: `${baseName}__linked.html`, data: new TextEncoder().encode(html) },
+        ...converted.assetEntries,
+      ],
+      conversion: {
+        ...converted.stats,
+        portableRewrite: rewriteStats,
+      },
+    };
   }
 
   function captureSnapshot(label = 'snapshot') {
@@ -3433,91 +3655,69 @@ function createFrameEditor({
   }
 
   function beginMoveDrag(target, event) {
-    if (!target || isLockedElement(target)) return false;
-    if (!selectedElements.some((element) => element.dataset.nodeUid === target.dataset.nodeUid)) {
-      selectElements([target], { silent: true });
-    }
-    const elements = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
-    if (!elements.length) return false;
-    const snapshots = elements.map((element) => ({
-      element,
-      rect: element.getBoundingClientRect(),
-      transform: readTransformState(element),
-    }));
-    const union = unionRect(snapshots.map((item) => item.rect));
-    const excluded = new Set(elements.map((element) => element.dataset.nodeUid));
-    dragState = {
-      mode: 'move',
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      moved: false,
-      snapshots,
-      union,
-      snapCandidates: buildSnapCandidates(excluded),
-    };
+    const nextState = beginMoveInteraction({
+      target,
+      event,
+      isLockedElement,
+      selectedElements: () => selectedElements,
+      selectElements,
+      uniqueConnectedElements,
+      readTransformState,
+      unionRect,
+      buildSnapCandidates,
+    });
+    if (!nextState) return false;
+    dragState = nextState;
     return true;
   }
 
   function beginMarqueeDrag(event) {
-    dragState = {
-      mode: 'marquee',
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      moved: false,
-      additive: !!(event.ctrlKey || event.metaKey || event.shiftKey),
-      seedSelection: uniqueConnectedElements(selectedElements),
-    };
+    dragState = beginMarqueeInteraction({
+      event,
+      selectedElements: () => selectedElements,
+      uniqueConnectedElements,
+    });
     return true;
   }
 
   function updateMarqueeSelection(endX, endY) {
-    if (!dragState || dragState.mode !== 'marquee') return;
-    const rect = normalizeClientRect(dragState.startX, dragState.startY, endX, endY);
-    showMarqueeRect(rect);
-    const hits = collectInteractiveLayers()
-      .filter((element) => !isLockedElement(element) && !isHiddenElement(element))
-      .filter((element) => {
-        const box = element.getBoundingClientRect();
-        return box.width > 1 && box.height > 1 && rectIntersects(box, rect);
-      });
-    const next = dragState.additive ? uniqueConnectedElements([...dragState.seedSelection, ...hits]) : uniqueConnectedElements(hits);
-    selectElements(next, { silent: true });
+    applyMarqueeInteraction({
+      dragState,
+      endX,
+      endY,
+      showMarqueeRect,
+      collectInteractiveLayers,
+      isLockedElement,
+      isHiddenElement,
+      rectIntersects,
+      uniqueConnectedElements,
+      selectElements,
+    });
   }
 
   function updateMoveDrag(clientX, clientY) {
-    if (!dragState || dragState.mode !== 'move') return;
-    const rawDx = clientX - dragState.startX;
-    const rawDy = clientY - dragState.startY;
-    const snapped = computeSnapAdjustment(dragState.union, rawDx, rawDy, dragState.snapCandidates);
-    for (const item of dragState.snapshots) {
-      writeTransformState(item.element, item.transform.tx + snapped.dx, item.transform.ty + snapped.dy);
-    }
-    showSnapLines({ x: snapped.guideX, y: snapped.guideY });
-    doc.documentElement.classList.add('__phase6_dragging_cursor');
-    doc.body.classList.add('__phase6_dragging_cursor');
+    applyMoveInteraction({
+      dragState,
+      clientX,
+      clientY,
+      computeSnapAdjustment,
+      writeTransformState,
+      showSnapLines,
+      doc,
+    });
   }
 
   function beginResizeDrag(event, corner) {
-    const target = selectedElement;
-    if (!target || isLockedElement(target)) return false;
-    const rect = target.getBoundingClientRect();
-    const transform = readTransformState(target);
-    const width = Number.parseFloat(win.getComputedStyle(target).width || String(rect.width)) || rect.width;
-    const height = Number.parseFloat(win.getComputedStyle(target).height || String(rect.height)) || rect.height;
-    resizeState = {
-      pointerId: event.pointerId,
+    const nextState = beginResizeInteraction({
+      event,
       corner,
-      target,
-      startX: event.clientX,
-      startY: event.clientY,
-      startWidth: width,
-      startHeight: height,
-      startTx: transform.tx,
-      startTy: transform.ty,
-      moved: false,
-    };
+      selectedElement: () => selectedElement,
+      isLockedElement,
+      readTransformState,
+      win,
+    });
+    if (!nextState) return false;
+    resizeState = nextState;
     return true;
   }
 
@@ -3659,34 +3859,45 @@ function createFrameEditor({
     }
   }
 
+  function executeCommand(command, payload = {}) {
+    if (command === 'duplicate') return duplicateSelected();
+    if (command === 'delete') return deleteSelected();
+    if (command === 'nudge-selection') return nudgeSelectedElements(payload.dx || 0, payload.dy || 0);
+    if (command === 'undo' || command === 'redo' || command === 'save-edited') {
+      onShortcut(command);
+      return { ok: true, message: command };
+    }
+    return { ok: false, message: `지원하지 않는 명령: ${command}` };
+  }
+
   function handleKeydown(event) {
     const withModifier = event.ctrlKey || event.metaKey;
     if (withModifier && !event.altKey) {
       const key = String(event.key || '').toLowerCase();
       if (key === 'z') {
         event.preventDefault();
-        onShortcut(event.shiftKey ? 'redo' : 'undo');
+        executeCommand(event.shiftKey ? 'redo' : 'undo');
         return;
       }
       if (key === 'y') {
         event.preventDefault();
-        onShortcut('redo');
+        executeCommand('redo');
         return;
       }
       if (key === 's') {
         event.preventDefault();
-        onShortcut('save-edited');
+        executeCommand('save-edited');
         return;
       }
       if (key === 'd') {
         event.preventDefault();
-        onStatus(duplicateSelected().message);
+        onStatus(executeCommand('duplicate').message);
         return;
       }
     }
     if (!withModifier && !editingTextElement && (event.key === 'Delete' || event.key === 'Backspace')) {
       event.preventDefault();
-      onStatus(deleteSelected().message);
+      onStatus(executeCommand('delete').message);
       return;
     }
     if (!withModifier && !editingTextElement && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
@@ -3788,6 +3999,8 @@ function createFrameEditor({
     applyBatchLayout,
     duplicateSelected,
     deleteSelected,
+    groupSelected,
+    ungroupSelected,
     addTextElement: () => addElement('text'),
     addBoxElement: () => addElement('box'),
     addSlotElement: () => addElement('slot'),
@@ -3797,6 +4010,7 @@ function createFrameEditor({
     bringSelectedForward: () => reorderSelected('forward'),
     sendSelectedBackward: () => reorderSelected('backward'),
     nudgeSelectedImage: ({ dx = 0, dy = 0 } = {}) => nudgeImagePosition(dx, dy),
+    executeCommand,
     getEditedHtml: serializeEditedHtml,
     getCurrentPortableHtml: async () => {
       const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
@@ -3804,7 +4018,16 @@ function createFrameEditor({
       return createDoctypeHtml(exportDoc);
     },
     async getLinkedPackageEntries() {
-      return await buildLinkedPackageEntries();
+      const result = await buildSavePackageEntries('linked');
+      return result.entries;
+    },
+    async getSavePackageEntries(format = 'linked') {
+      return await buildSavePackageEntries(format);
+    },
+    async convertEmbeddedToLinked() {
+      const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
+      await rewriteBlobRefsToPortableUrls(exportDoc);
+      return await convertEmbeddedToLinked(exportDoc);
     },
     async exportFullPngBlob(scale = 1.5) {
       return await exportFullPngBlob(scale);
@@ -3812,8 +4035,8 @@ function createFrameEditor({
     async exportFullJpgBlob(scale = 1.5, quality = 0.92) {
       return await exportFullJpgBlob(scale, quality);
     },
-    async exportSelectionPngBlob(scale = 1.5) {
-      return await exportSelectionPngBlob(scale);
+    async exportSelectionPngBlob(scale = 1.5, options = {}) {
+      return await exportSelectionPngBlob(scale, options);
     },
     async exportSectionPngEntries(scale = 1.5) {
       return await exportSectionPngEntries(scale);
@@ -3988,14 +4211,15 @@ function renderLayerTree(container, editorMeta, filterText = '') {
     return;
   }
   container.innerHTML = rows.map((node) => `
-    <div class="layer-item ${selectedUids.has(node.uid) ? 'is-active' : ''} ${node.hidden ? 'is-hidden' : ''} ${node.locked ? 'is-locked' : ''}" data-layer-uid="${escapeHtml(node.uid)}" style="--depth:${Math.max(0, Number(node.depth || 0))}" role="button" tabindex="0">
+    <div class="layer-item ${(selectedUids.has(node.uid) || node.selectedViaGroup) ? 'is-active' : ''} ${node.hidden ? 'is-hidden' : ''} ${node.locked ? 'is-locked' : ''} ${node.type === 'group' ? 'is-group' : ''}" data-layer-uid="${escapeHtml(node.uid)}" style="--depth:${Math.max(0, Number(node.depth || 0))}" role="button" tabindex="0">
       <span class="layer-item__indent" aria-hidden="true"></span>
       <span class="layer-item__body">
-        <strong>${escapeHtml(truncate(node.label || node.uid, 40))}</strong>
+        <strong>${node.type === 'group' ? '🗂️ ' : ''}${escapeHtml(truncate(node.label || node.uid, 40))}</strong>
         <span class="layer-item__meta">${escapeHtml(node.type)} · ${escapeHtml(node.tagName || '')}${node.childCount ? ` · child ${escapeHtml(String(node.childCount))}` : ''}</span>
         <span class="layer-item__status">
           ${node.hidden ? '<span class="status-chip" data-status="hidden">숨김</span>' : ''}
           ${node.locked ? '<span class="status-chip" data-status="locked">잠금</span>' : ''}
+          ${node.selectedViaGroup ? '<span class="status-chip" data-status="selected">그룹선택</span>' : ''}
         </span>
       </span>
       <span class="layer-item__actions">
@@ -4151,6 +4375,8 @@ let currentExportPresetId = 'market';
 let currentCodeSource = 'edited';
 let codeEditorDirty = false;
 let geometryCoordMode = 'relative';
+let currentSaveFormat = 'linked';
+let lastSaveConversion = null;
 const zoomState = { mode: 'fit', value: 1 };
 const BOOT_LOCAL_POLICY = Object.freeze({
   requiresStartupFetch: false,
@@ -4182,16 +4408,22 @@ const elements = {
   addTextButton: document.getElementById('addTextButton'),
   addBoxButton: document.getElementById('addBoxButton'),
   addSlotButton: document.getElementById('addSlotButton'),
+  groupButton: document.getElementById('groupButton'),
+  ungroupButton: document.getElementById('ungroupButton'),
   undoButton: document.getElementById('undoButton'),
   redoButton: document.getElementById('redoButton'),
   restoreAutosaveButton: document.getElementById('restoreAutosaveButton'),
   downloadEditedButton: document.getElementById('downloadEditedButton'),
+  saveFormatSelect: document.getElementById('saveFormatSelect'),
+  saveFormatStatus: document.getElementById('saveFormatStatus'),
   downloadNormalizedButton: document.getElementById('downloadNormalizedButton'),
   downloadLinkedZipButton: document.getElementById('downloadLinkedZipButton'),
   exportPngButton: document.getElementById('exportPngButton'),
   exportJpgButton: document.getElementById('exportJpgButton'),
   exportSectionsZipButton: document.getElementById('exportSectionsZipButton'),
   exportSelectionPngButton: document.getElementById('exportSelectionPngButton'),
+  selectionExportPaddingInput: document.getElementById('selectionExportPaddingInput'),
+  selectionExportBackgroundSelect: document.getElementById('selectionExportBackgroundSelect'),
   exportPresetSelect: document.getElementById('exportPresetSelect'),
   exportScaleSelect: document.getElementById('exportScaleSelect'),
   exportJpgQualityInput: document.getElementById('exportJpgQualityInput'),
@@ -4300,6 +4532,17 @@ function exportJpgQuality() {
   return Math.min(1, Math.max(0.1, raw));
 }
 
+function selectionExportPadding() {
+  const raw = Number.parseFloat(elements.selectionExportPaddingInput?.value || '16');
+  if (!Number.isFinite(raw)) return 0;
+  return Math.max(0, Math.min(240, Math.round(raw)));
+}
+
+function selectionExportBackground() {
+  const raw = String(elements.selectionExportBackgroundSelect?.value || 'transparent');
+  return raw === 'opaque' ? 'opaque' : 'transparent';
+}
+
 function setStatus(text) {
   store.setStatus(text);
 }
@@ -4359,6 +4602,21 @@ function populateExportPresetSelect() {
 
 function currentExportPreset() {
   return getExportPresetById(currentExportPresetId);
+}
+
+function normalizeSaveFormat(value) {
+  return value === 'embedded' ? 'embedded' : 'linked';
+}
+
+function syncSaveFormatUi() {
+  currentSaveFormat = normalizeSaveFormat(elements.saveFormatSelect?.value || currentSaveFormat);
+  if (elements.saveFormatSelect && elements.saveFormatSelect.value !== currentSaveFormat) {
+    elements.saveFormatSelect.value = currentSaveFormat;
+  }
+  if (elements.saveFormatStatus) {
+    const modeLabel = currentSaveFormat === 'embedded' ? 'embedded (data URL 내장)' : 'linked (경로 유지)';
+    elements.saveFormatStatus.textContent = `현재 저장 포맷: ${modeLabel}`;
+  }
 }
 
 function setSidebarTab(panelId) {
@@ -4585,6 +4843,10 @@ function buildReportPayload(project, report) {
     issues: project.issues,
     assets: project.assets,
     preflight: report.preflight || null,
+    save: {
+      selectedFormat: currentSaveFormat,
+      lastConversion: lastSaveConversion,
+    },
   };
 }
 
@@ -4768,6 +5030,8 @@ function renderShell(state) {
   elements.toggleHideButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
   elements.toggleLockButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
   elements.textEditButton.disabled = !hasEditor;
+  elements.groupButton.disabled = !hasEditor || !state.editorMeta?.canGroupSelection;
+  elements.ungroupButton.disabled = !hasEditor || !state.editorMeta?.canUngroupSelection;
   elements.preflightRefreshButton.disabled = !hasEditor;
   for (const button of elements.batchActionButtons) {
     const requiresMany = button.dataset.batchAction !== 'reset-transform';
@@ -4785,7 +5049,9 @@ function renderShell(state) {
   elements.downloadReportButton.disabled = !hasProject;
   if (elements.applyCodeToEditorButton) elements.applyCodeToEditorButton.disabled = !hasProject || currentCodeSource === 'report';
   if (elements.reloadCodeFromEditorButton) elements.reloadCodeFromEditorButton.disabled = !hasProject;
+  if (elements.saveFormatSelect) elements.saveFormatSelect.disabled = !hasProject;
   syncExportPresetUi();
+  syncSaveFormatUi();
   syncWorkspaceButtons();
   applyPreviewZoom();
   refreshHistoryButtons();
@@ -4804,7 +5070,54 @@ function renderEmptyPreview() {
 function handleEditorShortcut(action) {
   if (action === 'undo') return undoHistory();
   if (action === 'redo') return redoHistory();
-  if (action === 'save-edited') return downloadEditedHtml();
+  if (action === 'save-edited') return downloadEditedHtml().catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`));
+}
+
+function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
+  if (!activeEditor) {
+    setStatus('먼저 미리보기를 로드해 주세요.');
+    return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
+  }
+  const fallback = {
+    duplicate: () => activeEditor.duplicateSelected(),
+    delete: () => activeEditor.deleteSelected(),
+  };
+  const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
+  setStatus(result.message);
+  if (refresh && (store.getState().currentView === 'edited' || store.getState().currentView === 'report')) refreshComputedViews(store.getState());
+  return result;
+}
+
+function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
+  if (!activeEditor) {
+    setStatus('먼저 미리보기를 로드해 주세요.');
+    return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
+  }
+  const fallback = {
+    duplicate: () => activeEditor.duplicateSelected(),
+    delete: () => activeEditor.deleteSelected(),
+    'group-selection': () => activeEditor.groupSelected?.() || { ok: false, message: 'group-selection 명령을 지원하지 않습니다.' },
+    'ungroup-selection': () => activeEditor.ungroupSelected?.() || { ok: false, message: 'ungroup-selection 명령을 지원하지 않습니다.' },
+  };
+  const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
+  setStatus(result.message);
+  if (refresh && (store.getState().currentView === 'edited' || store.getState().currentView === 'report')) refreshComputedViews(store.getState());
+  return result;
+}
+
+function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
+  if (!activeEditor) {
+    setStatus('먼저 미리보기를 로드해 주세요.');
+    return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
+  }
+  const fallback = {
+    duplicate: () => activeEditor.duplicateSelected(),
+    delete: () => activeEditor.deleteSelected(),
+  };
+  const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
+  setStatus(result.message);
+  if (refresh && (store.getState().currentView === 'edited' || store.getState().currentView === 'report')) refreshComputedViews(store.getState());
+  return result;
 }
 
 function mountProject(project, { snapshot = null, preserveHistory = false, force = false } = {}) {
@@ -4924,13 +5237,16 @@ function downloadNormalizedHtml() {
   setStatus(`정규화 HTML을 저장했습니다: ${fileName}`);
 }
 
-function downloadEditedHtml() {
+async function downloadEditedHtml() {
   const project = store.getState().project;
   if (!project) return setStatus('먼저 프로젝트를 불러와 주세요.');
-  const editedHtml = activeEditor ? activeEditor.getEditedHtml({ persistDetectedSlots: true }) : project.normalizedHtml;
-  const fileName = `${projectBaseName(project)}__edited_working.html`;
-  downloadTextFile(fileName, editedHtml, 'text/html;charset=utf-8');
-  setStatus(`편집 HTML을 저장했습니다: ${fileName}`);
+  if (!activeEditor) {
+    const fileName = `${projectBaseName(project)}__edited_working.html`;
+    downloadTextFile(fileName, project.normalizedHtml, 'text/html;charset=utf-8');
+    setStatus(`편집 HTML을 저장했습니다: ${fileName}`);
+    return;
+  }
+  await downloadByFormat(currentSaveFormat);
 }
 
 function ensurePreflightBeforeExport(kind) {
@@ -4962,11 +5278,34 @@ async function downloadLinkedZip() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
   if (!ensurePreflightBeforeExport('링크형 ZIP 저장')) return;
-  const entries = await activeEditor.getLinkedPackageEntries();
-  const zipBlob = await buildZipBlob(entries);
-  const fileName = `${projectBaseName(project)}__linked_package.zip`;
+  await downloadByFormat('linked', { forceZip: true });
+}
+
+async function downloadByFormat(format, { forceZip = false } = {}) {
+  const project = store.getState().project;
+  if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
+  const saveFormat = normalizeSaveFormat(format);
+  const result = await activeEditor.getSavePackageEntries(saveFormat);
+  lastSaveConversion = {
+    ...result.conversion,
+    savedAt: new Date().toISOString(),
+  };
+
+  if (saveFormat === 'embedded' && !forceZip) {
+    const entry = result.entries[0];
+    const text = new TextDecoder().decode(entry.data);
+    downloadTextFile(entry.name, text, 'text/html;charset=utf-8');
+    setStatus(`embedded HTML을 저장했습니다: ${entry.name} (blob→data ${result.conversion?.portableRewrite?.blobConvertedToDataUrl || 0}개)`);
+    return;
+  }
+
+  const zipBlob = await buildZipBlob(result.entries);
+  const suffix = saveFormat === 'embedded' ? '__embedded_package.zip' : '__linked_package.zip';
+  const fileName = `${projectBaseName(project)}${suffix}`;
   downloadBlob(fileName, zipBlob);
-  setStatus(`링크형 HTML + assets ZIP을 저장했습니다: ${fileName}`);
+  const warningCount = Number(result.conversion?.brokenLinkedPathWarnings?.length || 0);
+  const warningText = warningCount > 0 ? ` · 경고 ${warningCount}건(BROKEN_LINKED_PATH)` : '';
+  setStatus(`${saveFormat} 패키지를 저장했습니다: ${fileName}${warningText}`);
 }
 
 async function exportFullPng() {
@@ -4996,10 +5335,18 @@ async function exportSelectionPng() {
   const project = store.getState().project;
   if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
   if (!(await ensureFixtureIntegrityBeforeExport('선택 영역 PNG 저장'))) return;
-  const blob = await activeEditor.exportSelectionPngBlob(exportScale());
+  const options = {
+    padding: selectionExportPadding(),
+    background: selectionExportBackground(),
+  };
+  const { blob, meta } = await activeEditor.exportSelectionPngBlob(exportScale(), options);
   const fileName = `${projectBaseName(project)}__selection.png`;
   downloadBlob(fileName, blob);
-  setStatus(`선택 영역 PNG를 저장했습니다: ${fileName} (${exportScale()}x, 선택 bbox)`);
+  const skipped = meta?.policy?.skippedHidden + meta?.policy?.skippedLocked || 0;
+  const bgLabel = options.background === 'opaque' ? '불투명(흰색)' : '투명';
+  setStatus(
+    `선택 영역 PNG를 저장했습니다: ${fileName} (${exportScale()}x, union bbox, 여백 ${options.padding}px, 배경 ${bgLabel}, 포함 ${meta?.targetCount || 0}개, 제외 ${skipped}개·숨김 제외 ${meta?.policy?.excludeHidden ? 'ON' : 'OFF'}·잠금 제외 ${meta?.policy?.excludeLocked ? 'ON' : 'OFF'})`,
+  );
 }
 
 async function exportSectionsZip() {
@@ -5240,18 +5587,8 @@ elements.textEditButton.addEventListener('click', () => {
   setStatus(result.message);
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
-elements.duplicateButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const result = activeEditor.duplicateSelected();
-  setStatus(result.message);
-  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
-});
-elements.deleteButton?.addEventListener('click', () => {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const result = activeEditor.deleteSelected();
-  setStatus(result.message);
-  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
-});
+elements.duplicateButton?.addEventListener('click', () => { executeEditorCommand('duplicate'); });
+elements.deleteButton?.addEventListener('click', () => { executeEditorCommand('delete'); });
 elements.addTextButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.addTextElement();
@@ -5317,9 +5654,14 @@ elements.clearTextStyleButton.addEventListener('click', () => applyTextStyleFrom
 elements.undoButton.addEventListener('click', undoHistory);
 elements.redoButton.addEventListener('click', redoHistory);
 elements.restoreAutosaveButton.addEventListener('click', restoreAutosave);
-elements.downloadEditedButton.addEventListener('click', downloadEditedHtml);
+elements.downloadEditedButton.addEventListener('click', () => { downloadEditedHtml().catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`)); });
 elements.downloadNormalizedButton.addEventListener('click', downloadNormalizedHtml);
 elements.downloadLinkedZipButton.addEventListener('click', () => { downloadLinkedZip().catch((error) => setStatus(`ZIP 저장 중 오류: ${error?.message || error}`)); });
+elements.saveFormatSelect?.addEventListener('change', () => {
+  currentSaveFormat = normalizeSaveFormat(elements.saveFormatSelect.value || 'linked');
+  syncSaveFormatUi();
+  setStatus(`저장 포맷을 ${currentSaveFormat}로 변경했습니다.`);
+});
 elements.exportPngButton.addEventListener('click', () => { exportFullPng().catch((error) => setStatus(`PNG 저장 중 오류: ${error?.message || error}`)); });
 elements.exportJpgButton?.addEventListener('click', () => { exportFullJpg().catch((error) => setStatus(`JPG 저장 중 오류: ${error?.message || error}`)); });
 elements.exportSectionsZipButton.addEventListener('click', () => { exportSectionsZip().catch((error) => setStatus(`섹션 PNG ZIP 저장 중 오류: ${error?.message || error}`)); });
@@ -5440,7 +5782,7 @@ window.addEventListener('keydown', (event) => {
   }
   if (key === 's') {
     event.preventDefault();
-    return downloadEditedHtml();
+    return downloadEditedHtml().catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`));
   }
   if (key === '=') {
     event.preventDefault();
@@ -5481,6 +5823,7 @@ window.addEventListener('keydown', (event) => {
 setSidebarTab('left-import');
 setSidebarTab('right-inspect');
 setCodeSource('edited', { preserveDraft: false });
+syncSaveFormatUi();
 syncWorkspaceButtons();
 loadFixture('F05');
 

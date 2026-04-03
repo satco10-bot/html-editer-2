@@ -52,3 +52,27 @@ python3 scripts/run_phase8_regression_pipeline.py
 ## 기록 규칙
 - C1~C10이 모두 체크되면 해당 fixture PASS.
 - 하나라도 실패하면 FAIL로 기록하고, 어떤 command(`duplicate`, `delete`, `nudge-selection`, `drag-move`, `resize-drag`)에서 어긋났는지 메모.
+
+## 자동 회귀 파이프라인 실행 방법
+아래 1회 명령으로 Phase 6 검증 + Phase 8 공통 시나리오(C1~C10) 회귀를 함께 실행합니다.
+
+```bash
+python3 scripts/run_phase8_regression_pipeline.py
+```
+
+### 의존성 설치
+```bash
+pip install -r requirements-regression.txt
+python3 -m playwright install chromium
+```
+
+### 자동화 매핑 (최소 테스트 세트)
+- `scripts/regression_layer_canvas_sync.py`가 F01~F05 각각에 대해 C1~C10을 자동 검사합니다.
+- C1 클릭 단일 선택, C2 Shift+드래그 다중 선택, C3 드래그 이동, C4 리사이즈 드래그, C5 복제, C6 삭제, C7/C8 nudge, C9 undo, C10 redo를 수행합니다.
+- F05는 별도 회귀 금지 게이트로 분리되어, 실패 시 대시보드(`reports/WEBAPP_PHASE8_PIPELINE_DASHBOARD.md`)에 즉시 경고가 표시됩니다.
+
+### 결과 파일
+- 실행 이력 누적(JSON): `reports/WEBAPP_PHASE8_PIPELINE_HISTORY.json`
+- 일자별 실행 결과(JSON): `reports/WEBAPP_PHASE8_PIPELINE_RESULT_YYYY-MM-DD.json`
+- 요약 대시보드(Markdown): `reports/WEBAPP_PHASE8_PIPELINE_DASHBOARD.md`
+- Phase 8 fixture별 누적 이력(JSON): `reports/WEBAPP_PHASE8_REGRESSION_HISTORY.json`

@@ -1,0 +1,931 @@
+{
+  "runs": [
+    {
+      "summary": {
+        "run_date": "2026-04-03",
+        "started_at": "2026-04-03T06:17:59.090594+00:00",
+        "finished_at": "2026-04-03T06:17:59.738963+00:00",
+        "ok": false,
+        "dependency_failures": 2,
+        "scenario_failures": 0,
+        "f05_gate_passed": false
+      },
+      "steps": [
+        {
+          "name": "validate_phase6",
+          "script": "scripts/validate_phase6.py",
+          "started_at": "2026-04-03T06:17:59.090614+00:00",
+          "finished_at": "2026-04-03T06:17:59.636736+00:00",
+          "returncode": 2,
+          "failure_type": "dependency_missing",
+          "ok": false,
+          "stdout_tail": "     \"ok\": true,\n      \"detail\": \"expected=3, actual=3\"\n    },\n    {\n      \"name\": \"F05_pattern_.point-hero .visual.media-shell\",\n      \"ok\": true,\n      \"detail\": \"expected=4, actual=4\"\n    },\n    {\n      \"name\": \"F05_required_exact_from_groups\",\n      \"ok\": true,\n      \"detail\": \"expected=13, actual=13\"\n    },\n    {\n      \"name\": \"F05_has_two_uploaded_img_refs\",\n      \"ok\": true,\n      \"detail\": \"uploaded_count=2\"\n    },\n    {\n      \"name\": \"F05_has_media_shells\",\n      \"ok\": true,\n      \"detail\": \"expected real-world slot patterns\"\n    },\n    {\n      \"name\": \"playwright_smoke_uses_file_protocol\",\n      \"ok\": true,\n      \"detail\": \"file:///workspace/html-editer-2/detail-page-local-editor-codex-ready/index.html\"\n    },\n    {\n      \"name\": \"file_protocol_smoke_gate\",\n      \"ok\": false,\n      \"detail\": \"{\\\"status\\\": \\\"unavailable\\\", \\\"error\\\": \\\"No module named 'playwright'\\\"}\"\n    }\n  ],\n  \"browser_smoke\": {\n    \"status\": \"unavailable\",\n    \"error\": \"No module named 'playwright'\"\n  }\n}",
+          "stderr_tail": "",
+          "payload": {}
+        },
+        {
+          "name": "regression_layer_canvas_sync",
+          "script": "scripts/regression_layer_canvas_sync.py",
+          "started_at": "2026-04-03T06:17:59.637485+00:00",
+          "finished_at": "2026-04-03T06:17:59.738682+00:00",
+          "returncode": 2,
+          "failure_type": "dependency_missing",
+          "ok": false,
+          "stdout_tail": "{\n  \"status\": \"dependency_missing\",\n  \"failure_type\": \"dependency_missing\",\n  \"error\": \"No module named 'playwright'\",\n  \"hint\": \"pip install -r requirements-regression.txt 후 재실행하세요.\",\n  \"started_at\": \"2026-04-03T06:17:59.729757+00:00\"\n}",
+          "stderr_tail": "",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "summary": {
+        "run_date": "2026-04-03",
+        "started_at": "2026-04-03T06:18:10.861936+00:00",
+        "finished_at": "2026-04-03T06:18:11.506286+00:00",
+        "ok": false,
+        "dependency_failures": 2,
+        "scenario_failures": 0,
+        "f05_gate_passed": false
+      },
+      "steps": [
+        {
+          "name": "validate_phase6",
+          "script": "scripts/validate_phase6.py",
+          "started_at": "2026-04-03T06:18:10.861990+00:00",
+          "finished_at": "2026-04-03T06:18:11.399400+00:00",
+          "returncode": 2,
+          "failure_type": "dependency_missing",
+          "ok": false,
+          "stdout_tail": "     \"ok\": true,\n      \"detail\": \"expected=3, actual=3\"\n    },\n    {\n      \"name\": \"F05_pattern_.point-hero .visual.media-shell\",\n      \"ok\": true,\n      \"detail\": \"expected=4, actual=4\"\n    },\n    {\n      \"name\": \"F05_required_exact_from_groups\",\n      \"ok\": true,\n      \"detail\": \"expected=13, actual=13\"\n    },\n    {\n      \"name\": \"F05_has_two_uploaded_img_refs\",\n      \"ok\": true,\n      \"detail\": \"uploaded_count=2\"\n    },\n    {\n      \"name\": \"F05_has_media_shells\",\n      \"ok\": true,\n      \"detail\": \"expected real-world slot patterns\"\n    },\n    {\n      \"name\": \"playwright_smoke_uses_file_protocol\",\n      \"ok\": true,\n      \"detail\": \"file:///workspace/html-editer-2/detail-page-local-editor-codex-ready/index.html\"\n    },\n    {\n      \"name\": \"file_protocol_smoke_gate\",\n      \"ok\": false,\n      \"detail\": \"{\\\"status\\\": \\\"unavailable\\\", \\\"error\\\": \\\"No module named 'playwright'\\\"}\"\n    }\n  ],\n  \"browser_smoke\": {\n    \"status\": \"unavailable\",\n    \"error\": \"No module named 'playwright'\"\n  }\n}",
+          "stderr_tail": "",
+          "payload": {
+            "summary": {
+              "ok": false,
+              "check_count": 166,
+              "passed": 159,
+              "failed": 7,
+              "bundle_bytes": 304910,
+              "bundle_sha256": "5fd287bce7eafea568ba0c0d92a0b227b09bdd71353a4341f9ad9d771623c8ee",
+              "browser_smoke_status": "unavailable",
+              "failure_type": "dependency_missing"
+            },
+            "checks": [
+              {
+                "name": "bundle_node_syntax_check",
+                "ok": true,
+                "detail": ""
+              },
+              {
+                "name": "index_has_bundle_script",
+                "ok": true,
+                "detail": "index.html should load app.bundle.js"
+              },
+              {
+                "name": "index_no_module_script",
+                "ok": true,
+                "detail": "local mode avoids ESM requirement"
+              },
+              {
+                "name": "bundle_has_no_es_import",
+                "ok": true,
+                "detail": "bundle should be plain script"
+              },
+              {
+                "name": "bundle_has_no_export_keyword",
+                "ok": true,
+                "detail": "bundle should not expose ESM export statements"
+              },
+              {
+                "name": "bundle_uses_srcdoc_preview",
+                "ok": true,
+                "detail": "preview should be iframe srcdoc based"
+              },
+              {
+                "name": "main_boot_has_no_fetch",
+                "ok": true,
+                "detail": "startup flow should not require network fetch"
+              },
+              {
+                "name": "bundle_has_no_file_system_access_api",
+                "ok": true,
+                "detail": "local file:// mode should not depend on secure-context file picker APIs"
+              },
+              {
+                "name": "main_has_boot_environment_guard",
+                "ok": true,
+                "detail": "startup should expose local-mode guard checks"
+              },
+              {
+                "name": "bundle_has_autosave_key_v6",
+                "ok": true,
+                "detail": "autosave key should be updated to v6"
+              },
+              {
+                "name": "package_is_phase6",
+                "ok": true,
+                "detail": "{\"name\": \"detail-page-webapp-phase6-local\", \"private\": true, \"version\": \"0.6.0\", \"scripts\": {\"build:local\": \"python3 scripts/build_local_bundle.py\", \"validate\": \"python3 scripts/validate_phase6.py\"}}"
+              },
+              {
+                "name": "readme_mentions_phase6",
+                "ok": true,
+                "detail": "README should document phase6 capabilities"
+              },
+              {
+                "name": "readme_app_has_forbidden_api_policy",
+                "ok": true,
+                "detail": "README_APP should include policy + file gate checklist"
+              },
+              {
+                "name": "index_has_openHtmlButton",
+                "ok": true,
+                "detail": "openHtmlButton"
+              },
+              {
+                "name": "index_has_openFolderButton",
+                "ok": true,
+                "detail": "openFolderButton"
+              },
+              {
+                "name": "index_has_loadFixtureButton",
+                "ok": true,
+                "detail": "loadFixtureButton"
+              },
+              {
+                "name": "index_has_applyPasteButton",
+                "ok": true,
+                "detail": "applyPasteButton"
+              },
+              {
+                "name": "index_has_replaceImageButton",
+                "ok": true,
+                "detail": "replaceImageButton"
+              },
+              {
+                "name": "index_has_manualSlotButton",
+                "ok": true,
+                "detail": "manualSlotButton"
+              },
+              {
+                "name": "index_has_demoteSlotButton",
+                "ok": true,
+                "detail": "demoteSlotButton"
+              },
+              {
+                "name": "index_has_toggleHideButton",
+                "ok": true,
+                "detail": "toggleHideButton"
+              },
+              {
+                "name": "index_has_toggleLockButton",
+                "ok": true,
+                "detail": "toggleLockButton"
+              },
+              {
+                "name": "index_has_redetectButton",
+                "ok": true,
+                "detail": "redetectButton"
+              },
+              {
+                "name": "index_has_textEditButton",
+                "ok": true,
+                "detail": "textEditButton"
+              },
+              {
+                "name": "index_has_undoButton",
+                "ok": true,
+                "detail": "undoButton"
+              },
+              {
+                "name": "index_has_redoButton",
+                "ok": true,
+                "detail": "redoButton"
+              },
+              {
+                "name": "index_has_restoreAutosaveButton",
+                "ok": true,
+                "detail": "restoreAutosaveButton"
+              },
+              {
+                "name": "index_has_downloadEditedButton",
+                "ok": true,
+                "detail": "downloadEditedButton"
+              },
+              {
+                "name": "index_has_downloadNormalizedButton",
+                "ok": true,
+                "detail": "downloadNormalizedButton"
+              },
+              {
+                "name": "index_has_downloadLinkedZipButton",
+                "ok": true,
+                "detail": "downloadLinkedZipButton"
+              },
+              {
+                "name": "index_has_exportPresetSelect",
+                "ok": true,
+                "detail": "exportPresetSelect"
+              },
+              {
+                "name": "index_has_exportScaleSelect",
+                "ok": true,
+                "detail": "exportScaleSelect"
+              },
+              {
+                "name": "index_has_exportJpgQualityInput",
+                "ok": true,
+                "detail": "exportJpgQualityInput"
+              },
+              {
+                "name": "index_has_exportPngButton",
+                "ok": true,
+                "detail": "exportPngButton"
+              },
+              {
+                "name": "index_has_exportJpgButton",
+                "ok": true,
+                "detail": "exportJpgButton"
+              },
+              {
+                "name": "index_has_exportSectionsZipButton",
+                "ok": true,
+                "detail": "exportSectionsZipButton"
+              },
+              {
+                "name": "index_has_exportSelectionPngButton",
+                "ok": true,
+                "detail": "exportSelectionPngButton"
+              },
+              {
+                "name": "index_has_exportPresetPackageButton",
+                "ok": true,
+                "detail": "exportPresetPackageButton"
+              },
+              {
+                "name": "index_has_downloadReportButton",
+                "ok": true,
+                "detail": "downloadReportButton"
+              },
+              {
+                "name": "index_has_replaceImageInput",
+                "ok": true,
+                "detail": "replaceImageInput"
+              },
+              {
+                "name": "index_has_previewFrame",
+                "ok": true,
+                "detail": "previewFrame"
+              },
+              {
+                "name": "index_has_slotList",
+                "ok": true,
+                "detail": "slotList"
+              },
+              {
+                "name": "index_has_selectionInspector",
+                "ok": true,
+                "detail": "selectionInspector"
+              },
+              {
+                "name": "index_has_assetFilterInput",
+                "ok": true,
+                "detail": "assetFilterInput"
+              },
+              {
+                "name": "index_has_preflightContainer",
+                "ok": true,
+                "detail": "preflightContainer"
+              },
+              {
+                "name": "index_has_preflightRefreshButton",
+                "ok": true,
+                "detail": "preflightRefreshButton"
+              },
+              {
+                "name": "index_has_layerTree",
+                "ok": true,
+                "detail": "layerTree"
+              },
+              {
+                "name": "index_has_layerFilterInput",
+                "ok": true,
+                "detail": "layerFilterInput"
+              },
+              {
+                "name": "index_has_textFontSizeInput",
+                "ok": true,
+                "detail": "textFontSizeInput"
+              },
+              {
+                "name": "index_has_textLineHeightInput",
+                "ok": true,
+                "detail": "textLineHeightInput"
+              },
+              {
+                "name": "index_has_textLetterSpacingInput",
+                "ok": true,
+                "detail": "textLetterSpacingInput"
+              },
+              {
+                "name": "index_has_textWeightSelect",
+                "ok": true,
+                "detail": "textWeightSelect"
+              },
+              {
+                "name": "index_has_textColorInput",
+                "ok": true,
+                "detail": "textColorInput"
+              },
+              {
+                "name": "index_has_applyTextStyleButton",
+                "ok": true,
+                "detail": "applyTextStyleButton"
+              },
+              {
+                "name": "index_has_clearTextStyleButton",
+                "ok": true,
+                "detail": "clearTextStyleButton"
+              },
+              {
+                "name": "index_has_batchSelectionSummary",
+                "ok": true,
+                "detail": "batchSelectionSummary"
+              },
+              {
+                "name": "index_has_duplicateButton",
+                "ok": false,
+                "detail": "duplicateButton"
+              },
+              {
+                "name": "index_has_deleteButton",
+                "ok": false,
+                "detail": "deleteButton"
+              },
+              {
+                "name": "index_has_addTextButton",
+                "ok": true,
+                "detail": "addTextButton"
+              },
+              {
+                "name": "index_has_addBoxButton",
+                "ok": true,
+                "detail": "addBoxButton"
+              },
+              {
+                "name": "index_has_addSlotButton",
+                "ok": true,
+                "detail": "addSlotButton"
+              },
+              {
+                "name": "index_has_geometryXInput",
+                "ok": true,
+                "detail": "geometryXInput"
+              },
+              {
+                "name": "index_has_geometryYInput",
+                "ok": true,
+                "detail": "geometryYInput"
+              },
+              {
+                "name": "index_has_geometryWInput",
+                "ok": true,
+                "detail": "geometryWInput"
+              },
+              {
+                "name": "index_has_geometryHInput",
+                "ok": true,
+                "detail": "geometryHInput"
+              },
+              {
+                "name": "index_has_applyGeometryButton",
+                "ok": true,
+                "detail": "applyGeometryButton"
+              },
+              {
+                "name": "index_has_bringForwardButton",
+                "ok": true,
+                "detail": "bringForwardButton"
+              },
+              {
+                "name": "index_has_sendBackwardButton",
+                "ok": true,
+                "detail": "sendBackwardButton"
+              },
+              {
+                "name": "index_has_bringToFrontButton",
+                "ok": true,
+                "detail": "bringToFrontButton"
+              },
+              {
+                "name": "index_has_sendToBackButton",
+                "ok": true,
+                "detail": "sendToBackButton"
+              },
+              {
+                "name": "index_has_imageNudgeLeftButton",
+                "ok": true,
+                "detail": "imageNudgeLeftButton"
+              },
+              {
+                "name": "index_has_imageNudgeRightButton",
+                "ok": true,
+                "detail": "imageNudgeRightButton"
+              },
+              {
+                "name": "index_has_imageNudgeUpButton",
+                "ok": true,
+                "detail": "imageNudgeUpButton"
+              },
+              {
+                "name": "index_has_imageNudgeDownButton",
+                "ok": true,
+                "detail": "imageNudgeDownButton"
+              },
+              {
+                "name": "all_main_js_ids_exist_in_index",
+                "ok": false,
+                "detail": "deleteButton, duplicateButton"
+              },
+              {
+                "name": "frame_editor_has_toggleTextEdit",
+                "ok": true,
+                "detail": "toggleTextEdit"
+              },
+              {
+                "name": "frame_editor_has_captureSnapshot",
+                "ok": true,
+                "detail": "captureSnapshot"
+              },
+              {
+                "name": "frame_editor_has_exportFullPngBlob",
+                "ok": true,
+                "detail": "exportFullPngBlob"
+              },
+              {
+                "name": "frame_editor_has_exportSectionPngEntries",
+                "ok": true,
+                "detail": "exportSectionPngEntries"
+              },
+              {
+                "name": "frame_editor_has_getLinkedPackageEntries",
+                "ok": true,
+                "detail": "getLinkedPackageEntries"
+              },
+              {
+                "name": "frame_editor_has_applyFiles",
+                "ok": true,
+                "detail": "applyFiles"
+              },
+              {
+                "name": "frame_editor_has_removeImageFromSelected",
+                "ok": true,
+                "detail": "removeImageFromSelected"
+              },
+              {
+                "name": "frame_editor_has_markSelectedAsSlot",
+                "ok": true,
+                "detail": "markSelectedAsSlot"
+              },
+              {
+                "name": "frame_editor_has_demoteSelectedSlot",
+                "ok": true,
+                "detail": "demoteSelectedSlot"
+              },
+              {
+                "name": "frame_editor_has_getCurrentPortableHtml",
+                "ok": true,
+                "detail": "getCurrentPortableHtml"
+              },
+              {
+                "name": "frame_editor_has_applyTextStyle",
+                "ok": true,
+                "detail": "applyTextStyle"
+              },
+              {
+                "name": "frame_editor_has_applyBatchLayout",
+                "ok": true,
+                "detail": "applyBatchLayout"
+              },
+              {
+                "name": "frame_editor_has_getPreflightReport",
+                "ok": true,
+                "detail": "getPreflightReport"
+              },
+              {
+                "name": "frame_editor_has_selectNodeByUid",
+                "ok": true,
+                "detail": "selectNodeByUid"
+              },
+              {
+                "name": "frame_editor_has_refreshDerivedMeta",
+                "ok": true,
+                "detail": "refreshDerivedMeta"
+              },
+              {
+                "name": "frame_editor_has_toggleSelectedHidden",
+                "ok": true,
+                "detail": "toggleSelectedHidden"
+              },
+              {
+                "name": "frame_editor_has_toggleSelectedLocked",
+                "ok": true,
+                "detail": "toggleSelectedLocked"
+              },
+              {
+                "name": "frame_editor_has_toggleLayerHiddenByUid",
+                "ok": true,
+                "detail": "toggleLayerHiddenByUid"
+              },
+              {
+                "name": "frame_editor_has_toggleLayerLockedByUid",
+                "ok": true,
+                "detail": "toggleLayerLockedByUid"
+              },
+              {
+                "name": "frame_editor_has_duplicateSelected",
+                "ok": true,
+                "detail": "duplicateSelected"
+              },
+              {
+                "name": "frame_editor_has_deleteSelected",
+                "ok": true,
+                "detail": "deleteSelected"
+              },
+              {
+                "name": "frame_editor_has_addTextElement",
+                "ok": true,
+                "detail": "addTextElement"
+              },
+              {
+                "name": "frame_editor_has_addBoxElement",
+                "ok": true,
+                "detail": "addBoxElement"
+              },
+              {
+                "name": "frame_editor_has_addSlotElement",
+                "ok": true,
+                "detail": "addSlotElement"
+              },
+              {
+                "name": "frame_editor_has_applyGeometryPatch",
+                "ok": true,
+                "detail": "applyGeometryPatch"
+              },
+              {
+                "name": "frame_editor_has_bringSelectedForward",
+                "ok": true,
+                "detail": "bringSelectedForward"
+              },
+              {
+                "name": "frame_editor_has_sendSelectedBackward",
+                "ok": true,
+                "detail": "sendSelectedBackward"
+              },
+              {
+                "name": "frame_editor_has_bringSelectedToFront",
+                "ok": false,
+                "detail": "bringSelectedToFront"
+              },
+              {
+                "name": "frame_editor_has_sendSelectedToBack",
+                "ok": false,
+                "detail": "sendSelectedToBack"
+              },
+              {
+                "name": "frame_editor_has_nudgeSelectedImage",
+                "ok": true,
+                "detail": "nudgeSelectedImage"
+              },
+              {
+                "name": "frame_editor_has_exportFullJpgBlob",
+                "ok": true,
+                "detail": "exportFullJpgBlob"
+              },
+              {
+                "name": "frame_editor_has_exportSelectionPngBlob",
+                "ok": true,
+                "detail": "exportSelectionPngBlob"
+              },
+              {
+                "name": "renderer_has_renderLayerTree",
+                "ok": true,
+                "detail": "renderLayerTree"
+              },
+              {
+                "name": "renderer_has_renderPreflight",
+                "ok": true,
+                "detail": "renderPreflight"
+              },
+              {
+                "name": "renderer_has_renderSelectionInspector",
+                "ok": true,
+                "detail": "renderSelectionInspector"
+              },
+              {
+                "name": "index_has_stage_hint",
+                "ok": true,
+                "detail": "canvas interaction hint should exist"
+              },
+              {
+                "name": "index_has_export_preset_label",
+                "ok": true,
+                "detail": "export preset selector should be visible"
+              },
+              {
+                "name": "index_has_3x_scale_option",
+                "ok": true,
+                "detail": "3x export scale option should exist"
+              },
+              {
+                "name": "index_has_jpg_quality_input",
+                "ok": true,
+                "detail": "JPG quality input should exist"
+              },
+              {
+                "name": "frame_has_marquee_runtime",
+                "ok": true,
+                "detail": "marquee drag selection runtime should exist"
+              },
+              {
+                "name": "frame_has_snap_runtime",
+                "ok": true,
+                "detail": "snap guide runtime should exist"
+              },
+              {
+                "name": "frame_has_lock_hide_runtime",
+                "ok": true,
+                "detail": "hide/lock data attributes should exist"
+              },
+              {
+                "name": "slot_detector_skips_runtime_nodes",
+                "ok": true,
+                "detail": "slot detector should skip overlay runtime nodes"
+              },
+              {
+                "name": "renderers_have_layer_actions",
+                "ok": true,
+                "detail": "layer action buttons should exist"
+              },
+              {
+                "name": "frame_layer_index_command_unified",
+                "ok": false,
+                "detail": "z-order should use layer-index command family"
+              },
+              {
+                "name": "main_layer_and_canvas_sync_hook",
+                "ok": true,
+                "detail": "layer panel/canvas sync rendering hooks should exist together"
+              },
+              {
+                "name": "index_has_batch_buttons",
+                "ok": true,
+                "detail": "expect batch layout actions in UI"
+              },
+              {
+                "name": "index_has_text_align_buttons",
+                "ok": true,
+                "detail": "left / center / right buttons"
+              },
+              {
+                "name": "frame_has_pointer_listeners",
+                "ok": true,
+                "detail": "drag interactions should use pointer events"
+              },
+              {
+                "name": "frame_has_shared_export_renderer",
+                "ok": true,
+                "detail": "export pipeline should use shared renderer and normalized scales"
+              },
+              {
+                "name": "frame_selection_uses_bbox_crop",
+                "ok": true,
+                "detail": "selection PNG should crop by bounding box"
+              },
+              {
+                "name": "main_uses_jpg_quality_option",
+                "ok": true,
+                "detail": "JPG quality option should be wired in main export flow"
+              },
+              {
+                "name": "main_has_fixture_integrity_gate",
+                "ok": true,
+                "detail": "fixture-based export integrity check should guard exports"
+              },
+              {
+                "name": "fixture_count_is_5",
+                "ok": true,
+                "detail": "fixtures=5"
+              },
+              {
+                "name": "fixture_exists_F01",
+                "ok": true,
+                "detail": "/workspace/html-editer-2/detail-page-local-editor-codex-ready/data/fixtures/fixture_01_blank_builder_860.html"
+              },
+              {
+                "name": "F01_selector_[data-image-slot='hero-main']",
+                "ok": true,
+                "detail": "count=1"
+              },
+              {
+                "name": "F01_selector_[data-image-slot='detail-slot-1']",
+                "ok": true,
+                "detail": "count=1"
+              },
+              {
+                "name": "F01_selector_[data-image-slot='detail-slot-2']",
+                "ok": true,
+                "detail": "count=1"
+              },
+              {
+                "name": "F01_required_exact_count",
+                "ok": true,
+                "detail": "expected=3, actual=3"
+              },
+              {
+                "name": "fixture_exists_F02",
+                "ok": true,
+                "detail": "/workspace/html-editer-2/detail-page-local-editor-codex-ready/data/fixtures/fixture_02_sample_shop_builder_860.html"
+              },
+              {
+                "name": "F02_selector_[data-image-slot='hero-main']",
+                "ok": true,
+                "detail": "count=1"
+              },
+              {
+                "name": "F02_selector_[data-image-slot='fit-main']",
+                "ok": true,
+                "detail": "count=1"
+              },
+              {
+                "name": "F02_selector_[data-image-slot='fit-sub-1']",
+                "ok": true,
+                "detail": "count=1"
+              },
+              {
+                "name": "F02_selector_[data-image-slot='fit-sub-2']",
+                "ok": true,
+                "detail": "count=1"
+              },
+              {
+                "name": "F02_selector_[data-image-slot='detail-long-1']",
+                "ok": true,
+                "detail": "count=1"
+              },
+              {
+                "name": "F02_selector_[data-image-slot='detail-long-2']",
+                "ok": true,
+                "detail": "count=1"
+              },
+              {
+                "name": "F02_required_exact_count",
+                "ok": true,
+                "detail": "expected=6, actual=6"
+              },
+              {
+                "name": "fixture_exists_F03",
+                "ok": true,
+                "detail": "/workspace/html-editer-2/detail-page-local-editor-codex-ready/data/fixtures/fixture_03_sample_template_existing_html.html"
+              },
+              {
+                "name": "F03_pattern_[data-image-slot='hero-main']",
+                "ok": true,
+                "detail": "expected=1, actual=1"
+              },
+              {
+                "name": "F03_pattern_.card-image.image-slot",
+                "ok": true,
+                "detail": "expected=3, actual=3"
+              },
+              {
+                "name": "F03_required_exact_from_groups",
+                "ok": true,
+                "detail": "expected=4, actual=4"
+              },
+              {
+                "name": "fixture_exists_F04",
+                "ok": true,
+                "detail": "/workspace/html-editer-2/detail-page-local-editor-codex-ready/data/fixtures/fixture_04_sample_dring_walk_allinone.html"
+              },
+              {
+                "name": "F04_pattern_.ph.hero-visual",
+                "ok": true,
+                "detail": "expected=1, actual=1"
+              },
+              {
+                "name": "F04_pattern_.ph.visual",
+                "ok": true,
+                "detail": "expected=3, actual=3"
+              },
+              {
+                "name": "F04_pattern_.ph.c-box",
+                "ok": true,
+                "detail": "expected=6, actual=6"
+              },
+              {
+                "name": "F04_pattern_.warn-card .ph.img",
+                "ok": true,
+                "detail": "expected=2, actual=2"
+              },
+              {
+                "name": "F04_pattern_.step-wrap .ph.img",
+                "ok": true,
+                "detail": "expected=3, actual=3"
+              },
+              {
+                "name": "F04_pattern_.cta-char",
+                "ok": true,
+                "detail": "expected=1, actual=1"
+              },
+              {
+                "name": "F04_required_min_from_groups",
+                "ok": true,
+                "detail": "min=16, actual=16"
+              },
+              {
+                "name": "fixture_exists_F05",
+                "ok": true,
+                "detail": "/workspace/html-editer-2/detail-page-local-editor-codex-ready/data/fixtures/fixture_05_user_melting_cheese_compact.html"
+              },
+              {
+                "name": "F05_pattern_.hero-shot.media-shell",
+                "ok": true,
+                "detail": "expected=1, actual=1"
+              },
+              {
+                "name": "F05_pattern_.option-list .opt-thumb.media-shell",
+                "ok": true,
+                "detail": "expected=2, actual=2"
+              },
+              {
+                "name": "F05_pattern_section.bg-ivory > .media-shell",
+                "ok": true,
+                "detail": "expected=1, actual=1"
+              },
+              {
+                "name": "F05_pattern_.ba-wrap .media-shell",
+                "ok": true,
+                "detail": "expected=2, actual=2"
+              },
+              {
+                "name": "F05_pattern_.set-grid .thumb.media-shell",
+                "ok": true,
+                "detail": "expected=3, actual=3"
+              },
+              {
+                "name": "F05_pattern_.point-hero .visual.media-shell",
+                "ok": true,
+                "detail": "expected=4, actual=4"
+              },
+              {
+                "name": "F05_required_exact_from_groups",
+                "ok": true,
+                "detail": "expected=13, actual=13"
+              },
+              {
+                "name": "F05_has_two_uploaded_img_refs",
+                "ok": true,
+                "detail": "uploaded_count=2"
+              },
+              {
+                "name": "F05_has_media_shells",
+                "ok": true,
+                "detail": "expected real-world slot patterns"
+              },
+              {
+                "name": "playwright_smoke_uses_file_protocol",
+                "ok": true,
+                "detail": "file:///workspace/html-editer-2/detail-page-local-editor-codex-ready/index.html"
+              },
+              {
+                "name": "file_protocol_smoke_gate",
+                "ok": false,
+                "detail": "{\"status\": \"unavailable\", \"error\": \"No module named 'playwright'\"}"
+              }
+            ],
+            "browser_smoke": {
+              "status": "unavailable",
+              "error": "No module named 'playwright'"
+            }
+          }
+        },
+        {
+          "name": "regression_layer_canvas_sync",
+          "script": "scripts/regression_layer_canvas_sync.py",
+          "started_at": "2026-04-03T06:18:11.402422+00:00",
+          "finished_at": "2026-04-03T06:18:11.505932+00:00",
+          "returncode": 2,
+          "failure_type": "dependency_missing",
+          "ok": false,
+          "stdout_tail": "{\n  \"status\": \"dependency_missing\",\n  \"failure_type\": \"dependency_missing\",\n  \"error\": \"No module named 'playwright'\",\n  \"hint\": \"pip install -r requirements-regression.txt 후 재실행하세요.\",\n  \"started_at\": \"2026-04-03T06:18:11.495362+00:00\"\n}",
+          "stderr_tail": "",
+          "payload": {
+            "status": "dependency_missing",
+            "failure_type": "dependency_missing",
+            "error": "No module named 'playwright'",
+            "hint": "pip install -r requirements-regression.txt 후 재실행하세요.",
+            "started_at": "2026-04-03T06:18:11.495362+00:00"
+          }
+        }
+      ]
+    }
+  ]
+}

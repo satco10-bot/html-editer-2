@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 import traceback
 from datetime import datetime, timezone
@@ -11,6 +12,8 @@ INDEX = ROOT / 'index.html'
 MANIFEST = ROOT / 'data' / 'WEBAPP_PHASE1_FIXTURE_MANIFEST.json'
 REPORTS_DIR = ROOT / 'reports'
 
+FIXTURE_IDS = ['F01', 'F02', 'F03', 'F04', 'F05']
+SCENARIOS = [f'C{i}' for i in range(1, 11)]
 
 def record(results: list[dict[str, Any]], case_id: str, ok: bool, detail: str = '') -> None:
     results.append({'id': case_id, 'ok': bool(ok), 'detail': detail})
@@ -247,6 +250,8 @@ def main() -> None:
     f05_gate_ok = bool(f05_item and all(case['ok'] for case in f05_item['results']))
     f05_failed_cases = [case['id'] for case in (f05_item or {}).get('results', []) if not case['ok']]
 
+    summary = summarize_matrix(fixture_rows)
+    finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
     payload = {
         'status': 'ok' if failed == 0 else 'scenario_failed',
         'error_type': 'none' if failed == 0 else 'scenario_failed',
@@ -271,6 +276,8 @@ def main() -> None:
     if not f05_gate_ok:
         print('⚠️ [F05 GATE] 회귀 금지 fixture(F05)에서 실패가 감지되었습니다.', flush=True)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
+    if not summary['overall_ok']:
+        raise SystemExit(3)
 
     if not f05_gate_ok:
         raise SystemExit(4)

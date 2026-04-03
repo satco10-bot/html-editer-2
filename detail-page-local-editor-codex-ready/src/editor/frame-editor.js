@@ -351,6 +351,31 @@ export function createFrameEditor({
     return result;
   }
 
+  function isGroupElement(element) {
+    return !!element && isElement(element) && element.dataset?.nodeRole === 'group';
+  }
+
+  function filterTopLevelSelection(items) {
+    const selected = uniqueConnectedElements(items);
+    return selected.filter((element) => !selected.some((other) => other !== element && other.contains(element)));
+  }
+
+  function canGroupSelection() {
+    const targets = filterTopLevelSelection(selectedElements).filter((element) => !isLockedElement(element));
+    if (targets.length < 2) return false;
+    const parent = targets[0]?.parentElement;
+    if (!parent || parent === doc.body || parent.tagName === 'HTML' || parent.tagName === 'BODY') return false;
+    if (isGroupElement(parent)) return false;
+    return targets.every((element) => element.parentElement === parent && !isGroupElement(element));
+  }
+
+  function canUngroupSelection() {
+    const targets = filterTopLevelSelection(selectedElements);
+    if (!targets.length) return false;
+    if (targets.some((element) => isGroupElement(element) && !isLockedElement(element))) return true;
+    return targets.some((element) => isGroupElement(element.parentElement) && !isLockedElement(element.parentElement));
+  }
+
   function placeholderTextValue(element) {
     return [
       element?.getAttribute?.('data-slot-label') || '',
@@ -551,6 +576,7 @@ export function createFrameEditor({
 
   function layerTypeOf(element) {
     if (!element || !isElement(element)) return 'box';
+    if (isGroupElement(element)) return 'group';
     if (element.hasAttribute('data-detected-slot') || element.matches(EXPLICIT_SLOT_SELECTOR) || element.dataset.manualSlot === '1') return 'slot';
     if (isTextyElement(element)) return 'text';
     if (isSectionLike(element)) return 'section';
@@ -577,6 +603,7 @@ export function createFrameEditor({
         if (!child.dataset.nodeUid) child.dataset.nodeUid = nextId('node');
         const expose = shouldExposeLayer(child, depth);
         if (expose) {
+          const selectedViaGroup = selectedElements.some((selected) => isGroupElement(selected) && selected !== child && selected.contains(child));
           items.push({
             uid: child.dataset.nodeUid,
             label: buildLabel(child),
@@ -585,6 +612,7 @@ export function createFrameEditor({
             depth,
             childCount: child.children?.length || 0,
             selected: selectedUids.has(child.dataset.nodeUid),
+            selectedViaGroup,
             hidden: child.dataset.editorHidden === '1',
             locked: child.dataset.editorLocked === '1',
           });
@@ -676,6 +704,8 @@ export function createFrameEditor({
       layerTree,
       textStyle: getTextStyleState(),
       preflight: buildPreflightReport(),
+      canGroupSelection: canGroupSelection(),
+      canUngroupSelection: canUngroupSelection(),
     };
   }
 
@@ -712,6 +742,7 @@ export function createFrameEditor({
 
   function selectionTypeOf(element) {
     if (!element) return '';
+    if (isGroupElement(element)) return 'group';
     if (element.hasAttribute('data-detected-slot') || element.matches(EXPLICIT_SLOT_SELECTOR) || element.dataset.manualSlot === '1') return 'slot';
     if (isTextyElement(element)) return 'text';
     return 'box';
@@ -1328,6 +1359,66 @@ export function createFrameEditor({
     };
   }
 
+  function groupSelected() {
+    const targets = filterTopLevelSelection(selectedElements).filter((element) => !isLockedElement(element));
+    if (targets.length < 2) return { ok: false, message: '그룹은 2개 이상 선택해야 합니다.' };
+    const parent = targets[0]?.parentElement;
+    if (!parent || parent === doc.body || ['HTML', 'BODY'].includes(parent.tagName)) {
+      return { ok: false, message: '그룹을 만들 공통 부모를 찾지 못했습니다.' };
+    }
+    if (!targets.every((element) => element.parentElement === parent)) {
+      return { ok: false, message: '같은 부모 레벨의 요소만 그룹으로 묶을 수 있습니다.' };
+    }
+    const siblingOrder = Array.from(parent.children || []);
+    const orderedTargets = targets.slice().sort((a, b) => siblingOrder.indexOf(a) - siblingOrder.indexOf(b));
+    const group = doc.createElement('div');
+    group.dataset.nodeRole = 'group';
+    group.dataset.nodeUid = nextId('node');
+    group.dataset.groupLabel = `그룹 ${orderedTargets.length}`;
+    group.setAttribute('aria-label', group.dataset.groupLabel);
+    parent.insertBefore(group, orderedTargets[0]);
+    for (const target of orderedTargets) group.appendChild(target);
+    group.dataset.editorModified = '1';
+    modifiedSlots.add(group.dataset.nodeUid);
+    redetect({ preserveSelectionUids: [group.dataset.nodeUid] });
+    emitMutation('group-selection');
+    return { ok: true, message: `선택 요소 ${orderedTargets.length}개를 그룹으로 묶었습니다.` };
+  }
+
+  function ungroupSelected() {
+    const targets = filterTopLevelSelection(selectedElements);
+    if (!targets.length) return { ok: false, message: '먼저 그룹(또는 그룹 안 요소)을 선택해 주세요.' };
+    const groups = [];
+    const seen = new Set();
+    const pushGroup = (group) => {
+      if (!isGroupElement(group) || !group.isConnected || isLockedElement(group)) return;
+      const uid = group.dataset.nodeUid || nextId('node');
+      group.dataset.nodeUid = uid;
+      if (seen.has(uid)) return;
+      seen.add(uid);
+      groups.push(group);
+    };
+    for (const target of targets) {
+      if (isGroupElement(target)) pushGroup(target);
+      else pushGroup(target.parentElement);
+    }
+    if (!groups.length) return { ok: false, message: '해제할 그룹을 찾지 못했습니다.' };
+    const keepSelectionUids = [];
+    for (const group of groups) {
+      const parent = group.parentElement;
+      if (!parent) continue;
+      const children = Array.from(group.children || []).filter((child) => isElement(child));
+      for (const child of children) {
+        parent.insertBefore(child, group);
+        if (child.dataset.nodeUid) keepSelectionUids.push(child.dataset.nodeUid);
+      }
+      group.remove();
+    }
+    redetect({ preserveSelectionUids: keepSelectionUids });
+    emitMutation('ungroup-selection');
+    return { ok: true, message: `그룹 ${groups.length}개를 해제했습니다.` };
+  }
+
   function deleteSelected() {
     return deleteSelection({
       selectedElements: () => uniqueConnectedElements(selectedElements),
@@ -1673,6 +1764,8 @@ export function createFrameEditor({
       layerTree: buildLayerTree(),
       textStyle: getTextStyleState(),
       preflight: buildPreflightReport(),
+      canGroupSelection: canGroupSelection(),
+      canUngroupSelection: canUngroupSelection(),
       generatedAt: new Date().toISOString(),
     };
   }
@@ -1726,15 +1819,36 @@ export function createFrameEditor({
 
   async function rewriteBlobRefsToPortableUrls(exportDoc) {
     const cache = new Map();
+    const stats = {
+      blobConvertedToDataUrl: 0,
+      blobConversionFailed: 0,
+      touchedImgSrc: 0,
+      touchedSrcset: 0,
+      touchedInlineStyleUrl: 0,
+      touchedStyleBlockUrl: 0,
+    };
+
+    function trackBlobRewrite(original, replacement, key) {
+      if (!String(original || '').startsWith('blob:')) return;
+      if (String(replacement || '').startsWith('data:')) stats.blobConvertedToDataUrl += 1;
+      else stats.blobConversionFailed += 1;
+      if (key && Object.prototype.hasOwnProperty.call(stats, key)) stats[key] += 1;
+    }
 
     for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
       const src = img.getAttribute('src') || '';
-      if (src) img.setAttribute('src', await resolvePortableUrl(src, cache));
+      if (src) {
+        const replacement = await resolvePortableUrl(src, cache);
+        trackBlobRewrite(src, replacement, 'touchedImgSrc');
+        img.setAttribute('src', replacement);
+      }
       const srcset = img.getAttribute('srcset') || '';
       if (srcset) {
         const rewritten = [];
         for (const item of parseSrcsetCandidates(srcset)) {
-          rewritten.push({ ...item, url: await resolvePortableUrl(item.url, cache) });
+          const replacement = await resolvePortableUrl(item.url, cache);
+          trackBlobRewrite(item.url, replacement, 'touchedSrcset');
+          rewritten.push({ ...item, url: replacement });
         }
         img.setAttribute('srcset', serializeSrcsetCandidates(rewritten));
       }
@@ -1743,7 +1857,9 @@ export function createFrameEditor({
     for (const source of Array.from(exportDoc.querySelectorAll('source[srcset]'))) {
       const items = [];
       for (const item of parseSrcsetCandidates(source.getAttribute('srcset') || '')) {
-        items.push({ ...item, url: await resolvePortableUrl(item.url, cache) });
+        const replacement = await resolvePortableUrl(item.url, cache);
+        trackBlobRewrite(item.url, replacement, 'touchedSrcset');
+        items.push({ ...item, url: replacement });
       }
       source.setAttribute('srcset', serializeSrcsetCandidates(items));
     }
@@ -1755,6 +1871,7 @@ export function createFrameEditor({
       let nextStyle = styleValue;
       for (const match of matches) {
         const replacement = await resolvePortableUrl(match[2], cache);
+        trackBlobRewrite(match[2], replacement, 'touchedInlineStyleUrl');
         nextStyle = nextStyle.replace(match[2], replacement);
       }
       element.setAttribute('style', nextStyle);
@@ -1767,10 +1884,31 @@ export function createFrameEditor({
       let nextCss = css;
       for (const match of matches) {
         const replacement = await resolvePortableUrl(match[2], cache);
+        trackBlobRewrite(match[2], replacement, 'touchedStyleBlockUrl');
         nextCss = nextCss.replace(match[2], replacement);
       }
       styleBlock.textContent = nextCss;
     }
+    return stats;
+  }
+
+  function collectLinkedPathWarnings(exportDoc) {
+    const warnings = [];
+    const unresolvedTokenRe = /%EB%AF%B8%ED%95%B4%EA%B2%B0|미해결/i;
+    for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
+      const src = img.getAttribute('src') || '';
+      const kind = classifyAssetPath(src);
+      if (!['relative', 'uploaded'].includes(kind)) continue;
+      const unresolved = img.dataset.normalizedUnresolvedImage === '1' || unresolvedTokenRe.test(src);
+      if (!unresolved) continue;
+      warnings.push({
+        code: 'BROKEN_LINKED_PATH',
+        kind,
+        uid: img.dataset.nodeUid || '',
+        ref: src,
+      });
+    }
+    return warnings;
   }
 
   function measureExportRoot() {
@@ -1805,18 +1943,87 @@ export function createFrameEditor({
     };
   }
 
-  function computeSelectionBoundingCrop() {
-    const targets = uniqueConnectedElements(selectedElements).filter((element) => isElement(element) && element.isConnected);
-    if (!targets.length) return null;
-    const rects = targets.map((element) => element.getBoundingClientRect()).filter((rect) => rect.width > 0 && rect.height > 0);
-    if (!rects.length) return null;
-    const bounds = unionRect(rects);
-    if (!bounds) return null;
-    const docRect = doc.documentElement.getBoundingClientRect();
-    return elementRectToCrop(bounds, docRect);
+  function selectionExportPolicy() {
+    return {
+      excludeHidden: true,
+      excludeLocked: true,
+    };
   }
 
-  async function renderHtmlToCanvas(html, { fullWidth, fullHeight, crop, scale = 1 }) {
+  function resolveSelectionTargetsByUid({ selectedNodeUids = [], includeHidden = false, includeLocked = false } = {}) {
+    const uidList = Array.isArray(selectedNodeUids) ? selectedNodeUids.filter(Boolean) : [];
+    const uidSet = new Set(uidList);
+    const seedTargets = uidSet.size
+      ? Array.from(uidSet).map((uid) => getElementByUid(uid)).filter(Boolean)
+      : uniqueConnectedElements(selectedElements);
+    const targets = uniqueConnectedElements(seedTargets).filter((element) => isElement(element) && element.isConnected);
+    const filtered = [];
+    let skippedHidden = 0;
+    let skippedLocked = 0;
+    for (const element of targets) {
+      if (!includeHidden && isHiddenElement(element)) {
+        skippedHidden += 1;
+        continue;
+      }
+      if (!includeLocked && isLockedElement(element)) {
+        skippedLocked += 1;
+        continue;
+      }
+      filtered.push(element);
+    }
+    return {
+      requestedUids: uidList,
+      allTargets: targets,
+      targets: filtered,
+      skippedHidden,
+      skippedLocked,
+    };
+  }
+
+  function computeUnionBoundingBoxFromSelectedNodeUids({ selectedNodeUids = [], includeHidden = false, includeLocked = false } = {}) {
+    const resolved = resolveSelectionTargetsByUid({ selectedNodeUids, includeHidden, includeLocked });
+    const rects = resolved.targets
+      .map((element) => element.getBoundingClientRect())
+      .filter((rect) => rect.width > 0 && rect.height > 0);
+    const bounds = unionRect(rects);
+    return {
+      ...resolved,
+      rects,
+      bounds,
+    };
+  }
+
+  function resolveCropFromBoundingBox({ bounds, metrics, padding = 0 }) {
+    if (!bounds || !metrics) return null;
+    const safePadding = Math.max(0, Number.parseFloat(String(padding)) || 0);
+    const docRect = doc.documentElement.getBoundingClientRect();
+    const base = {
+      left: bounds.left - docRect.left,
+      top: bounds.top - docRect.top,
+      right: bounds.right - docRect.left,
+      bottom: bounds.bottom - docRect.top,
+    };
+    const expanded = {
+      left: base.left - safePadding,
+      top: base.top - safePadding,
+      right: base.right + safePadding,
+      bottom: base.bottom + safePadding,
+    };
+    const clamped = {
+      left: Math.max(0, expanded.left),
+      top: Math.max(0, expanded.top),
+      right: Math.min(metrics.fullWidth, expanded.right),
+      bottom: Math.min(metrics.fullHeight, expanded.bottom),
+    };
+    return {
+      x: Math.max(0, clamped.left),
+      y: Math.max(0, clamped.top),
+      width: Math.max(1, clamped.right - clamped.left),
+      height: Math.max(1, clamped.bottom - clamped.top),
+    };
+  }
+
+  async function renderHtmlToCanvas(html, { fullWidth, fullHeight, crop, scale = 1, background = 'transparent' }) {
     const parsed = new DOMParser().parseFromString(html, 'text/html');
     parsed.documentElement.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
     const serialized = new XMLSerializer().serializeToString(parsed.documentElement);
@@ -1836,6 +2043,10 @@ export function createFrameEditor({
     canvas.width = Math.max(1, Math.round(crop.width * scale));
     canvas.height = Math.max(1, Math.round(crop.height * scale));
     const context = canvas.getContext('2d');
+    if (background === 'opaque') {
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+    }
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     URL.revokeObjectURL(svgUrl);
     return canvas;
@@ -1851,7 +2062,7 @@ export function createFrameEditor({
     };
   }
 
-  async function renderExportBlob({ area = null, scale = 1, format = 'png', quality = 0.92, context = null } = {}) {
+  async function renderExportBlob({ area = null, scale = 1, format = 'png', quality = 0.92, background = 'transparent', context = null } = {}) {
     const renderContext = context || (await buildExportRenderContext());
     const resolvedArea = area || {
       x: renderContext.metrics.x,
@@ -1864,6 +2075,7 @@ export function createFrameEditor({
       fullHeight: renderContext.metrics.fullHeight,
       crop: resolvedArea,
       scale: normalizeExportScale(scale),
+      background,
     });
     const mime = format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : 'image/png';
     return await canvasToBlob(canvas, mime, mime === 'image/jpeg' ? quality : undefined);
@@ -1877,10 +2089,40 @@ export function createFrameEditor({
     return await renderExportBlob({ format: 'jpg', scale, quality });
   }
 
-  async function exportSelectionPngBlob(scale = 1.5) {
-    const crop = computeSelectionBoundingCrop();
-    if (!crop) throw new Error('먼저 요소를 선택해 주세요.');
-    return await renderExportBlob({ format: 'png', area: crop, scale });
+  async function exportSelectionPngBlob(scale = 1.5, options = {}) {
+    const policy = selectionExportPolicy();
+    const selectedNodeUids = uniqueConnectedElements(selectedElements).map((element) => element.dataset.nodeUid).filter(Boolean);
+    if (!selectedNodeUids.length) throw new Error('선택 PNG 정책: 선택 없음(빈 선택은 export하지 않습니다).');
+    const context = await buildExportRenderContext();
+    const resolvedBounds = computeUnionBoundingBoxFromSelectedNodeUids({
+      selectedNodeUids,
+      includeHidden: !policy.excludeHidden,
+      includeLocked: !policy.excludeLocked,
+    });
+    if (!resolvedBounds.targets.length) {
+      throw new Error(`선택 PNG 정책: 선택 ${resolvedBounds.allTargets.length}개가 모두 제외되었습니다. (숨김 제외 ${policy.excludeHidden ? 'ON' : 'OFF'}, 잠금 제외 ${policy.excludeLocked ? 'ON' : 'OFF'})`);
+    }
+    if (!resolvedBounds.bounds) throw new Error('선택 PNG 정책: 선택 요소의 유효 크기를 찾지 못했습니다.');
+    const padding = Math.max(0, Math.round(Number.parseFloat(String(options?.padding ?? 0)) || 0));
+    const crop = resolveCropFromBoundingBox({ bounds: resolvedBounds.bounds, metrics: context.metrics, padding });
+    const background = options?.background === 'opaque' ? 'opaque' : 'transparent';
+    const blob = await renderExportBlob({ format: 'png', area: crop, scale, background, context });
+    return {
+      blob,
+      meta: {
+        mode: resolvedBounds.targets.length > 1 ? 'multi-union' : 'single',
+        selectedNodeUids,
+        targetCount: resolvedBounds.targets.length,
+        crop,
+        scale: normalizeExportScale(scale),
+        policy: {
+          excludeHidden: policy.excludeHidden,
+          excludeLocked: policy.excludeLocked,
+          skippedHidden: resolvedBounds.skippedHidden,
+          skippedLocked: resolvedBounds.skippedLocked,
+        },
+      },
+    };
   }
 
   function collectSectionRects() {
@@ -1959,11 +2201,15 @@ export function createFrameEditor({
     };
   }
 
-  async function buildLinkedPackageEntries() {
-    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
-    await rewriteBlobRefsToPortableUrls(exportDoc);
+  async function convertEmbeddedToLinked(exportDoc) {
     const assetEntries = [];
     const assetPathMap = new Map();
+    const stats = {
+      format: 'linked',
+      convertedDataUrlCount: 0,
+      generatedAssetCount: 0,
+      brokenLinkedPathWarnings: [],
+    };
 
     async function materializeUrl(url, hint = 'asset') {
       const value = String(url || '').trim();
@@ -1976,6 +2222,7 @@ export function createFrameEditor({
       const name = `assets/${String(assetEntries.length + 1).padStart(3, '0')}_${sanitizeFilename(slugify(hint) || 'asset')}${ext}`;
       assetEntries.push({ name, data: bytes });
       assetPathMap.set(value, name);
+      stats.convertedDataUrlCount += 1;
       return name;
     }
 
@@ -2026,12 +2273,44 @@ export function createFrameEditor({
       styleBlock.textContent = nextCss;
     }
 
+    stats.generatedAssetCount = assetEntries.length;
+    stats.brokenLinkedPathWarnings = collectLinkedPathWarnings(exportDoc);
+    return { exportDoc, assetEntries, stats };
+  }
+
+  async function buildSavePackageEntries(format = 'linked') {
+    const saveFormat = format === 'embedded' ? 'embedded' : 'linked';
     const baseName = sanitizeFilename(project?.sourceName?.replace(/\.html?$/i, '') || 'detail-page');
-    const html = createDoctypeHtml(exportDoc);
-    return [
-      { name: `${baseName}__linked.html`, data: new TextEncoder().encode(html) },
-      ...assetEntries,
-    ];
+    if (saveFormat === 'embedded') {
+      const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
+      const rewriteStats = await rewriteBlobRefsToPortableUrls(exportDoc);
+      const html = createDoctypeHtml(exportDoc);
+      return {
+        format: 'embedded',
+        entries: [{ name: `${baseName}__embedded.html`, data: new TextEncoder().encode(html) }],
+        conversion: {
+          format: 'embedded',
+          portableRewrite: rewriteStats,
+          generatedAssetCount: 0,
+          brokenLinkedPathWarnings: [],
+        },
+      };
+    }
+    const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
+    const rewriteStats = await rewriteBlobRefsToPortableUrls(exportDoc);
+    const converted = await convertEmbeddedToLinked(exportDoc);
+    const html = createDoctypeHtml(converted.exportDoc);
+    return {
+      format: 'linked',
+      entries: [
+        { name: `${baseName}__linked.html`, data: new TextEncoder().encode(html) },
+        ...converted.assetEntries,
+      ],
+      conversion: {
+        ...converted.stats,
+        portableRewrite: rewriteStats,
+      },
+    };
   }
 
   function captureSnapshot(label = 'snapshot') {
@@ -2257,6 +2536,8 @@ export function createFrameEditor({
   function executeCommand(command, payload = {}) {
     if (command === 'duplicate') return duplicateSelected();
     if (command === 'delete') return deleteSelected();
+    if (command === 'group-selection') return groupSelected();
+    if (command === 'ungroup-selection') return ungroupSelected();
     if (command === 'nudge-selection') return nudgeSelectedElements(payload.dx || 0, payload.dy || 0);
     if (command === 'undo' || command === 'redo' || command === 'save-edited') {
       onShortcut(command);
@@ -2287,6 +2568,11 @@ export function createFrameEditor({
       if (key === 'd') {
         event.preventDefault();
         onStatus(executeCommand('duplicate').message);
+        return;
+      }
+      if (key === 'g') {
+        event.preventDefault();
+        onStatus(executeCommand(event.shiftKey ? 'ungroup-selection' : 'group-selection').message);
         return;
       }
     }
@@ -2394,6 +2680,8 @@ export function createFrameEditor({
     applyBatchLayout,
     duplicateSelected,
     deleteSelected,
+    groupSelected,
+    ungroupSelected,
     addTextElement: () => addElement('text'),
     addBoxElement: () => addElement('box'),
     addSlotElement: () => addElement('slot'),
@@ -2411,7 +2699,16 @@ export function createFrameEditor({
       return createDoctypeHtml(exportDoc);
     },
     async getLinkedPackageEntries() {
-      return await buildLinkedPackageEntries();
+      const result = await buildSavePackageEntries('linked');
+      return result.entries;
+    },
+    async getSavePackageEntries(format = 'linked') {
+      return await buildSavePackageEntries(format);
+    },
+    async convertEmbeddedToLinked() {
+      const exportDoc = buildCurrentExportDoc({ persistDetectedSlots: true });
+      await rewriteBlobRefsToPortableUrls(exportDoc);
+      return await convertEmbeddedToLinked(exportDoc);
     },
     async exportFullPngBlob(scale = 1.5) {
       return await exportFullPngBlob(scale);
@@ -2419,8 +2716,8 @@ export function createFrameEditor({
     async exportFullJpgBlob(scale = 1.5, quality = 0.92) {
       return await exportFullJpgBlob(scale, quality);
     },
-    async exportSelectionPngBlob(scale = 1.5) {
-      return await exportSelectionPngBlob(scale);
+    async exportSelectionPngBlob(scale = 1.5, options = {}) {
+      return await exportSelectionPngBlob(scale, options);
     },
     async exportSectionPngEntries(scale = 1.5) {
       return await exportSectionPngEntries(scale);
