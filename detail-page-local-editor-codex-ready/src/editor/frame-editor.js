@@ -78,6 +78,16 @@ function closestElement(node) {
   return node?.parentElement || null;
 }
 
+function isTypingInputTarget(target) {
+  if (!target || !isElement(target)) return false;
+  if (target.closest('[contenteditable="true"]')) return true;
+  const tagName = target.tagName;
+  if (tagName === 'TEXTAREA' || tagName === 'SELECT') return true;
+  if (tagName !== 'INPUT') return false;
+  const inputType = String(target.getAttribute('type') || 'text').toLowerCase();
+  return inputType !== 'checkbox' && inputType !== 'radio' && inputType !== 'button' && inputType !== 'submit' && inputType !== 'reset';
+}
+
 function buildLabel(element) {
   return (
     element?.getAttribute?.('data-slot-label') ||
@@ -2548,6 +2558,40 @@ export function createFrameEditor({
 
   function handleKeydown(event) {
     const withModifier = event.ctrlKey || event.metaKey;
+    const typingInput = isTypingInputTarget(closestElement(event.target));
+    if (typingInput && !editingTextElement) return;
+
+    if (!withModifier && !event.altKey && !event.shiftKey && !editingTextElement) {
+      const plainKey = String(event.key || '').toLowerCase();
+      if (plainKey === 'v') {
+        event.preventDefault();
+        setSelectionMode('smart');
+        onStatus('선택 도구(V)로 전환했습니다.');
+        return;
+      }
+      if (plainKey === 't') {
+        event.preventDefault();
+        setSelectionMode('text');
+        onStatus('텍스트 도구(T)로 전환했습니다.');
+        return;
+      }
+      if (plainKey === 'r') {
+        event.preventDefault();
+        setSelectionMode('box');
+        onStatus('박스 도구(R)로 전환했습니다.');
+        return;
+      }
+      if (plainKey === '?') {
+        event.preventDefault();
+        onShortcut('toggle-shortcut-help');
+        return;
+      }
+    }
+    if (!withModifier && event.shiftKey && String(event.key || '') === '/' && !editingTextElement) {
+      event.preventDefault();
+      onShortcut('toggle-shortcut-help');
+      return;
+    }
     if (withModifier && !event.altKey) {
       const key = String(event.key || '').toLowerCase();
       if (key === 'z') {

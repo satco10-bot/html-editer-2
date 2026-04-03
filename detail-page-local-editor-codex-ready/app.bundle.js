@@ -1466,6 +1466,16 @@ function closestElement(node) {
   return node?.parentElement || null;
 }
 
+function isTypingInputTarget(target) {
+  if (!target || !isElement(target)) return false;
+  if (target.closest('[contenteditable="true"]')) return true;
+  const tagName = target.tagName;
+  if (tagName === 'TEXTAREA' || tagName === 'SELECT') return true;
+  if (tagName !== 'INPUT') return false;
+  const inputType = String(target.getAttribute('type') || 'text').toLowerCase();
+  return inputType !== 'checkbox' && inputType !== 'radio' && inputType !== 'button' && inputType !== 'submit' && inputType !== 'reset';
+}
+
 function buildLabel(element) {
   return (
     element?.getAttribute?.('data-slot-label') ||
@@ -2745,6 +2755,66 @@ function createFrameEditor({
     };
   }
 
+  function groupSelected() {
+    const targets = filterTopLevelSelection(selectedElements).filter((element) => !isLockedElement(element));
+    if (targets.length < 2) return { ok: false, message: '그룹은 2개 이상 선택해야 합니다.' };
+    const parent = targets[0]?.parentElement;
+    if (!parent || parent === doc.body || ['HTML', 'BODY'].includes(parent.tagName)) {
+      return { ok: false, message: '그룹을 만들 공통 부모를 찾지 못했습니다.' };
+    }
+    if (!targets.every((element) => element.parentElement === parent)) {
+      return { ok: false, message: '같은 부모 레벨의 요소만 그룹으로 묶을 수 있습니다.' };
+    }
+    const siblingOrder = Array.from(parent.children || []);
+    const orderedTargets = targets.slice().sort((a, b) => siblingOrder.indexOf(a) - siblingOrder.indexOf(b));
+    const group = doc.createElement('div');
+    group.dataset.nodeRole = 'group';
+    group.dataset.nodeUid = nextId('node');
+    group.dataset.groupLabel = `그룹 ${orderedTargets.length}`;
+    group.setAttribute('aria-label', group.dataset.groupLabel);
+    parent.insertBefore(group, orderedTargets[0]);
+    for (const target of orderedTargets) group.appendChild(target);
+    group.dataset.editorModified = '1';
+    modifiedSlots.add(group.dataset.nodeUid);
+    redetect({ preserveSelectionUids: [group.dataset.nodeUid] });
+    emitMutation('group-selection');
+    return { ok: true, message: `선택 요소 ${orderedTargets.length}개를 그룹으로 묶었습니다.` };
+  }
+
+  function ungroupSelected() {
+    const targets = filterTopLevelSelection(selectedElements);
+    if (!targets.length) return { ok: false, message: '먼저 그룹(또는 그룹 안 요소)을 선택해 주세요.' };
+    const groups = [];
+    const seen = new Set();
+    const pushGroup = (group) => {
+      if (!isGroupElement(group) || !group.isConnected || isLockedElement(group)) return;
+      const uid = group.dataset.nodeUid || nextId('node');
+      group.dataset.nodeUid = uid;
+      if (seen.has(uid)) return;
+      seen.add(uid);
+      groups.push(group);
+    };
+    for (const target of targets) {
+      if (isGroupElement(target)) pushGroup(target);
+      else pushGroup(target.parentElement);
+    }
+    if (!groups.length) return { ok: false, message: '해제할 그룹을 찾지 못했습니다.' };
+    const keepSelectionUids = [];
+    for (const group of groups) {
+      const parent = group.parentElement;
+      if (!parent) continue;
+      const children = Array.from(group.children || []).filter((child) => isElement(child));
+      for (const child of children) {
+        parent.insertBefore(child, group);
+        if (child.dataset.nodeUid) keepSelectionUids.push(child.dataset.nodeUid);
+      }
+      group.remove();
+    }
+    redetect({ preserveSelectionUids: keepSelectionUids });
+    emitMutation('ungroup-selection');
+    return { ok: true, message: `그룹 ${groups.length}개를 해제했습니다.` };
+  }
+
   function deleteSelected() {
     return deleteSelection({
       selectedElements: () => uniqueConnectedElements(selectedElements),
@@ -3862,6 +3932,8 @@ function createFrameEditor({
   function executeCommand(command, payload = {}) {
     if (command === 'duplicate') return duplicateSelected();
     if (command === 'delete') return deleteSelected();
+    if (command === 'group-selection') return groupSelected();
+    if (command === 'ungroup-selection') return ungroupSelected();
     if (command === 'nudge-selection') return nudgeSelectedElements(payload.dx || 0, payload.dy || 0);
     if (command === 'undo' || command === 'redo' || command === 'save-edited') {
       onShortcut(command);
@@ -3872,6 +3944,40 @@ function createFrameEditor({
 
   function handleKeydown(event) {
     const withModifier = event.ctrlKey || event.metaKey;
+    const typingInput = isTypingInputTarget(closestElement(event.target));
+    if (typingInput && !editingTextElement) return;
+
+    if (!withModifier && !event.altKey && !event.shiftKey && !editingTextElement) {
+      const plainKey = String(event.key || '').toLowerCase();
+      if (plainKey === 'v') {
+        event.preventDefault();
+        setSelectionMode('smart');
+        onStatus('선택 도구(V)로 전환했습니다.');
+        return;
+      }
+      if (plainKey === 't') {
+        event.preventDefault();
+        setSelectionMode('text');
+        onStatus('텍스트 도구(T)로 전환했습니다.');
+        return;
+      }
+      if (plainKey === 'r') {
+        event.preventDefault();
+        setSelectionMode('box');
+        onStatus('박스 도구(R)로 전환했습니다.');
+        return;
+      }
+      if (plainKey === '?') {
+        event.preventDefault();
+        onShortcut('toggle-shortcut-help');
+        return;
+      }
+    }
+    if (!withModifier && event.shiftKey && String(event.key || '') === '/' && !editingTextElement) {
+      event.preventDefault();
+      onShortcut('toggle-shortcut-help');
+      return;
+    }
     if (withModifier && !event.altKey) {
       const key = String(event.key || '').toLowerCase();
       if (key === 'z') {
@@ -3892,6 +3998,11 @@ function createFrameEditor({
       if (key === 'd') {
         event.preventDefault();
         onStatus(executeCommand('duplicate').message);
+        return;
+      }
+      if (key === 'g') {
+        event.preventDefault();
+        onStatus(executeCommand(event.shiftKey ? 'ungroup-selection' : 'group-selection').message);
         return;
       }
     }
@@ -4512,7 +4623,21 @@ const elements = {
   batchActionButtons: Array.from(document.querySelectorAll('[data-batch-action]')),
   textAlignButtons: Array.from(document.querySelectorAll('[data-text-align]')),
   canvasActionButtons: Array.from(document.querySelectorAll('[data-canvas-action]')),
+  shortcutHelpOverlay: document.getElementById('shortcutHelpOverlay'),
+  shortcutHelpCloseButton: document.getElementById('shortcutHelpCloseButton'),
 };
+
+const SHORTCUT_TOOLTIP_MAP = Object.freeze({
+  '[data-selection-mode="smart"]': '선택 도구 (V)',
+  '[data-selection-mode="text"]': '텍스트 도구 (T)',
+  '[data-selection-mode="box"]': '박스 도구 (R)',
+  '#addTextButton': '텍스트 추가 (T)',
+  '#addBoxButton': '박스 추가 (R)',
+  '#groupButton': '그룹 묶기 (Ctrl/Cmd+G)',
+  '#ungroupButton': '그룹 해제 (Shift+Ctrl/Cmd+G)',
+  '[data-canvas-action="duplicate"]': '복제 (Ctrl/Cmd+D)',
+  '[data-canvas-action="delete"]': '삭제 (Delete)',
+});
 
 function projectBaseName(project) {
   return sanitizeFilename((project?.sourceName || 'detail-page').replace(/\.html?$/i, '') || 'detail-page');
@@ -4545,6 +4670,38 @@ function selectionExportBackground() {
 
 function setStatus(text) {
   store.setStatus(text);
+}
+
+function isTypingInputTarget(target) {
+  if (!target || !(target instanceof Element)) return false;
+  if (target.closest('[contenteditable="true"]')) return true;
+  const tagName = target.tagName;
+  if (tagName === 'TEXTAREA' || tagName === 'SELECT') return true;
+  if (tagName !== 'INPUT') return false;
+  const inputType = String(target.getAttribute('type') || 'text').toLowerCase();
+  return inputType !== 'checkbox' && inputType !== 'radio' && inputType !== 'button' && inputType !== 'submit' && inputType !== 'reset';
+}
+
+function toggleShortcutHelp(forceOpen = null) {
+  const overlay = elements.shortcutHelpOverlay;
+  if (!overlay) return false;
+  const shouldOpen = forceOpen == null ? overlay.hidden : !!forceOpen;
+  overlay.hidden = !shouldOpen;
+  if (shouldOpen) {
+    elements.shortcutHelpCloseButton?.focus();
+    setStatus('단축키 치트시트를 열었습니다.');
+  }
+  return shouldOpen;
+}
+
+function applyShortcutTooltips() {
+  for (const [selector, label] of Object.entries(SHORTCUT_TOOLTIP_MAP)) {
+    for (const node of Array.from(document.querySelectorAll(selector))) {
+      node.title = label;
+      const originalAria = node.getAttribute('aria-label') || node.textContent?.trim() || '';
+      if (!originalAria.includes('(')) node.setAttribute('aria-label', `${originalAria} ${label.match(/\(.+\)/)?.[0] || ''}`.trim());
+    }
+  }
 }
 
 function evaluateLocalBootEnvironment() {
@@ -5071,21 +5228,7 @@ function handleEditorShortcut(action) {
   if (action === 'undo') return undoHistory();
   if (action === 'redo') return redoHistory();
   if (action === 'save-edited') return downloadEditedHtml().catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`));
-}
-
-function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
-  if (!activeEditor) {
-    setStatus('먼저 미리보기를 로드해 주세요.');
-    return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
-  }
-  const fallback = {
-    duplicate: () => activeEditor.duplicateSelected(),
-    delete: () => activeEditor.deleteSelected(),
-  };
-  const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
-  setStatus(result.message);
-  if (refresh && (store.getState().currentView === 'edited' || store.getState().currentView === 'report')) refreshComputedViews(store.getState());
-  return result;
+  if (action === 'toggle-shortcut-help') return toggleShortcutHelp();
 }
 
 function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
@@ -5098,21 +5241,6 @@ function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
     delete: () => activeEditor.deleteSelected(),
     'group-selection': () => activeEditor.groupSelected?.() || { ok: false, message: 'group-selection 명령을 지원하지 않습니다.' },
     'ungroup-selection': () => activeEditor.ungroupSelected?.() || { ok: false, message: 'ungroup-selection 명령을 지원하지 않습니다.' },
-  };
-  const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
-  setStatus(result.message);
-  if (refresh && (store.getState().currentView === 'edited' || store.getState().currentView === 'report')) refreshComputedViews(store.getState());
-  return result;
-}
-
-function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
-  if (!activeEditor) {
-    setStatus('먼저 미리보기를 로드해 주세요.');
-    return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
-  }
-  const fallback = {
-    duplicate: () => activeEditor.duplicateSelected(),
-    delete: () => activeEditor.deleteSelected(),
   };
   const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
   setStatus(result.message);
@@ -5589,6 +5717,8 @@ elements.textEditButton.addEventListener('click', () => {
 });
 elements.duplicateButton?.addEventListener('click', () => { executeEditorCommand('duplicate'); });
 elements.deleteButton?.addEventListener('click', () => { executeEditorCommand('delete'); });
+elements.groupButton?.addEventListener('click', () => { executeEditorCommand('group-selection'); });
+elements.ungroupButton?.addEventListener('click', () => { executeEditorCommand('ungroup-selection'); });
 elements.addTextButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.addTextElement();
@@ -5767,11 +5897,51 @@ elements.zoomFitButton?.addEventListener('click', () => setZoom('fit'));
 window.addEventListener('resize', applyPreviewZoom);
 
 window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !elements.shortcutHelpOverlay?.hidden) {
+    event.preventDefault();
+    toggleShortcutHelp(false);
+    return;
+  }
+  const questionMarkPressed = event.key === '?' || (event.key === '/' && event.shiftKey);
+  if (questionMarkPressed) {
+    if (isTypingInputTarget(event.target)) return;
+    event.preventDefault();
+    toggleShortcutHelp();
+    return;
+  }
+  if (!elements.shortcutHelpOverlay?.hidden) return;
+
   const withModifier = event.ctrlKey || event.metaKey;
+  if (!withModifier && !isTypingInputTarget(event.target)) {
+    const key = String(event.key || '').toLowerCase();
+    if (key === 'v') {
+      event.preventDefault();
+      setSelectionMode('smart');
+      return setStatus('선택 도구(V)로 전환했습니다.');
+    }
+    if (key === 't') {
+      event.preventDefault();
+      setSelectionMode('text');
+      return setStatus('텍스트 도구(T)로 전환했습니다.');
+    }
+    if (key === 'r') {
+      event.preventDefault();
+      setSelectionMode('box');
+      return setStatus('박스 도구(R)로 전환했습니다.');
+    }
+  }
+
   if (!withModifier || event.altKey) return;
-  const tagName = document.activeElement?.tagName || '';
-  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tagName)) return;
+  if (isTypingInputTarget(event.target)) return;
   const key = String(event.key || '').toLowerCase();
+  if (key === 'd') {
+    event.preventDefault();
+    return executeEditorCommand('duplicate');
+  }
+  if (key === 'g') {
+    event.preventDefault();
+    return executeEditorCommand(event.shiftKey ? 'ungroup-selection' : 'group-selection');
+  }
   if (key === 'z') {
     event.preventDefault();
     return event.shiftKey ? redoHistory() : undoHistory();
@@ -5820,11 +5990,17 @@ window.addEventListener('keydown', (event) => {
   }
 });
 
+elements.shortcutHelpOverlay?.addEventListener('click', (event) => {
+  if (event.target === elements.shortcutHelpOverlay) toggleShortcutHelp(false);
+});
+elements.shortcutHelpCloseButton?.addEventListener('click', () => toggleShortcutHelp(false));
+
 setSidebarTab('left-import');
 setSidebarTab('right-inspect');
 setCodeSource('edited', { preserveDraft: false });
 syncSaveFormatUi();
 syncWorkspaceButtons();
+applyShortcutTooltips();
 loadFixture('F05');
 
 
