@@ -2323,6 +2323,16 @@ export function createFrameEditor({
     return listEditableSections().find((section) => section.uid === uid) || null;
   }
 
+  function assignNodeUidDeep(rootElement) {
+    if (!isElement(rootElement)) return;
+    rootElement.dataset.nodeUid = nextId('node');
+    const descendants = Array.from(rootElement.querySelectorAll('*'));
+    descendants.forEach((element) => {
+      if (!isElement(element)) return;
+      element.dataset.nodeUid = nextId('node');
+    });
+  }
+
   function duplicateSectionByUid(uid) {
     const section = resolveSectionByUid(uid);
     if (!section) return { ok: false, message: '복제할 섹션을 찾지 못했습니다.' };
