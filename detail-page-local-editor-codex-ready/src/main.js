@@ -45,6 +45,11 @@ const elements = {
   toggleLockButton: document.getElementById('toggleLockButton'),
   redetectButton: document.getElementById('redetectButton'),
   textEditButton: document.getElementById('textEditButton'),
+  duplicateButton: document.getElementById('duplicateButton'),
+  deleteButton: document.getElementById('deleteButton'),
+  addTextButton: document.getElementById('addTextButton'),
+  addBoxButton: document.getElementById('addBoxButton'),
+  addSlotButton: document.getElementById('addSlotButton'),
   undoButton: document.getElementById('undoButton'),
   redoButton: document.getElementById('redoButton'),
   restoreAutosaveButton: document.getElementById('restoreAutosaveButton'),
@@ -52,7 +57,9 @@ const elements = {
   downloadNormalizedButton: document.getElementById('downloadNormalizedButton'),
   downloadLinkedZipButton: document.getElementById('downloadLinkedZipButton'),
   exportPngButton: document.getElementById('exportPngButton'),
+  exportJpgButton: document.getElementById('exportJpgButton'),
   exportSectionsZipButton: document.getElementById('exportSectionsZipButton'),
+  exportSelectionPngButton: document.getElementById('exportSelectionPngButton'),
   exportPresetSelect: document.getElementById('exportPresetSelect'),
   exportScaleSelect: document.getElementById('exportScaleSelect'),
   exportPresetPackageButton: document.getElementById('exportPresetPackageButton'),
@@ -89,6 +96,17 @@ const elements = {
   applyTextStyleButton: document.getElementById('applyTextStyleButton'),
   clearTextStyleButton: document.getElementById('clearTextStyleButton'),
   batchSelectionSummary: document.getElementById('batchSelectionSummary'),
+  geometryXInput: document.getElementById('geometryXInput'),
+  geometryYInput: document.getElementById('geometryYInput'),
+  geometryWInput: document.getElementById('geometryWInput'),
+  geometryHInput: document.getElementById('geometryHInput'),
+  applyGeometryButton: document.getElementById('applyGeometryButton'),
+  bringForwardButton: document.getElementById('bringForwardButton'),
+  sendBackwardButton: document.getElementById('sendBackwardButton'),
+  imageNudgeLeftButton: document.getElementById('imageNudgeLeftButton'),
+  imageNudgeRightButton: document.getElementById('imageNudgeRightButton'),
+  imageNudgeUpButton: document.getElementById('imageNudgeUpButton'),
+  imageNudgeDownButton: document.getElementById('imageNudgeDownButton'),
   toggleLeftSidebarButton: document.getElementById('toggleLeftSidebarButton'),
   toggleRightSidebarButton: document.getElementById('toggleRightSidebarButton'),
   focusModeButton: document.getElementById('focusModeButton'),
@@ -441,6 +459,33 @@ function syncBatchSummary(editorMeta) {
   elements.batchSelectionSummary.textContent = count > 1 ? `${count}개 동시 선택` : '1개 이하 선택';
 }
 
+function syncGeometryControls() {
+  const geometry = activeEditor?.getSelectionGeometry?.() || null;
+  const enabled = !!geometry;
+  const controls = [
+    elements.geometryXInput,
+    elements.geometryYInput,
+    elements.geometryWInput,
+    elements.geometryHInput,
+    elements.applyGeometryButton,
+    elements.bringForwardButton,
+    elements.sendBackwardButton,
+    elements.imageNudgeLeftButton,
+    elements.imageNudgeRightButton,
+    elements.imageNudgeUpButton,
+    elements.imageNudgeDownButton,
+  ];
+  for (const control of controls) {
+    if (!control) continue;
+    control.disabled = !enabled;
+  }
+  if (!enabled) return;
+  elements.geometryXInput.value = String(geometry.x ?? 0);
+  elements.geometryYInput.value = String(geometry.y ?? 0);
+  elements.geometryWInput.value = String(geometry.w ?? 0);
+  elements.geometryHInput.value = String(geometry.h ?? 0);
+}
+
 function renderShell(state) {
   renderViewButtons(state.currentView);
   renderSelectionModeButtons(state.selectionMode);
@@ -466,6 +511,7 @@ function renderShell(state) {
   renderAssetTable(elements.assetTableWrap, state.project, elements.assetFilterInput.value);
   syncTextStyleControls(state.editorMeta);
   syncBatchSummary(state.editorMeta);
+  syncGeometryControls();
   elements.statusText.textContent = state.statusText;
   refreshComputedViews(state);
 
@@ -488,7 +534,9 @@ function renderShell(state) {
   elements.downloadNormalizedButton.disabled = !hasProject;
   elements.downloadLinkedZipButton.disabled = !hasEditor;
   elements.exportPngButton.disabled = !hasEditor;
+  elements.exportJpgButton.disabled = !hasEditor;
   elements.exportSectionsZipButton.disabled = !hasEditor;
+  elements.exportSelectionPngButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
   elements.exportPresetPackageButton.disabled = !hasEditor;
   elements.downloadReportButton.disabled = !hasProject;
   if (elements.applyCodeToEditorButton) elements.applyCodeToEditorButton.disabled = !hasProject || currentCodeSource === 'report';
@@ -671,6 +719,25 @@ async function exportFullPng() {
   const fileName = `${projectBaseName(project)}__full.png`;
   downloadBlob(fileName, blob);
   setStatus(`전체 PNG를 저장했습니다: ${fileName}`);
+}
+
+async function exportFullJpg() {
+  const project = store.getState().project;
+  if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
+  if (!ensurePreflightBeforeExport('전체 JPG 저장')) return;
+  const blob = await activeEditor.exportFullJpgBlob(exportScale(), 0.92);
+  const fileName = `${projectBaseName(project)}__full.jpg`;
+  downloadBlob(fileName, blob);
+  setStatus(`전체 JPG를 저장했습니다: ${fileName}`);
+}
+
+async function exportSelectionPng() {
+  const project = store.getState().project;
+  if (!project || !activeEditor) return setStatus('먼저 프로젝트를 불러와 주세요.');
+  const blob = await activeEditor.exportSelectionPngBlob(exportScale());
+  const fileName = `${projectBaseName(project)}__selection.png`;
+  downloadBlob(fileName, blob);
+  setStatus(`선택 영역 PNG를 저장했습니다: ${fileName}`);
 }
 
 async function exportSectionsZip() {
@@ -906,6 +973,58 @@ elements.textEditButton.addEventListener('click', () => {
   setStatus(result.message);
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
+elements.duplicateButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.duplicateSelected();
+  setStatus(result.message);
+  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+});
+elements.deleteButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.deleteSelected();
+  setStatus(result.message);
+  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+});
+elements.addTextButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.addTextElement();
+  setStatus(result.message);
+});
+elements.addBoxButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.addBoxElement();
+  setStatus(result.message);
+});
+elements.addSlotButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.addSlotElement();
+  setStatus(result.message);
+});
+elements.applyGeometryButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const patch = {
+    x: Number.parseFloat(elements.geometryXInput.value),
+    y: Number.parseFloat(elements.geometryYInput.value),
+    w: Number.parseFloat(elements.geometryWInput.value),
+    h: Number.parseFloat(elements.geometryHInput.value),
+  };
+  const result = activeEditor.applyGeometryPatch(patch);
+  setStatus(result.message);
+});
+elements.bringForwardButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.bringSelectedForward();
+  setStatus(result.message);
+});
+elements.sendBackwardButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.sendSelectedBackward();
+  setStatus(result.message);
+});
+elements.imageNudgeLeftButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: -2, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeRightButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 2, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeUpButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: -2 })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeDownButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: 2 })?.message || '먼저 미리보기를 로드해 주세요.'));
 elements.preflightRefreshButton.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   activeEditor.refreshDerivedMeta();
@@ -920,7 +1039,9 @@ elements.downloadEditedButton.addEventListener('click', downloadEditedHtml);
 elements.downloadNormalizedButton.addEventListener('click', downloadNormalizedHtml);
 elements.downloadLinkedZipButton.addEventListener('click', () => { downloadLinkedZip().catch((error) => setStatus(`ZIP 저장 중 오류: ${error?.message || error}`)); });
 elements.exportPngButton.addEventListener('click', () => { exportFullPng().catch((error) => setStatus(`PNG 저장 중 오류: ${error?.message || error}`)); });
+elements.exportJpgButton?.addEventListener('click', () => { exportFullJpg().catch((error) => setStatus(`JPG 저장 중 오류: ${error?.message || error}`)); });
 elements.exportSectionsZipButton.addEventListener('click', () => { exportSectionsZip().catch((error) => setStatus(`섹션 PNG ZIP 저장 중 오류: ${error?.message || error}`)); });
+elements.exportSelectionPngButton?.addEventListener('click', () => { exportSelectionPng().catch((error) => setStatus(`선택 PNG 저장 중 오류: ${error?.message || error}`)); });
 elements.exportPresetPackageButton.addEventListener('click', () => { downloadExportPresetPackage().catch((error) => setStatus(`Preset 패키지 저장 중 오류: ${error?.message || error}`)); });
 elements.downloadReportButton.addEventListener('click', downloadReportJson);
 elements.exportPresetSelect.addEventListener('change', () => {

@@ -115,11 +115,14 @@ def main() -> None:
         'replaceImageButton', 'manualSlotButton', 'demoteSlotButton', 'toggleHideButton', 'toggleLockButton', 'redetectButton', 'textEditButton',
         'undoButton', 'redoButton', 'restoreAutosaveButton',
         'downloadEditedButton', 'downloadNormalizedButton', 'downloadLinkedZipButton',
-        'exportPresetSelect', 'exportScaleSelect', 'exportPngButton', 'exportSectionsZipButton', 'exportPresetPackageButton', 'downloadReportButton',
+        'exportPresetSelect', 'exportScaleSelect', 'exportPngButton', 'exportJpgButton', 'exportSectionsZipButton', 'exportSelectionPngButton', 'exportPresetPackageButton', 'downloadReportButton',
         'replaceImageInput', 'previewFrame', 'slotList', 'selectionInspector', 'assetFilterInput',
         'preflightContainer', 'preflightRefreshButton', 'layerTree', 'layerFilterInput',
         'textFontSizeInput', 'textLineHeightInput', 'textLetterSpacingInput', 'textWeightSelect', 'textColorInput',
-        'applyTextStyleButton', 'clearTextStyleButton', 'batchSelectionSummary'
+        'applyTextStyleButton', 'clearTextStyleButton', 'batchSelectionSummary',
+        'duplicateButton', 'deleteButton', 'addTextButton', 'addBoxButton', 'addSlotButton',
+        'geometryXInput', 'geometryYInput', 'geometryWInput', 'geometryHInput', 'applyGeometryButton',
+        'bringForwardButton', 'sendBackwardButton', 'imageNudgeLeftButton', 'imageNudgeRightButton', 'imageNudgeUpButton', 'imageNudgeDownButton'
     ]
     for element_id in required_ids:
         add_check(checks, f'index_has_{element_id}', f'id="{element_id}"' in index_html, element_id)
@@ -133,7 +136,10 @@ def main() -> None:
         'getLinkedPackageEntries', 'applyFiles', 'removeImageFromSelected',
         'markSelectedAsSlot', 'demoteSelectedSlot', 'getCurrentPortableHtml',
         'applyTextStyle', 'applyBatchLayout', 'getPreflightReport', 'selectNodeByUid', 'refreshDerivedMeta',
-        'toggleSelectedHidden', 'toggleSelectedLocked', 'toggleLayerHiddenByUid', 'toggleLayerLockedByUid'
+        'toggleSelectedHidden', 'toggleSelectedLocked', 'toggleLayerHiddenByUid', 'toggleLayerLockedByUid',
+        'duplicateSelected', 'deleteSelected', 'addTextElement', 'addBoxElement', 'addSlotElement',
+        'applyGeometryPatch', 'bringSelectedForward', 'sendSelectedBackward', 'nudgeSelectedImage',
+        'exportFullJpgBlob', 'exportSelectionPngBlob'
     ]
     for method in required_editor_methods:
         add_check(checks, f'frame_editor_has_{method}', method in frame_js, method)
@@ -144,6 +150,7 @@ def main() -> None:
 
     add_check(checks, 'index_has_stage_hint', 'Shift+드래그' in index_html and '스냅 가이드' in index_html, 'canvas interaction hint should exist')
     add_check(checks, 'index_has_export_preset_label', 'Export preset' in index_html, 'export preset selector should be visible')
+    add_check(checks, 'index_has_3x_scale_option', '<option value="3">3x</option>' in index_html, '3x export scale option should exist')
     add_check(checks, 'frame_has_marquee_runtime', '__phase6_marquee_box' in frame_js and 'handlePointerDown' in frame_js and 'updateMarqueeSelection' in frame_js, 'marquee drag selection runtime should exist')
     add_check(checks, 'frame_has_snap_runtime', '__phase6_snap_line_x' in frame_js and 'computeSnapAdjustment' in frame_js, 'snap guide runtime should exist')
     add_check(checks, 'frame_has_lock_hide_runtime', 'data-editor-hidden' in frame_js and 'data-editor-locked' in frame_js, 'hide/lock data attributes should exist')
