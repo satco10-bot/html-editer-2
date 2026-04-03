@@ -1943,18 +1943,87 @@ export function createFrameEditor({
     };
   }
 
-  function computeSelectionBoundingCrop() {
-    const targets = uniqueConnectedElements(selectedElements).filter((element) => isElement(element) && element.isConnected);
-    if (!targets.length) return null;
-    const rects = targets.map((element) => element.getBoundingClientRect()).filter((rect) => rect.width > 0 && rect.height > 0);
-    if (!rects.length) return null;
-    const bounds = unionRect(rects);
-    if (!bounds) return null;
-    const docRect = doc.documentElement.getBoundingClientRect();
-    return elementRectToCrop(bounds, docRect);
+  function selectionExportPolicy() {
+    return {
+      excludeHidden: true,
+      excludeLocked: true,
+    };
   }
 
-  async function renderHtmlToCanvas(html, { fullWidth, fullHeight, crop, scale = 1 }) {
+  function resolveSelectionTargetsByUid({ selectedNodeUids = [], includeHidden = false, includeLocked = false } = {}) {
+    const uidList = Array.isArray(selectedNodeUids) ? selectedNodeUids.filter(Boolean) : [];
+    const uidSet = new Set(uidList);
+    const seedTargets = uidSet.size
+      ? Array.from(uidSet).map((uid) => getElementByUid(uid)).filter(Boolean)
+      : uniqueConnectedElements(selectedElements);
+    const targets = uniqueConnectedElements(seedTargets).filter((element) => isElement(element) && element.isConnected);
+    const filtered = [];
+    let skippedHidden = 0;
+    let skippedLocked = 0;
+    for (const element of targets) {
+      if (!includeHidden && isHiddenElement(element)) {
+        skippedHidden += 1;
+        continue;
+      }
+      if (!includeLocked && isLockedElement(element)) {
+        skippedLocked += 1;
+        continue;
+      }
+      filtered.push(element);
+    }
+    return {
+      requestedUids: uidList,
+      allTargets: targets,
+      targets: filtered,
+      skippedHidden,
+      skippedLocked,
+    };
+  }
+
+  function computeUnionBoundingBoxFromSelectedNodeUids({ selectedNodeUids = [], includeHidden = false, includeLocked = false } = {}) {
+    const resolved = resolveSelectionTargetsByUid({ selectedNodeUids, includeHidden, includeLocked });
+    const rects = resolved.targets
+      .map((element) => element.getBoundingClientRect())
+      .filter((rect) => rect.width > 0 && rect.height > 0);
+    const bounds = unionRect(rects);
+    return {
+      ...resolved,
+      rects,
+      bounds,
+    };
+  }
+
+  function resolveCropFromBoundingBox({ bounds, metrics, padding = 0 }) {
+    if (!bounds || !metrics) return null;
+    const safePadding = Math.max(0, Number.parseFloat(String(padding)) || 0);
+    const docRect = doc.documentElement.getBoundingClientRect();
+    const base = {
+      left: bounds.left - docRect.left,
+      top: bounds.top - docRect.top,
+      right: bounds.right - docRect.left,
+      bottom: bounds.bottom - docRect.top,
+    };
+    const expanded = {
+      left: base.left - safePadding,
+      top: base.top - safePadding,
+      right: base.right + safePadding,
+      bottom: base.bottom + safePadding,
+    };
+    const clamped = {
+      left: Math.max(0, expanded.left),
+      top: Math.max(0, expanded.top),
+      right: Math.min(metrics.fullWidth, expanded.right),
+      bottom: Math.min(metrics.fullHeight, expanded.bottom),
+    };
+    return {
+      x: Math.max(0, clamped.left),
+      y: Math.max(0, clamped.top),
+      width: Math.max(1, clamped.right - clamped.left),
+      height: Math.max(1, clamped.bottom - clamped.top),
+    };
+  }
+
+  async function renderHtmlToCanvas(html, { fullWidth, fullHeight, crop, scale = 1, background = 'transparent' }) {
     const parsed = new DOMParser().parseFromString(html, 'text/html');
     parsed.documentElement.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
     const serialized = new XMLSerializer().serializeToString(parsed.documentElement);
@@ -1974,6 +2043,10 @@ export function createFrameEditor({
     canvas.width = Math.max(1, Math.round(crop.width * scale));
     canvas.height = Math.max(1, Math.round(crop.height * scale));
     const context = canvas.getContext('2d');
+    if (background === 'opaque') {
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+    }
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     URL.revokeObjectURL(svgUrl);
     return canvas;
@@ -1989,7 +2062,7 @@ export function createFrameEditor({
     };
   }
 
-  async function renderExportBlob({ area = null, scale = 1, format = 'png', quality = 0.92, context = null } = {}) {
+  async function renderExportBlob({ area = null, scale = 1, format = 'png', quality = 0.92, background = 'transparent', context = null } = {}) {
     const renderContext = context || (await buildExportRenderContext());
     const resolvedArea = area || {
       x: renderContext.metrics.x,
@@ -2002,6 +2075,7 @@ export function createFrameEditor({
       fullHeight: renderContext.metrics.fullHeight,
       crop: resolvedArea,
       scale: normalizeExportScale(scale),
+      background,
     });
     const mime = format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : 'image/png';
     return await canvasToBlob(canvas, mime, mime === 'image/jpeg' ? quality : undefined);
@@ -2015,10 +2089,40 @@ export function createFrameEditor({
     return await renderExportBlob({ format: 'jpg', scale, quality });
   }
 
-  async function exportSelectionPngBlob(scale = 1.5) {
-    const crop = computeSelectionBoundingCrop();
-    if (!crop) throw new Error('먼저 요소를 선택해 주세요.');
-    return await renderExportBlob({ format: 'png', area: crop, scale });
+  async function exportSelectionPngBlob(scale = 1.5, options = {}) {
+    const policy = selectionExportPolicy();
+    const selectedNodeUids = uniqueConnectedElements(selectedElements).map((element) => element.dataset.nodeUid).filter(Boolean);
+    if (!selectedNodeUids.length) throw new Error('선택 PNG 정책: 선택 없음(빈 선택은 export하지 않습니다).');
+    const context = await buildExportRenderContext();
+    const resolvedBounds = computeUnionBoundingBoxFromSelectedNodeUids({
+      selectedNodeUids,
+      includeHidden: !policy.excludeHidden,
+      includeLocked: !policy.excludeLocked,
+    });
+    if (!resolvedBounds.targets.length) {
+      throw new Error(`선택 PNG 정책: 선택 ${resolvedBounds.allTargets.length}개가 모두 제외되었습니다. (숨김 제외 ${policy.excludeHidden ? 'ON' : 'OFF'}, 잠금 제외 ${policy.excludeLocked ? 'ON' : 'OFF'})`);
+    }
+    if (!resolvedBounds.bounds) throw new Error('선택 PNG 정책: 선택 요소의 유효 크기를 찾지 못했습니다.');
+    const padding = Math.max(0, Math.round(Number.parseFloat(String(options?.padding ?? 0)) || 0));
+    const crop = resolveCropFromBoundingBox({ bounds: resolvedBounds.bounds, metrics: context.metrics, padding });
+    const background = options?.background === 'opaque' ? 'opaque' : 'transparent';
+    const blob = await renderExportBlob({ format: 'png', area: crop, scale, background, context });
+    return {
+      blob,
+      meta: {
+        mode: resolvedBounds.targets.length > 1 ? 'multi-union' : 'single',
+        selectedNodeUids,
+        targetCount: resolvedBounds.targets.length,
+        crop,
+        scale: normalizeExportScale(scale),
+        policy: {
+          excludeHidden: policy.excludeHidden,
+          excludeLocked: policy.excludeLocked,
+          skippedHidden: resolvedBounds.skippedHidden,
+          skippedLocked: resolvedBounds.skippedLocked,
+        },
+      },
+    };
   }
 
   function collectSectionRects() {
@@ -2612,8 +2716,8 @@ export function createFrameEditor({
     async exportFullJpgBlob(scale = 1.5, quality = 0.92) {
       return await exportFullJpgBlob(scale, quality);
     },
-    async exportSelectionPngBlob(scale = 1.5) {
-      return await exportSelectionPngBlob(scale);
+    async exportSelectionPngBlob(scale = 1.5, options = {}) {
+      return await exportSelectionPngBlob(scale, options);
     },
     async exportSectionPngEntries(scale = 1.5) {
       return await exportSectionPngEntries(scale);
