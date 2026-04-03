@@ -2745,6 +2745,66 @@ function createFrameEditor({
     };
   }
 
+  function groupSelected() {
+    const targets = filterTopLevelSelection(selectedElements).filter((element) => !isLockedElement(element));
+    if (targets.length < 2) return { ok: false, message: '그룹은 2개 이상 선택해야 합니다.' };
+    const parent = targets[0]?.parentElement;
+    if (!parent || parent === doc.body || ['HTML', 'BODY'].includes(parent.tagName)) {
+      return { ok: false, message: '그룹을 만들 공통 부모를 찾지 못했습니다.' };
+    }
+    if (!targets.every((element) => element.parentElement === parent)) {
+      return { ok: false, message: '같은 부모 레벨의 요소만 그룹으로 묶을 수 있습니다.' };
+    }
+    const siblingOrder = Array.from(parent.children || []);
+    const orderedTargets = targets.slice().sort((a, b) => siblingOrder.indexOf(a) - siblingOrder.indexOf(b));
+    const group = doc.createElement('div');
+    group.dataset.nodeRole = 'group';
+    group.dataset.nodeUid = nextId('node');
+    group.dataset.groupLabel = `그룹 ${orderedTargets.length}`;
+    group.setAttribute('aria-label', group.dataset.groupLabel);
+    parent.insertBefore(group, orderedTargets[0]);
+    for (const target of orderedTargets) group.appendChild(target);
+    group.dataset.editorModified = '1';
+    modifiedSlots.add(group.dataset.nodeUid);
+    redetect({ preserveSelectionUids: [group.dataset.nodeUid] });
+    emitMutation('group-selection');
+    return { ok: true, message: `선택 요소 ${orderedTargets.length}개를 그룹으로 묶었습니다.` };
+  }
+
+  function ungroupSelected() {
+    const targets = filterTopLevelSelection(selectedElements);
+    if (!targets.length) return { ok: false, message: '먼저 그룹(또는 그룹 안 요소)을 선택해 주세요.' };
+    const groups = [];
+    const seen = new Set();
+    const pushGroup = (group) => {
+      if (!isGroupElement(group) || !group.isConnected || isLockedElement(group)) return;
+      const uid = group.dataset.nodeUid || nextId('node');
+      group.dataset.nodeUid = uid;
+      if (seen.has(uid)) return;
+      seen.add(uid);
+      groups.push(group);
+    };
+    for (const target of targets) {
+      if (isGroupElement(target)) pushGroup(target);
+      else pushGroup(target.parentElement);
+    }
+    if (!groups.length) return { ok: false, message: '해제할 그룹을 찾지 못했습니다.' };
+    const keepSelectionUids = [];
+    for (const group of groups) {
+      const parent = group.parentElement;
+      if (!parent) continue;
+      const children = Array.from(group.children || []).filter((child) => isElement(child));
+      for (const child of children) {
+        parent.insertBefore(child, group);
+        if (child.dataset.nodeUid) keepSelectionUids.push(child.dataset.nodeUid);
+      }
+      group.remove();
+    }
+    redetect({ preserveSelectionUids: keepSelectionUids });
+    emitMutation('ungroup-selection');
+    return { ok: true, message: `그룹 ${groups.length}개를 해제했습니다.` };
+  }
+
   function deleteSelected() {
     return deleteSelection({
       selectedElements: () => uniqueConnectedElements(selectedElements),
@@ -3862,6 +3922,8 @@ function createFrameEditor({
   function executeCommand(command, payload = {}) {
     if (command === 'duplicate') return duplicateSelected();
     if (command === 'delete') return deleteSelected();
+    if (command === 'group-selection') return groupSelected();
+    if (command === 'ungroup-selection') return ungroupSelected();
     if (command === 'nudge-selection') return nudgeSelectedElements(payload.dx || 0, payload.dy || 0);
     if (command === 'undo' || command === 'redo' || command === 'save-edited') {
       onShortcut(command);
@@ -3892,6 +3954,11 @@ function createFrameEditor({
       if (key === 'd') {
         event.preventDefault();
         onStatus(executeCommand('duplicate').message);
+        return;
+      }
+      if (key === 'g') {
+        event.preventDefault();
+        onStatus(executeCommand(event.shiftKey ? 'ungroup-selection' : 'group-selection').message);
         return;
       }
     }
@@ -4376,8 +4443,14 @@ let currentCodeSource = 'edited';
 let codeEditorDirty = false;
 let geometryCoordMode = 'relative';
 let currentSaveFormat = 'linked';
+let currentWorkflowStep = 'load';
 let lastSaveConversion = null;
 const zoomState = { mode: 'fit', value: 1 };
+const WORKFLOW_STEP_GUIDES = Object.freeze({
+  load: 'HTML 파일이나 폴더를 먼저 불러오세요.',
+  edit: '요소를 클릭한 뒤 드래그하세요.',
+  save: '결과를 확인한 뒤 저장/출력을 실행하세요.',
+});
 const BOOT_LOCAL_POLICY = Object.freeze({
   requiresStartupFetch: false,
   requiresFileSystemAccessApi: false,
@@ -4479,6 +4552,9 @@ const elements = {
   toggleLeftSidebarButton: document.getElementById('toggleLeftSidebarButton'),
   toggleRightSidebarButton: document.getElementById('toggleRightSidebarButton'),
   focusModeButton: document.getElementById('focusModeButton'),
+  workflowGuideLine: document.getElementById('workflowGuideLine'),
+  workflowStepButtons: Array.from(document.querySelectorAll('[data-workflow-step]')),
+  workflowPanels: Array.from(document.querySelectorAll('[data-workflow-panel]')),
   zoomOutButton: document.getElementById('zoomOutButton'),
   zoomInButton: document.getElementById('zoomInButton'),
   zoomResetButton: document.getElementById('zoomResetButton'),
@@ -4513,6 +4589,49 @@ const elements = {
   textAlignButtons: Array.from(document.querySelectorAll('[data-text-align]')),
   canvasActionButtons: Array.from(document.querySelectorAll('[data-canvas-action]')),
 };
+
+function evaluateWorkflowStepReadiness(step, state) {
+  const hasProject = !!state?.project;
+  const hasEditor = !!activeEditor;
+  const selectionCount = Number(state?.editorMeta?.selectionCount || 0);
+  if (step === 'edit' && !hasProject) {
+    return { ok: false, message: '[단계 안내] 2) 편집으로 가기 전, 1) 불러오기에서 HTML/폴더를 먼저 열어 주세요.' };
+  }
+  if (step === 'save' && (!hasProject || !hasEditor)) {
+    return { ok: false, message: '[단계 안내] 3) 저장/출력 전, 1) 불러오기와 2) 편집 준비가 필요합니다.' };
+  }
+  if (step === 'save' && selectionCount < 1) {
+    return { ok: true, message: '[단계 안내] 선택 요소가 없습니다. 전체 저장/출력은 가능하며, 선택 PNG는 요소를 선택한 뒤 사용하세요.' };
+  }
+  return { ok: true, message: '' };
+}
+
+function syncWorkflowUi(state, { announce = false } = {}) {
+  for (const button of elements.workflowStepButtons) {
+    const active = button.dataset.workflowStep === currentWorkflowStep;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+  }
+  for (const panel of elements.workflowPanels) {
+    const scope = String(panel.dataset.workflowPanel || '').trim();
+    const steps = scope.split(/\s+/).filter(Boolean);
+    const visible = steps.length < 1 || steps.includes(currentWorkflowStep);
+    panel.classList.toggle('is-hidden', !visible);
+  }
+  if (elements.workflowGuideLine) {
+    elements.workflowGuideLine.textContent = WORKFLOW_STEP_GUIDES[currentWorkflowStep] || WORKFLOW_STEP_GUIDES.load;
+  }
+  if (announce) {
+    const check = evaluateWorkflowStepReadiness(currentWorkflowStep, state);
+    if (check.message) setStatus(check.message);
+  }
+}
+
+function setWorkflowStep(step) {
+  const normalized = step === 'edit' || step === 'save' ? step : 'load';
+  currentWorkflowStep = normalized;
+  syncWorkflowUi(store.getState(), { announce: true });
+}
 
 function projectBaseName(project) {
   return sanitizeFilename((project?.sourceName || 'detail-page').replace(/\.html?$/i, '') || 'detail-page');
@@ -5053,6 +5172,7 @@ function renderShell(state) {
   syncExportPresetUi();
   syncSaveFormatUi();
   syncWorkspaceButtons();
+  syncWorkflowUi(state);
   applyPreviewZoom();
   refreshHistoryButtons();
 }
@@ -5081,38 +5201,8 @@ function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
   const fallback = {
     duplicate: () => activeEditor.duplicateSelected(),
     delete: () => activeEditor.deleteSelected(),
-  };
-  const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
-  setStatus(result.message);
-  if (refresh && (store.getState().currentView === 'edited' || store.getState().currentView === 'report')) refreshComputedViews(store.getState());
-  return result;
-}
-
-function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
-  if (!activeEditor) {
-    setStatus('먼저 미리보기를 로드해 주세요.');
-    return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
-  }
-  const fallback = {
-    duplicate: () => activeEditor.duplicateSelected(),
-    delete: () => activeEditor.deleteSelected(),
     'group-selection': () => activeEditor.groupSelected?.() || { ok: false, message: 'group-selection 명령을 지원하지 않습니다.' },
     'ungroup-selection': () => activeEditor.ungroupSelected?.() || { ok: false, message: 'ungroup-selection 명령을 지원하지 않습니다.' },
-  };
-  const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
-  setStatus(result.message);
-  if (refresh && (store.getState().currentView === 'edited' || store.getState().currentView === 'report')) refreshComputedViews(store.getState());
-  return result;
-}
-
-function executeEditorCommand(command, payload = {}, { refresh = true } = {}) {
-  if (!activeEditor) {
-    setStatus('먼저 미리보기를 로드해 주세요.');
-    return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
-  }
-  const fallback = {
-    duplicate: () => activeEditor.duplicateSelected(),
-    delete: () => activeEditor.deleteSelected(),
   };
   const result = activeEditor.executeCommand ? activeEditor.executeCommand(command, payload) : (fallback[command]?.() || { ok: false, message: `지원하지 않는 명령: ${command}` });
   setStatus(result.message);
@@ -5515,9 +5605,13 @@ if (bootEnvironmentReport.errorCount || bootEnvironmentReport.warningCount) {
   setStatus(`환경 점검: 오류 ${bootEnvironmentReport.errorCount}개 · 경고 ${bootEnvironmentReport.warningCount}개`);
 }
 renderEmptyPreview();
+syncWorkflowUi(store.getState());
 
 for (const button of elements.viewButtons) button.addEventListener('click', () => setView(button.dataset.view));
 for (const button of elements.selectionModeButtons) button.addEventListener('click', () => setSelectionMode(button.dataset.selectionMode));
+for (const button of elements.workflowStepButtons) {
+  button.addEventListener('click', () => setWorkflowStep(button.dataset.workflowStep));
+}
 for (const button of elements.presetButtons) {
   button.addEventListener('click', () => {
     if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
@@ -5589,6 +5683,8 @@ elements.textEditButton.addEventListener('click', () => {
 });
 elements.duplicateButton?.addEventListener('click', () => { executeEditorCommand('duplicate'); });
 elements.deleteButton?.addEventListener('click', () => { executeEditorCommand('delete'); });
+elements.groupButton?.addEventListener('click', () => { executeEditorCommand('group-selection'); });
+elements.ungroupButton?.addEventListener('click', () => { executeEditorCommand('ungroup-selection'); });
 elements.addTextButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.addTextElement();

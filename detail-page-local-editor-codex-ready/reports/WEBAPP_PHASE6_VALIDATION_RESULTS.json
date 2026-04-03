@@ -2,10 +2,10 @@
   "summary": {
     "ok": false,
     "check_count": 166,
-    "passed": 159,
-    "failed": 7,
-    "bundle_bytes": 304910,
-    "bundle_sha256": "5fd287bce7eafea568ba0c0d92a0b227b09bdd71353a4341f9ad9d771623c8ee",
+    "passed": 158,
+    "failed": 8,
+    "bundle_bytes": 323709,
+    "bundle_sha256": "f7648a9daf350179abbd673bd4bd481ac732a93d99795e6b4bf5ba716fccba24",
     "browser_smoke_status": "unavailable",
     "failure_type": "dependency_missing"
   },
@@ -637,7 +637,7 @@
     },
     {
       "name": "frame_selection_uses_bbox_crop",
-      "ok": true,
+      "ok": false,
       "detail": "selection PNG should crop by bounding box"
     },
     {
