@@ -4711,6 +4711,7 @@ let currentWorkflowStep = 'load';
 let lastSaveConversion = null;
 let advancedSettingsDirty = false;
 let lastFocusedBeforeShortcutHelp = null;
+let lastFocusedBeforeDownloadModal = null;
 const zoomState = { mode: 'fit', value: 1 };
 const viewFeatureFlags = {
   snap: true,
@@ -4740,7 +4741,7 @@ const BEGINNER_TUTORIAL_STEPS = Object.freeze([
   },
   {
     title: '3) 결과 저장',
-    body: '완료하면 상단 [문서 저장] 또는 [PNG] 버튼으로 결과를 바로 내보내세요.',
+    body: '완료하면 상단 [저장/출력 열기] 버튼으로 결과를 바로 내보내세요.',
   },
 ]);
 let isBeginnerMode = false;
@@ -4783,28 +4784,32 @@ const elements = {
   undoButton: document.getElementById('undoButton'),
   redoButton: document.getElementById('redoButton'),
   restoreAutosaveButton: document.getElementById('restoreAutosaveButton'),
-  downloadEditedButton: document.getElementById('downloadEditedButton'),
+  openDownloadModalButton: document.getElementById('openDownloadModalButton'),
+  downloadModal: document.getElementById('downloadModal'),
+  closeDownloadModalButton: document.getElementById('closeDownloadModalButton'),
+  downloadChoiceSelect: document.getElementById('downloadChoiceSelect'),
+  runDownloadChoiceButton: document.getElementById('runDownloadChoiceButton'),
+  downloadPresetButtons: Array.from(document.querySelectorAll('[data-download-preset]')),
   saveFormatSelect: document.getElementById('saveFormatSelect'),
   saveFormatStatus: document.getElementById('saveFormatStatus'),
   saveFormatGuide: document.getElementById('saveFormatGuide'),
   saveFormatPreview: document.getElementById('saveFormatPreview'),
   saveMetaSummary: document.getElementById('saveMetaSummary'),
+  downloadEditedButton: document.getElementById('downloadEditedButton'),
   downloadNormalizedButton: document.getElementById('downloadNormalizedButton'),
   downloadLinkedZipButton: document.getElementById('downloadLinkedZipButton'),
   exportPngButton: document.getElementById('exportPngButton'),
   exportJpgButton: document.getElementById('exportJpgButton'),
   exportSectionsZipButton: document.getElementById('exportSectionsZipButton'),
   exportSelectionPngButton: document.getElementById('exportSelectionPngButton'),
+  exportPresetPackageButton: document.getElementById('exportPresetPackageButton'),
   selectionExportPaddingInput: document.getElementById('selectionExportPaddingInput'),
   selectionExportBackgroundSelect: document.getElementById('selectionExportBackgroundSelect'),
   exportPresetSelect: document.getElementById('exportPresetSelect'),
   exportScaleSelectMain: document.getElementById('exportScaleSelectMain'),
-  exportScaleSelectSelection: document.getElementById('exportScaleSelectSelection'),
   exportScaleSelectControls: Array.from(document.querySelectorAll('[data-export-scale-control]')),
   exportJpgQualityInputMain: document.getElementById('exportJpgQualityInputMain'),
-  exportJpgQualityInputSelection: document.getElementById('exportJpgQualityInputSelection'),
   exportJpgQualityInputs: Array.from(document.querySelectorAll('[data-export-jpg-quality-control]')),
-  exportPresetPackageButton: document.getElementById('exportPresetPackageButton'),
   downloadReportButton: document.getElementById('downloadReportButton'),
   htmlFileInput: document.getElementById('htmlFileInput'),
   folderInput: document.getElementById('folderInput'),
@@ -5090,6 +5095,43 @@ function toggleShortcutHelp(forceOpen = null) {
     lastFocusedBeforeShortcutHelp.focus();
   }
   return shouldOpen;
+}
+
+function getDownloadModalFocusable() {
+  if (!elements.downloadModal) return [];
+  return Array.from(elements.downloadModal.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])'))
+    .filter((node) => node instanceof HTMLElement && !node.disabled && !node.hidden && node.tabIndex >= 0);
+}
+
+function toggleDownloadModal(forceOpen = null) {
+  const overlay = elements.downloadModal;
+  if (!overlay) return false;
+  const shouldOpen = forceOpen == null ? overlay.hidden : !!forceOpen;
+  overlay.hidden = !shouldOpen;
+  if (shouldOpen) {
+    lastFocusedBeforeDownloadModal = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    elements.downloadChoiceSelect?.focus();
+    setStatus('저장/출력 모달을 열었습니다.');
+  } else if (lastFocusedBeforeDownloadModal && typeof lastFocusedBeforeDownloadModal.focus === 'function') {
+    lastFocusedBeforeDownloadModal.focus();
+  }
+  return shouldOpen;
+}
+
+function handleDownloadModalFocusTrap(event) {
+  if (!elements.downloadModal || elements.downloadModal.hidden || event.key !== 'Tab') return;
+  const focusable = getDownloadModalFocusable();
+  if (focusable.length < 1) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+  if (event.shiftKey && active === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 function applyShortcutTooltips() {
@@ -5434,7 +5476,7 @@ function syncExportPresetUi({ forceScale = false } = {}) {
     syncMirroredControls(elements.exportScaleSelectControls, normalizedScale);
     markAdvancedSettingsDirty(true);
   }
-  if (elements.exportPresetPackageButton) elements.exportPresetPackageButton.title = preset.description || '';
+  if (elements.exportPresetSelect) elements.exportPresetSelect.title = preset.description || '';
 }
 
 function setSelectionMode(nextMode) {
@@ -5850,14 +5892,22 @@ function renderShell(state) {
     const needed = requiresMany ? 2 : 1;
     button.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < needed;
   }
-  elements.downloadEditedButton.disabled = !hasProject;
-  elements.downloadNormalizedButton.disabled = !hasProject;
-  elements.downloadLinkedZipButton.disabled = !hasEditor;
-  elements.exportPngButton.disabled = !hasEditor;
-  elements.exportJpgButton.disabled = !hasEditor;
-  elements.exportSectionsZipButton.disabled = !hasEditor;
-  elements.exportSelectionPngButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
-  elements.exportPresetPackageButton.disabled = !hasEditor;
+  if (elements.openDownloadModalButton) elements.openDownloadModalButton.disabled = !hasProject;
+  if (elements.downloadEditedButton) elements.downloadEditedButton.disabled = !hasProject;
+  if (elements.downloadNormalizedButton) elements.downloadNormalizedButton.disabled = !hasProject;
+  if (elements.downloadLinkedZipButton) elements.downloadLinkedZipButton.disabled = !hasEditor;
+  if (elements.exportPngButton) elements.exportPngButton.disabled = !hasEditor;
+  if (elements.exportJpgButton) elements.exportJpgButton.disabled = !hasEditor;
+  if (elements.exportSectionsZipButton) elements.exportSectionsZipButton.disabled = !hasEditor;
+  if (elements.exportSelectionPngButton) elements.exportSelectionPngButton.disabled = !hasEditor || (state.editorMeta?.selectionCount || 0) < 1;
+  if (elements.exportPresetPackageButton) elements.exportPresetPackageButton.disabled = !hasEditor;
+  if (elements.runDownloadChoiceButton) {
+    const choice = elements.downloadChoiceSelect?.value || 'save-edited';
+    const needsEditor = choice !== 'save-edited' && choice !== 'download-normalized-html';
+    const needsSelection = choice === 'export-selection-png';
+    const canRun = hasProject && (!needsEditor || hasEditor) && (!needsSelection || (state.editorMeta?.selectionCount || 0) > 0);
+    elements.runDownloadChoiceButton.disabled = !canRun;
+  }
   elements.downloadReportButton.disabled = !hasProject;
   if (elements.applyCodeToEditorButton) elements.applyCodeToEditorButton.disabled = !hasProject || currentCodeSource === 'report';
   if (elements.reloadCodeFromEditorButton) elements.reloadCodeFromEditorButton.disabled = !hasProject;
@@ -6028,6 +6078,18 @@ function applyPastedHtml() {
   } catch (error) {
     setStatusWithError('붙여넣기 적용 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'APPLY_PASTED_HTML_ERROR' });
   }
+}
+
+async function runDownloadByChoice(choice) {
+  if (choice === 'save-edited') return downloadEditedHtml();
+  if (choice === 'export-full-png') return exportFullPng();
+  if (choice === 'export-full-jpg') return exportFullJpg();
+  if (choice === 'export-selection-png') return exportSelectionPng();
+  if (choice === 'export-sections-zip') return exportSectionsZip();
+  if (choice === 'download-normalized-html') return downloadNormalizedHtml();
+  if (choice === 'download-linked-zip') return downloadLinkedZip();
+  if (choice === 'download-export-preset-package') return downloadExportPresetPackage();
+  throw new Error(`지원하지 않는 저장/출력 선택입니다: ${choice}`);
 }
 
 function downloadNormalizedHtml() {
@@ -6489,19 +6551,39 @@ elements.clearTextStyleButton.addEventListener('click', () => applyTextStyleFrom
 elements.undoButton.addEventListener('click', undoHistory);
 elements.redoButton.addEventListener('click', redoHistory);
 elements.restoreAutosaveButton.addEventListener('click', restoreAutosave);
-elements.downloadEditedButton.addEventListener('click', () => { downloadEditedHtml().catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`)); });
-elements.downloadNormalizedButton.addEventListener('click', downloadNormalizedHtml);
-elements.downloadLinkedZipButton.addEventListener('click', () => { downloadLinkedZip().catch((error) => setStatus(`ZIP 저장 중 오류: ${error?.message || error}`)); });
+elements.openDownloadModalButton?.addEventListener('click', () => toggleDownloadModal(true));
+elements.closeDownloadModalButton?.addEventListener('click', () => toggleDownloadModal(false));
+elements.downloadChoiceSelect?.addEventListener('change', () => renderShell(store.getState()));
+elements.runDownloadChoiceButton?.addEventListener('click', async () => {
+  const choice = elements.downloadChoiceSelect?.value || 'save-edited';
+  try {
+    await runDownloadByChoice(choice);
+    toggleDownloadModal(false);
+  } catch (error) {
+    setStatus(`저장/출력 중 오류: ${error?.message || error}`);
+  }
+});
+elements.downloadEditedButton?.addEventListener('click', () => { runDownloadByChoice('save-edited').catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`)); });
+elements.downloadNormalizedButton?.addEventListener('click', () => { runDownloadByChoice('download-normalized-html').catch((error) => setStatus(`정규화 HTML 저장 중 오류: ${error?.message || error}`)); });
+elements.downloadLinkedZipButton?.addEventListener('click', () => { runDownloadByChoice('download-linked-zip').catch((error) => setStatus(`ZIP 저장 중 오류: ${error?.message || error}`)); });
+elements.exportPngButton?.addEventListener('click', () => { runDownloadByChoice('export-full-png').catch((error) => setStatus(`PNG 저장 중 오류: ${error?.message || error}`)); });
+elements.exportJpgButton?.addEventListener('click', () => { runDownloadByChoice('export-full-jpg').catch((error) => setStatus(`JPG 저장 중 오류: ${error?.message || error}`)); });
+elements.exportSectionsZipButton?.addEventListener('click', () => { runDownloadByChoice('export-sections-zip').catch((error) => setStatus(`섹션 PNG ZIP 저장 중 오류: ${error?.message || error}`)); });
+elements.exportSelectionPngButton?.addEventListener('click', () => { runDownloadByChoice('export-selection-png').catch((error) => setStatus(`선택 PNG 저장 중 오류: ${error?.message || error}`)); });
+elements.exportPresetPackageButton?.addEventListener('click', () => { runDownloadByChoice('download-export-preset-package').catch((error) => setStatus(`Preset 패키지 저장 중 오류: ${error?.message || error}`)); });
+for (const button of elements.downloadPresetButtons) {
+  button?.addEventListener('click', () => {
+    const presetId = button.dataset.downloadPreset || 'market';
+    currentExportPresetId = presetId;
+    syncExportPresetUi({ forceScale: true });
+    setStatus(`Export preset: ${currentExportPreset().label} (배율은 고급값 적용 버튼으로 반영)`);
+  });
+}
 elements.saveFormatSelect?.addEventListener('change', () => {
   currentSaveFormat = normalizeSaveFormat(elements.saveFormatSelect.value || 'linked');
   syncSaveFormatUi();
   setStatus(`저장 포맷을 ${currentSaveFormat}로 변경했습니다.`);
 });
-elements.exportPngButton.addEventListener('click', () => { exportFullPng().catch((error) => setStatus(`PNG 저장 중 오류: ${error?.message || error}`)); });
-elements.exportJpgButton?.addEventListener('click', () => { exportFullJpg().catch((error) => setStatus(`JPG 저장 중 오류: ${error?.message || error}`)); });
-elements.exportSectionsZipButton.addEventListener('click', () => { exportSectionsZip().catch((error) => setStatus(`섹션 PNG ZIP 저장 중 오류: ${error?.message || error}`)); });
-elements.exportSelectionPngButton?.addEventListener('click', () => { exportSelectionPng().catch((error) => setStatus(`선택 PNG 저장 중 오류: ${error?.message || error}`)); });
-elements.exportPresetPackageButton.addEventListener('click', () => { downloadExportPresetPackage().catch((error) => setStatus(`Preset 패키지 저장 중 오류: ${error?.message || error}`)); });
 elements.downloadReportButton.addEventListener('click', downloadReportJson);
 elements.exportPresetSelect.addEventListener('change', () => {
   currentExportPresetId = elements.exportPresetSelect.value || 'default';
@@ -6641,6 +6723,14 @@ elements.basicAttributeSection?.addEventListener('toggle', persistPanelLayoutSta
 elements.advancedAttributeSection?.addEventListener('toggle', persistPanelLayoutState);
 
 window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !elements.downloadModal?.hidden) {
+    event.preventDefault();
+    toggleDownloadModal(false);
+    return;
+  }
+  handleDownloadModalFocusTrap(event);
+  if (!elements.downloadModal?.hidden) return;
+
   if (event.key === 'Escape' && !elements.shortcutHelpOverlay?.hidden) {
     event.preventDefault();
     toggleShortcutHelp(false);
@@ -6760,6 +6850,9 @@ elements.shortcutHelpOverlay?.addEventListener('click', (event) => {
   if (event.target === elements.shortcutHelpOverlay) toggleShortcutHelp(false);
 });
 elements.shortcutHelpCloseButton?.addEventListener('click', () => toggleShortcutHelp(false));
+elements.downloadModal?.addEventListener('click', (event) => {
+  if (event.target === elements.downloadModal) toggleDownloadModal(false);
+});
 elements.beginnerModeToggle?.addEventListener('click', () => setBeginnerMode(!isBeginnerMode));
 elements.beginnerTutorialPrevButton?.addEventListener('click', () => {
   beginnerTutorialStepIndex = Math.max(0, beginnerTutorialStepIndex - 1);
