@@ -378,15 +378,33 @@ function removeEditorCssClasses(value) {
     .join(' ');
 }
 function parseSrcsetCandidates(value) {
-  return String(value || '')
-    .split(',')
-    .map((raw) => raw.trim())
-    .filter(Boolean)
-    .map((item) => {
-      const tokens = item.split(/\s+/);
-      if (tokens.length <= 1) return { url: item, descriptor: '' };
-      return { url: tokens.slice(0, -1).join(' '), descriptor: tokens.at(-1) };
-    });
+  const input = String(value || '').trim();
+  if (!input) return [];
+  const chunks = [];
+  let current = '';
+  let sawWhitespace = false;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    if (char === ',') {
+      const startsWithData = current.trimStart().toLowerCase().startsWith('data:');
+      if (!sawWhitespace && startsWithData) {
+        current += char;
+        continue;
+      }
+      if (current.trim()) chunks.push(current.trim());
+      current = '';
+      sawWhitespace = false;
+      continue;
+    }
+    current += char;
+    if (!sawWhitespace && /\s/.test(char)) sawWhitespace = true;
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.map((item) => {
+    const tokens = item.split(/\s+/);
+    if (tokens.length <= 1) return { url: item, descriptor: '' };
+    return { url: tokens.slice(0, -1).join(' '), descriptor: tokens.at(-1) };
+  });
 }
 function serializeSrcsetCandidates(items) {
   return (items || [])
@@ -909,17 +927,35 @@ function mapCssUrls(text, mapper) {
 }
 
 function parseSrcsetCandidates(value) {
-  return String(value || '')
-    .split(',')
-    .map((raw) => raw.trim())
-    .filter(Boolean)
-    .map((item) => {
-      const tokens = item.split(/\s+/);
-      if (tokens.length <= 1) return { url: item, descriptor: '' };
-      const descriptor = tokens.at(-1);
-      const url = tokens.slice(0, -1).join(' ');
-      return { url, descriptor };
-    });
+  const input = String(value || '').trim();
+  if (!input) return [];
+  const chunks = [];
+  let current = '';
+  let sawWhitespace = false;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    if (char === ',') {
+      const startsWithData = current.trimStart().toLowerCase().startsWith('data:');
+      if (!sawWhitespace && startsWithData) {
+        current += char;
+        continue;
+      }
+      if (current.trim()) chunks.push(current.trim());
+      current = '';
+      sawWhitespace = false;
+      continue;
+    }
+    current += char;
+    if (!sawWhitespace && /\s/.test(char)) sawWhitespace = true;
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.map((item) => {
+    const tokens = item.split(/\s+/);
+    if (tokens.length <= 1) return { url: item, descriptor: '' };
+    const descriptor = tokens.at(-1);
+    const url = tokens.slice(0, -1).join(' ');
+    return { url, descriptor };
+  });
 }
 
 function serializeSrcsetCandidates(items) {
@@ -952,6 +988,17 @@ function removeScripts(doc, issues) {
   for (const script of scripts) script.remove();
   if (scripts.length) {
     issues.push(createIssue('warning', 'SCRIPT_REMOVED', `미리보기 안전성을 위해 script ${scripts.length}개를 제거했습니다.`));
+  }
+  let inlineHandlerCount = 0;
+  for (const element of Array.from(doc.querySelectorAll('*'))) {
+    for (const attr of Array.from(element.attributes || [])) {
+      if (!/^on/i.test(attr.name)) continue;
+      element.removeAttribute(attr.name);
+      inlineHandlerCount += 1;
+    }
+  }
+  if (inlineHandlerCount) {
+    issues.push(createIssue('warning', 'INLINE_HANDLER_REMOVED', `미리보기/재오픈 안전성을 위해 inline 이벤트 핸들러 ${inlineHandlerCount}개를 제거했습니다.`));
   }
   return scripts.length;
 }
@@ -1205,6 +1252,7 @@ function createProjectStore() {
     project: null,
     editorMeta: null,
     statusText: '대기 중',
+    lastError: '',
     currentView: 'preview',
     selectionMode: 'smart',
   };
@@ -1225,6 +1273,7 @@ function createProjectStore() {
       project: state.project,
       editorMeta: state.editorMeta,
       statusText: state.statusText,
+      lastError: state.lastError,
       currentView: state.currentView,
       selectionMode: state.selectionMode,
     };
@@ -1256,6 +1305,11 @@ function createProjectStore() {
     notify();
   }
 
+  function setLastError(text) {
+    state.lastError = String(text || '');
+    notify();
+  }
+
   function setView(view) {
     state.currentView = view || 'preview';
     notify();
@@ -1276,7 +1330,7 @@ function createProjectStore() {
     return () => listeners.delete(listener);
   }
 
-  return { getState, setProject, updateProject, setEditorMeta, setStatus, setView, setSelectionMode, subscribe };
+  return { getState, setProject, updateProject, setEditorMeta, setStatus, setLastError, setView, setSelectionMode, subscribe };
 }
 
 
@@ -4211,7 +4265,11 @@ function createFrameEditor({
     if (!slot || isLockedElement(slot)) return;
     event.preventDefault();
     clearHover();
-    await applyFilesStartingAtSlot(slot, Array.from(event.dataTransfer.files));
+    try {
+      await applyFilesStartingAtSlot(slot, Array.from(event.dataTransfer.files));
+    } catch (error) {
+      onStatus(`드롭 이미지 적용 중 오류: ${error?.message || error}`);
+    }
   }
 
   function handleDragLeave() {
@@ -4462,7 +4520,7 @@ function renderSlotList(container, editorMeta) {
         <span class="slot-badge" data-kind="${escapeHtml(slot.type)}">${escapeHtml(slot.type)}</span>
       </div>
       <div class="slot-list-item__meta">score ${escapeHtml(String(slot.score ?? '-'))} · ${escapeHtml(truncate(slot.groupKey || '', 48))}</div>
-    </div>
+    </button>
   `).join('');
 }
 function renderLayerTree(container, editorMeta, filterText = '') {
@@ -4650,6 +4708,7 @@ let geometryCoordMode = 'relative';
 let currentSaveFormat = 'linked';
 let currentWorkflowStep = 'load';
 let lastSaveConversion = null;
+let importRequestSequence = 0;
 const zoomState = { mode: 'fit', value: 1 };
 const WORKFLOW_STEP_GUIDES = Object.freeze({
   load: 'HTML 파일이나 폴더를 먼저 불러오세요.',
@@ -4986,6 +5045,20 @@ function setStatus(text) {
   store.setStatus(text);
 }
 
+function extractErrorMessage(error) {
+  if (!error) return '';
+  if (typeof error.message === 'string' && error.message.trim()) return error.message.trim();
+  if (typeof error === 'string' && error.trim()) return error.trim();
+  return '';
+}
+
+function setStatusWithError(prefix, error, { logTag = 'APP_ERROR' } = {}) {
+  const detail = extractErrorMessage(error);
+  if (logTag) console.error(`[${logTag}]`, error);
+  store.setLastError(detail);
+  setStatus(detail ? `${prefix} (${detail})` : prefix);
+}
+
 function isTypingInputTarget(target) {
   if (!target || !(target instanceof Element)) return false;
   if (target.closest('[contenteditable="true"]')) return true;
@@ -5040,6 +5113,9 @@ function evaluateLocalBootEnvironment() {
   }
   if (typeof URL?.createObjectURL !== 'function') {
     add('error', 'MISSING_BLOB_URL', '이 브라우저는 Blob URL 미리보기를 지원하지 않습니다.');
+  }
+  if (typeof window.DOMParser !== 'function') {
+    add('error', 'MISSING_DOM_PARSER', '이 브라우저는 DOMParser를 지원하지 않아 HTML 파싱 기능이 제한됩니다.');
   }
   if (!('localStorage' in window)) {
     add('warning', 'NO_LOCAL_STORAGE', 'localStorage를 사용할 수 없어 autosave 복구 기능이 제한될 수 있습니다.');
@@ -5697,7 +5773,8 @@ function renderShell(state) {
   syncBatchSummary(state.editorMeta);
   syncGeometryControls();
   syncCanvasDirectUi(state.editorMeta);
-  elements.statusText.textContent = state.statusText;
+  const errorSuffix = state.lastError ? ` · 최근 오류: ${state.lastError}` : '';
+  elements.statusText.textContent = `${state.statusText}${errorSuffix}`;
   refreshComputedViews(state);
 
   const hasProject = !!state.project;
@@ -5815,66 +5892,88 @@ function mountProject(project, { snapshot = null, preserveHistory = false, force
 }
 
 function loadFixture(fixtureId) {
-  const fixtureMeta = getFixtureMeta(fixtureId);
-  const html = FIXTURE_SOURCE_MAP[fixtureId] || '';
-  if (!fixtureMeta || !html) {
-    setStatus(`Fixture ${fixtureId}를 찾지 못했습니다.`);
-    return;
+  try {
+    const fixtureMeta = getFixtureMeta(fixtureId);
+    const html = FIXTURE_SOURCE_MAP[fixtureId] || '';
+    if (!fixtureMeta || !html) {
+      setStatus(`Fixture ${fixtureId}를 찾지 못했습니다.`);
+      return;
+    }
+    pendingMountOptions = { snapshot: null, preserveHistory: false };
+    const project = normalizeProject({ html, sourceName: fixtureMeta.name, sourceType: 'fixture', fixtureMeta });
+    store.setProject(project);
+    setStatus(`Fixture ${fixtureId}를 불러왔습니다. 슬롯 후보 ${project.summary.totalSlotCandidates}개, 자산 ${project.summary.assetsTotal}개입니다.`);
+  } catch (error) {
+    setStatusWithError('초기 로딩 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'LOAD_FIXTURE_ERROR' });
   }
-  pendingMountOptions = { snapshot: null, preserveHistory: false };
-  const project = normalizeProject({ html, sourceName: fixtureMeta.name, sourceType: 'fixture', fixtureMeta });
-  store.setProject(project);
-  setStatus(`Fixture ${fixtureId}를 불러왔습니다. 슬롯 후보 ${project.summary.totalSlotCandidates}개, 자산 ${project.summary.assetsTotal}개입니다.`);
 }
 
-async function handleHtmlFileImport(file) {
+async function openHtmlFile(file) {
   if (!file) return;
-  const html = await file.text();
-  const fileIndex = createImportFileIndex([file], 'html-file');
-  pendingMountOptions = { snapshot: null, preserveHistory: false };
-  const project = normalizeProject({ html, sourceName: file.name, sourceType: 'html-file', fileIndex, htmlEntryPath: file.name });
-  store.setProject(project);
-  setStatus(`HTML 파일 ${file.name}을 불러왔습니다. 미해결 자산 ${project.summary.assetsUnresolved}개입니다.`);
+  const requestId = importRequestSequence += 1;
+  try {
+    const html = await file.text();
+    if (requestId !== importRequestSequence) return;
+    const fileIndex = createImportFileIndex([file], 'html-file');
+    pendingMountOptions = { snapshot: null, preserveHistory: false };
+    const project = normalizeProject({ html, sourceName: file.name, sourceType: 'html-file', fileIndex, htmlEntryPath: file.name });
+    if (requestId !== importRequestSequence) return;
+    store.setProject(project);
+    setStatus(`HTML 파일 ${file.name}을 불러왔습니다. 미해결 자산 ${project.summary.assetsUnresolved}개입니다.`);
+  } catch (error) {
+    setStatusWithError('HTML 파일 열기 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'OPEN_HTML_FILE_ERROR' });
+  }
 }
 
 async function handleFolderImport(files) {
-  const fileIndex = createImportFileIndex(files, 'folder-import');
-  const htmlEntry = choosePrimaryHtmlEntry(fileIndex);
-  if (!htmlEntry) {
-    setStatus('선택한 폴더에 HTML 파일이 없습니다.');
-    return;
-  }
-  const html = await htmlEntry.file.text();
-  pendingMountOptions = { snapshot: null, preserveHistory: false };
-  const project = normalizeProject({
-    html,
-    sourceName: htmlEntry.relativePath,
-    sourceType: 'folder-import',
-    fileIndex,
-    htmlEntryPath: htmlEntry.relativePath,
-  });
-  if (fileIndex.htmlEntries.length > 1) {
-    project.issues.unshift({
-      id: `issue_multi_html_${Date.now()}`,
-      level: 'info',
-      code: 'MULTI_HTML',
-      message: `HTML 파일이 ${fileIndex.htmlEntries.length}개라서 ${htmlEntry.relativePath}를 우선 사용했습니다.`,
+  const requestId = importRequestSequence += 1;
+  try {
+    const fileIndex = createImportFileIndex(files, 'folder-import');
+    const htmlEntry = choosePrimaryHtmlEntry(fileIndex);
+    if (!htmlEntry) {
+      setStatus('선택한 폴더에 HTML 파일이 없습니다.');
+      return;
+    }
+    const html = await htmlEntry.file.text();
+    if (requestId !== importRequestSequence) return;
+    pendingMountOptions = { snapshot: null, preserveHistory: false };
+    const project = normalizeProject({
+      html,
+      sourceName: htmlEntry.relativePath,
+      sourceType: 'folder-import',
+      fileIndex,
+      htmlEntryPath: htmlEntry.relativePath,
     });
+    if (fileIndex.htmlEntries.length > 1) {
+      project.issues.unshift({
+        id: `issue_multi_html_${Date.now()}`,
+        level: 'info',
+        code: 'MULTI_HTML',
+        message: `HTML 파일이 ${fileIndex.htmlEntries.length}개라서 ${htmlEntry.relativePath}를 우선 사용했습니다.`,
+      });
+    }
+    if (requestId !== importRequestSequence) return;
+    store.setProject(project);
+    setStatus(`프로젝트 폴더 import 완료: ${htmlEntry.relativePath}. resolved ${project.summary.assetsResolved}개, unresolved ${project.summary.assetsUnresolved}개입니다.`);
+  } catch (error) {
+    setStatusWithError('폴더 import 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'FOLDER_IMPORT_ERROR' });
   }
-  store.setProject(project);
-  setStatus(`프로젝트 폴더 import 완료: ${htmlEntry.relativePath}. resolved ${project.summary.assetsResolved}개, unresolved ${project.summary.assetsUnresolved}개입니다.`);
 }
 
-function handlePasteImport() {
-  const html = elements.htmlPasteInput.value.trim();
-  if (!html) {
-    setStatus('붙여넣기 HTML이 비어 있습니다.');
-    return;
+function applyPastedHtml() {
+  try {
+    const html = elements.htmlPasteInput.value.trim();
+    if (!html) {
+      setStatus('붙여넣기 HTML이 비어 있습니다.');
+      return;
+    }
+    pendingMountOptions = { snapshot: null, preserveHistory: false };
+    const project = normalizeProject({ html, sourceName: 'pasted-html', sourceType: 'paste' });
+    store.setProject(project);
+    setStatus(`붙여넣기 HTML을 정규화했습니다. 슬롯 후보 ${project.summary.totalSlotCandidates}개를 찾았습니다.`);
+  } catch (error) {
+    setStatusWithError('붙여넣기 적용 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: 'APPLY_PASTED_HTML_ERROR' });
   }
-  pendingMountOptions = { snapshot: null, preserveHistory: false };
-  const project = normalizeProject({ html, sourceName: 'pasted-html', sourceType: 'paste' });
-  store.setProject(project);
-  setStatus(`붙여넣기 HTML을 정규화했습니다. 슬롯 후보 ${project.summary.totalSlotCandidates}개를 찾았습니다.`);
 }
 
 function downloadNormalizedHtml() {
@@ -6156,16 +6255,26 @@ store.subscribe((state) => {
   renderShell(store.getState());
 });
 
-populateFixtureSelect();
-populateExportPresetSelect();
-syncExportPresetUi({ forceScale: true });
-const bootEnvironmentReport = evaluateLocalBootEnvironment();
-renderLocalModeNotice(elements.localModeNotice, bootEnvironmentReport);
-if (bootEnvironmentReport.errorCount || bootEnvironmentReport.warningCount) {
-  setStatus(`환경 점검: 오류 ${bootEnvironmentReport.errorCount}개 · 경고 ${bootEnvironmentReport.warningCount}개`);
+function safeBoot() {
+  try {
+    populateFixtureSelect();
+    populateExportPresetSelect();
+    syncExportPresetUi({ forceScale: true });
+    const bootEnvironmentReport = evaluateLocalBootEnvironment();
+    renderLocalModeNotice(elements.localModeNotice, bootEnvironmentReport);
+    if (bootEnvironmentReport.errorCount || bootEnvironmentReport.warningCount) {
+      setStatus(`환경 점검: 오류 ${bootEnvironmentReport.errorCount}개 · 경고 ${bootEnvironmentReport.warningCount}개`);
+    }
+    renderEmptyPreview();
+    syncWorkflowUi(store.getState());
+    loadFixture('F05');
+  } catch (error) {
+    console.error('[BOOT_ERROR]', error);
+    setStatusWithError('초기 로딩 중 오류가 발생했습니다. 브라우저 콘솔(F12)을 확인해 주세요.', error, { logTag: '' });
+  }
 }
-renderEmptyPreview();
-syncWorkflowUi(store.getState());
+
+safeBoot();
 
 for (const button of elements.viewButtons) button.addEventListener('click', () => setView(button.dataset.view));
 for (const button of elements.selectionModeButtons) button.addEventListener('click', () => setSelectionMode(button.dataset.selectionMode));
@@ -6231,7 +6340,7 @@ for (const [canvasInput, sourceInput] of [
 elements.openHtmlButton.addEventListener('click', () => elements.htmlFileInput.click());
 elements.openFolderButton.addEventListener('click', () => elements.folderInput.click());
 elements.loadFixtureButton.addEventListener('click', () => loadFixture(elements.fixtureSelect.value));
-elements.applyPasteButton.addEventListener('click', handlePasteImport);
+elements.applyPasteButton.addEventListener('click', applyPastedHtml);
 elements.replaceImageButton.addEventListener('click', () => elements.replaceImageInput.click());
 elements.manualSlotButton.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
@@ -6364,24 +6473,35 @@ elements.applyAdvancedSettingsButton?.addEventListener('click', () => {
 
 elements.htmlFileInput.addEventListener('change', async (event) => {
   const [file] = event.target.files || [];
-  await handleHtmlFileImport(file);
-  event.target.value = '';
+  try {
+    await openHtmlFile(file);
+  } finally {
+    event.target.value = '';
+  }
 });
 
 elements.folderInput.addEventListener('change', async (event) => {
   const files = Array.from(event.target.files || []);
-  if (files.length) await handleFolderImport(files);
-  event.target.value = '';
+  try {
+    if (files.length) await handleFolderImport(files);
+  } finally {
+    event.target.value = '';
+  }
 });
 
 elements.replaceImageInput.addEventListener('change', async (event) => {
   const files = Array.from(event.target.files || []);
-  if (!files.length) return;
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
-  const applied = await activeEditor.applyFiles(files);
-  setStatus(applied ? `${applied}개 이미지를 적용했습니다.` : '이미지를 적용하지 못했습니다.');
-  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
-  event.target.value = '';
+  try {
+    if (!files.length) return;
+    if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+    const applied = await activeEditor.applyFiles(files);
+    setStatus(applied ? `${applied}개 이미지를 적용했습니다.` : '이미지를 적용하지 못했습니다.');
+    if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+  } catch (error) {
+    setStatus(`이미지 적용 중 오류: ${error?.message || error}`);
+  } finally {
+    event.target.value = '';
+  }
 });
 
 elements.assetFilterInput.addEventListener('input', () => renderAssetTable(elements.assetTableWrap, store.getState().project, elements.assetFilterInput.value));
@@ -6408,6 +6528,15 @@ elements.layerTree.addEventListener('click', (event) => {
   const button = event.target.closest('[data-layer-uid]');
   if (!button || !activeEditor) return;
   const ok = activeEditor.selectNodeByUid(button.dataset.layerUid, { additive: event.ctrlKey || event.metaKey || event.shiftKey, toggle: event.ctrlKey || event.metaKey, scroll: true });
+  if (ok) setStatus('레이어를 선택했습니다.');
+});
+elements.layerTree.addEventListener('keydown', (event) => {
+  const key = String(event.key || '');
+  if (key !== 'Enter' && key !== ' ') return;
+  const row = event.target.closest?.('[data-layer-uid]');
+  if (!row || !activeEditor) return;
+  event.preventDefault();
+  const ok = activeEditor.selectNodeByUid(row.dataset.layerUid, { additive: event.ctrlKey || event.metaKey || event.shiftKey, toggle: event.ctrlKey || event.metaKey, scroll: true });
   if (ok) setStatus('레이어를 선택했습니다.');
 });
 for (const button of elements.sidebarTabButtons) {
@@ -6576,7 +6705,6 @@ syncAdvancedFormFromState();
 syncWorkspaceButtons();
 applyShortcutTooltips();
 setBeginnerMode(readFromLocalStorage(BEGINNER_MODE_STORAGE_KEY, '0') === '1', { silent: true });
-loadFixture('F05');
 
 
 })();

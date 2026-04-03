@@ -25,17 +25,35 @@ function mapCssUrls(text, mapper) {
 }
 
 function parseSrcsetCandidates(value) {
-  return String(value || '')
-    .split(',')
-    .map((raw) => raw.trim())
-    .filter(Boolean)
-    .map((item) => {
-      const tokens = item.split(/\s+/);
-      if (tokens.length <= 1) return { url: item, descriptor: '' };
-      const descriptor = tokens.at(-1);
-      const url = tokens.slice(0, -1).join(' ');
-      return { url, descriptor };
-    });
+  const input = String(value || '').trim();
+  if (!input) return [];
+  const chunks = [];
+  let current = '';
+  let sawWhitespace = false;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    if (char === ',') {
+      const startsWithData = current.trimStart().toLowerCase().startsWith('data:');
+      if (!sawWhitespace && startsWithData) {
+        current += char;
+        continue;
+      }
+      if (current.trim()) chunks.push(current.trim());
+      current = '';
+      sawWhitespace = false;
+      continue;
+    }
+    current += char;
+    if (!sawWhitespace && /\s/.test(char)) sawWhitespace = true;
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.map((item) => {
+    const tokens = item.split(/\s+/);
+    if (tokens.length <= 1) return { url: item, descriptor: '' };
+    const descriptor = tokens.at(-1);
+    const url = tokens.slice(0, -1).join(' ');
+    return { url, descriptor };
+  });
 }
 
 function serializeSrcsetCandidates(items) {
@@ -68,6 +86,17 @@ function removeScripts(doc, issues) {
   for (const script of scripts) script.remove();
   if (scripts.length) {
     issues.push(createIssue('warning', 'SCRIPT_REMOVED', `미리보기 안전성을 위해 script ${scripts.length}개를 제거했습니다.`));
+  }
+  let inlineHandlerCount = 0;
+  for (const element of Array.from(doc.querySelectorAll('*'))) {
+    for (const attr of Array.from(element.attributes || [])) {
+      if (!/^on/i.test(attr.name)) continue;
+      element.removeAttribute(attr.name);
+      inlineHandlerCount += 1;
+    }
+  }
+  if (inlineHandlerCount) {
+    issues.push(createIssue('warning', 'INLINE_HANDLER_REMOVED', `미리보기/재오픈 안전성을 위해 inline 이벤트 핸들러 ${inlineHandlerCount}개를 제거했습니다.`));
   }
   return scripts.length;
 }

@@ -2814,7 +2814,11 @@ export function createFrameEditor({
     if (!slot || isLockedElement(slot)) return;
     event.preventDefault();
     clearHover();
-    await applyFilesStartingAtSlot(slot, Array.from(event.dataTransfer.files));
+    try {
+      await applyFilesStartingAtSlot(slot, Array.from(event.dataTransfer.files));
+    } catch (error) {
+      onStatus(`드롭 이미지 적용 중 오류: ${error?.message || error}`);
+    }
   }
 
   function handleDragLeave() {
