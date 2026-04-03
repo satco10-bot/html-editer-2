@@ -26,8 +26,11 @@ let currentExportPresetId = 'market';
 let currentCodeSource = 'edited';
 let codeEditorDirty = false;
 const zoomState = { mode: 'fit', value: 1 };
-const EXPORT_SCALE_OPTIONS = [1, 2, 3];
-const DEFAULT_JPG_QUALITY = 0.92;
+const BOOT_LOCAL_POLICY = Object.freeze({
+  requiresStartupFetch: false,
+  requiresFileSystemAccessApi: false,
+  requiresServerEndpoint: false,
+});
 
 const historyState = {
   baseSnapshot: null,
@@ -171,6 +174,41 @@ function exportJpgQuality() {
 
 function setStatus(text) {
   store.setStatus(text);
+}
+
+function evaluateLocalBootEnvironment() {
+  const checks = [];
+  const add = (level, code, message) => checks.push({ level, code, message });
+  const protocol = window.location?.protocol || '';
+
+  if (protocol !== 'file:') {
+    add('warning', 'NOT_FILE_PROTOCOL', `현재 실행 경로가 ${protocol || '(알 수 없음)'} 입니다. 필수 기준은 file:// 직접 실행입니다.`);
+  }
+  if (BOOT_LOCAL_POLICY.requiresStartupFetch) {
+    add('error', 'POLICY_BOOT_FETCH', '초기 부팅 경로가 fetch/network를 필수로 요구하도록 설정되어 있습니다.');
+  }
+  if (BOOT_LOCAL_POLICY.requiresFileSystemAccessApi) {
+    add('error', 'POLICY_FS_ACCESS_REQUIRED', 'File System Access API를 필수 경로로 요구하도록 설정되어 있습니다.');
+  }
+  if (BOOT_LOCAL_POLICY.requiresServerEndpoint) {
+    add('error', 'POLICY_SERVER_REQUIRED', '서버/도메인 의존 경로가 필수로 설정되어 있습니다.');
+  }
+  if (typeof window.FileReader !== 'function') {
+    add('error', 'MISSING_FILE_READER', '이 브라우저는 FileReader를 지원하지 않아 로컬 파일 import가 동작하지 않습니다.');
+  }
+  if (typeof URL?.createObjectURL !== 'function') {
+    add('error', 'MISSING_BLOB_URL', '이 브라우저는 Blob URL 미리보기를 지원하지 않습니다.');
+  }
+  if (!('localStorage' in window)) {
+    add('warning', 'NO_LOCAL_STORAGE', 'localStorage를 사용할 수 없어 autosave 복구 기능이 제한될 수 있습니다.');
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    checks,
+    errorCount: checks.filter((item) => item.level === 'error').length,
+    warningCount: checks.filter((item) => item.level === 'warning').length,
+  };
 }
 
 function setView(nextView) {
@@ -1002,7 +1040,11 @@ store.subscribe((state) => {
 populateFixtureSelect();
 populateExportPresetSelect();
 syncExportPresetUi({ forceScale: true });
-renderLocalModeNotice(elements.localModeNotice);
+const bootEnvironmentReport = evaluateLocalBootEnvironment();
+renderLocalModeNotice(elements.localModeNotice, bootEnvironmentReport);
+if (bootEnvironmentReport.errorCount || bootEnvironmentReport.warningCount) {
+  setStatus(`환경 점검: 오류 ${bootEnvironmentReport.errorCount}개 · 경고 ${bootEnvironmentReport.warningCount}개`);
+}
 renderEmptyPreview();
 
 for (const button of elements.viewButtons) button.addEventListener('click', () => setView(button.dataset.view));

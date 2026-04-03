@@ -271,14 +271,28 @@ export function renderProjectMeta(container, project, meta = {}) {
   `).join('');
 }
 
-export function renderLocalModeNotice(container) {
+export function renderLocalModeNotice(container, envReport = null) {
   if (!container) return;
+  const checks = envReport?.checks || [];
+  const checksHtml = checks.length
+    ? `<div class="preflight-list">${checks.map((item) => `
+        <article class="preflight-item" data-level="${escapeHtml(item.level || 'info')}">
+          <div class="preflight-item__head">
+            <span class="issue__badge">${escapeHtml(item.level || 'info')}</span>
+            <strong>${escapeHtml(item.code || 'ENV_CHECK')}</strong>
+          </div>
+          <div class="preflight-item__message">${escapeHtml(item.message || '')}</div>
+        </article>
+      `).join('')}</div>`
+    : '<div class="asset-empty">환경 점검 결과: 금지 조건 없음 (기본 로컬 모드 정책 통과).</div>';
   container.innerHTML = `
     <div class="local-notice">
       <strong>로컬 전용 모드</strong>
       <div>이 버전은 서버 없이 <code>index.html</code>을 바로 열어도 동작하도록 구성했습니다.</div>
       <div>HTML/폴더 가져오기, Blob URL 미리보기, drag &amp; drop, autosave 복구, PNG/ZIP 저장을 모두 브라우저 안에서 처리합니다.</div>
       <div>직접 덮어쓰기 대신 브라우저 다운로드와 localStorage autosave를 기본 저장 흐름으로 사용합니다.</div>
+      <div style="margin-top:8px;"><strong>앱 시작 환경 점검</strong></div>
+      ${checksHtml}
     </div>
   `;
 }

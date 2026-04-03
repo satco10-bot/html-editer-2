@@ -2903,6 +2903,49 @@ function createFrameEditor({
     return { hasMedia, unresolved, placeholder, explicitEmpty };
   }
 
+  function classifyAssetPath(value) {
+    const text = String(value || '').trim();
+    if (!text) return 'empty';
+    if (text.startsWith('uploaded:')) return 'uploaded';
+    if (text.startsWith('blob:')) return 'blob';
+    if (text.startsWith('data:')) return 'data';
+    if (/^https?:\/\//i.test(text) || text.startsWith('//')) return 'remote';
+    if (text.startsWith('#')) return 'fragment';
+    if (/^[a-z][a-z0-9+.-]*:/i.test(text)) return 'custom';
+    if (text.startsWith('/')) return 'absolute';
+    return 'relative';
+  }
+
+  function buildPathPreservationSignals() {
+    const images = Array.from(doc.querySelectorAll('img'));
+    let preservedCount = 0;
+    let driftCount = 0;
+    let trackedCount = 0;
+    let editedBlobCount = 0;
+    const exportKinds = new Set();
+
+    for (const img of images) {
+      const originalRef = img.dataset.originalSrc || img.getAttribute('src') || '';
+      const editedRef = img.dataset.exportSrc || img.dataset.originalSrc || img.getAttribute('src') || '';
+      const originalKind = classifyAssetPath(originalRef);
+      const editedKind = classifyAssetPath(editedRef);
+      exportKinds.add(editedKind);
+      if (editedKind === 'blob') editedBlobCount += 1;
+      if (!['uploaded', 'relative'].includes(originalKind)) continue;
+      trackedCount += 1;
+      if (originalKind === editedKind || editedKind === 'data') preservedCount += 1;
+      else driftCount += 1;
+    }
+
+    return {
+      trackedCount,
+      preservedCount,
+      driftCount,
+      editedBlobCount,
+      exportKinds: Array.from(exportKinds).sort(),
+    };
+  }
+
   function buildPreflightReport() {
     const checks = [];
     const addCheck = (level, code, title, message, count = 0) => checks.push({ level, code, title, message, count });
@@ -2933,6 +2976,19 @@ function createFrameEditor({
     }
     if (detection.nearMisses?.length) {
       addCheck('info', 'NEAR_MISS', '근접 후보', `자동 슬롯 감지 근접 후보가 ${detection.nearMisses.length}개 있습니다. 수동 슬롯 지정으로 보정할 수 있습니다.`, detection.nearMisses.length);
+    }
+    const pathSignals = buildPathPreservationSignals();
+    if (pathSignals.trackedCount > 0) {
+      if (pathSignals.driftCount > 0) {
+        addCheck('error', 'PATH_SAVE_REOPEN_DRIFT', '경로 보존 실패(저장/재오픈)', `uploaded: 또는 상대경로 이미지 ${pathSignals.driftCount}개가 저장 경로에서 다른 스킴으로 바뀔 수 있습니다.`, pathSignals.driftCount);
+      } else {
+        addCheck('info', 'PATH_SAVE_REOPEN_OK', '경로 보존 확인(저장/재오픈)', `uploaded:·상대경로 추적 대상 ${pathSignals.trackedCount}개가 현재 저장 규칙과 충돌하지 않습니다.`, pathSignals.trackedCount);
+      }
+    }
+    if (pathSignals.editedBlobCount > 0) {
+      addCheck('warning', 'PATH_EXPORT_BLOB', 'export 전 blob 경로 감지', `현재 편집 상태에 blob URL ${pathSignals.editedBlobCount}개가 있습니다. export 시 data URL 치환 경로를 점검하세요.`, pathSignals.editedBlobCount);
+    } else {
+      addCheck('info', 'PATH_EXPORT_READY', 'export 경로 준비', `현재 export 대상 경로 스킴: ${pathSignals.exportKinds.join(', ') || 'none'}.`, pathSignals.exportKinds.length);
     }
     const fixtureContract = project?.fixtureMeta?.slot_contract || null;
     if (fixtureContract?.required_exact_count != null && detection.summary.totalCount !== fixtureContract.required_exact_count) {
@@ -4020,14 +4076,28 @@ function renderProjectMeta(container, project, meta = {}) {
     <span class="meta-chip"><strong>${escapeHtml(label)}</strong>${escapeHtml(value)}</span>
   `).join('');
 }
-function renderLocalModeNotice(container) {
+function renderLocalModeNotice(container, envReport = null) {
   if (!container) return;
+  const checks = envReport?.checks || [];
+  const checksHtml = checks.length
+    ? `<div class="preflight-list">${checks.map((item) => `
+        <article class="preflight-item" data-level="${escapeHtml(item.level || 'info')}">
+          <div class="preflight-item__head">
+            <span class="issue__badge">${escapeHtml(item.level || 'info')}</span>
+            <strong>${escapeHtml(item.code || 'ENV_CHECK')}</strong>
+          </div>
+          <div class="preflight-item__message">${escapeHtml(item.message || '')}</div>
+        </article>
+      `).join('')}</div>`
+    : '<div class="asset-empty">환경 점검 결과: 금지 조건 없음 (기본 로컬 모드 정책 통과).</div>';
   container.innerHTML = `
     <div class="local-notice">
       <strong>로컬 전용 모드</strong>
       <div>이 버전은 서버 없이 <code>index.html</code>을 바로 열어도 동작하도록 구성했습니다.</div>
       <div>HTML/폴더 가져오기, Blob URL 미리보기, drag &amp; drop, autosave 복구, PNG/ZIP 저장을 모두 브라우저 안에서 처리합니다.</div>
       <div>직접 덮어쓰기 대신 브라우저 다운로드와 localStorage autosave를 기본 저장 흐름으로 사용합니다.</div>
+      <div style="margin-top:8px;"><strong>앱 시작 환경 점검</strong></div>
+      ${checksHtml}
     </div>
   `;
 }
@@ -4043,8 +4113,11 @@ let currentExportPresetId = 'market';
 let currentCodeSource = 'edited';
 let codeEditorDirty = false;
 const zoomState = { mode: 'fit', value: 1 };
-const EXPORT_SCALE_OPTIONS = [1, 2, 3];
-const DEFAULT_JPG_QUALITY = 0.92;
+const BOOT_LOCAL_POLICY = Object.freeze({
+  requiresStartupFetch: false,
+  requiresFileSystemAccessApi: false,
+  requiresServerEndpoint: false,
+});
 
 const historyState = {
   baseSnapshot: null,
@@ -4188,6 +4261,41 @@ function exportJpgQuality() {
 
 function setStatus(text) {
   store.setStatus(text);
+}
+
+function evaluateLocalBootEnvironment() {
+  const checks = [];
+  const add = (level, code, message) => checks.push({ level, code, message });
+  const protocol = window.location?.protocol || '';
+
+  if (protocol !== 'file:') {
+    add('warning', 'NOT_FILE_PROTOCOL', `현재 실행 경로가 ${protocol || '(알 수 없음)'} 입니다. 필수 기준은 file:// 직접 실행입니다.`);
+  }
+  if (BOOT_LOCAL_POLICY.requiresStartupFetch) {
+    add('error', 'POLICY_BOOT_FETCH', '초기 부팅 경로가 fetch/network를 필수로 요구하도록 설정되어 있습니다.');
+  }
+  if (BOOT_LOCAL_POLICY.requiresFileSystemAccessApi) {
+    add('error', 'POLICY_FS_ACCESS_REQUIRED', 'File System Access API를 필수 경로로 요구하도록 설정되어 있습니다.');
+  }
+  if (BOOT_LOCAL_POLICY.requiresServerEndpoint) {
+    add('error', 'POLICY_SERVER_REQUIRED', '서버/도메인 의존 경로가 필수로 설정되어 있습니다.');
+  }
+  if (typeof window.FileReader !== 'function') {
+    add('error', 'MISSING_FILE_READER', '이 브라우저는 FileReader를 지원하지 않아 로컬 파일 import가 동작하지 않습니다.');
+  }
+  if (typeof URL?.createObjectURL !== 'function') {
+    add('error', 'MISSING_BLOB_URL', '이 브라우저는 Blob URL 미리보기를 지원하지 않습니다.');
+  }
+  if (!('localStorage' in window)) {
+    add('warning', 'NO_LOCAL_STORAGE', 'localStorage를 사용할 수 없어 autosave 복구 기능이 제한될 수 있습니다.');
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    checks,
+    errorCount: checks.filter((item) => item.level === 'error').length,
+    warningCount: checks.filter((item) => item.level === 'warning').length,
+  };
 }
 
 function setView(nextView) {
@@ -5004,7 +5112,11 @@ store.subscribe((state) => {
 populateFixtureSelect();
 populateExportPresetSelect();
 syncExportPresetUi({ forceScale: true });
-renderLocalModeNotice(elements.localModeNotice);
+const bootEnvironmentReport = evaluateLocalBootEnvironment();
+renderLocalModeNotice(elements.localModeNotice, bootEnvironmentReport);
+if (bootEnvironmentReport.errorCount || bootEnvironmentReport.warningCount) {
+  setStatus(`환경 점검: 오류 ${bootEnvironmentReport.errorCount}개 · 경고 ${bootEnvironmentReport.warningCount}개`);
+}
 renderEmptyPreview();
 
 for (const button of elements.viewButtons) button.addEventListener('click', () => setView(button.dataset.view));
