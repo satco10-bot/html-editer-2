@@ -1,6 +1,7 @@
 import { EXPLICIT_SLOT_SELECTOR } from '../config.js';
 import { buildSvgPlaceholderDataUrl, nextId, stripQueryHash, truncate } from '../utils.js';
 import { createAssetResolver } from './asset-resolver.js';
+import { ensureUniqueNodeUids } from './node-uid.js';
 import { collectSlotCandidates } from './slot-detector.js';
 
 const CSS_URL_RE = /url\((['"]?)([^"'()]+)\1\)/gi;
@@ -121,9 +122,13 @@ export function normalizeProject({
   const scriptsRemoved = removeScripts(doc, issues);
   ensureHead(doc);
 
-  Array.from(doc.querySelectorAll('*')).forEach((element) => {
-    if (!element.dataset.nodeUid) element.dataset.nodeUid = nextId('node');
-  });
+  const uidRepair = ensureUniqueNodeUids(doc);
+  if (uidRepair.assigned > 0) {
+    issues.push(createIssue('warning', 'UID_MISSING_REPAIRED', `data-node-uid 누락 ${uidRepair.assigned}건을 자동 보정했습니다.`));
+  }
+  if (uidRepair.deduped > 0) {
+    issues.push(createIssue('warning', 'UID_DUPLICATE_REPAIRED', `data-node-uid 중복 ${uidRepair.deduped}건(${uidRepair.duplicateGroups}개 그룹)을 자동 보정했습니다.`));
+  }
 
   const imgElements = Array.from(doc.querySelectorAll('img'));
   for (const img of imgElements) {
@@ -314,6 +319,10 @@ export function normalizeProject({
     remoteStylesheetCount: remoteStylesheets.length,
     unresolvedReferenceCount: unresolvedRefs.size,
     linkedSlotCount: doc.querySelectorAll(EXPLICIT_SLOT_SELECTOR).length,
+    uidScanned: uidRepair.scanned,
+    uidAssigned: uidRepair.assigned,
+    uidDeduped: uidRepair.deduped,
+    uidDuplicateGroups: uidRepair.duplicateGroups,
   };
 
   const normalizedHtml = `<!DOCTYPE html>\n${doc.documentElement.outerHTML}`;
@@ -326,6 +335,7 @@ export function normalizeProject({
     originalHtml: String(html || ''),
     normalizedHtml,
     summary,
+    uidRepair,
     issues,
     assets,
     slotDetection,
