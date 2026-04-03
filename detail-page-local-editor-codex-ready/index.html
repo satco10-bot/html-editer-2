@@ -220,9 +220,6 @@
             <button id="replaceImageButton" class="button button--secondary" data-beginner-advanced>이미지 넣기</button>
             <button id="manualSlotButton" class="button button--ghost" data-beginner-advanced>슬롯 지정</button>
             <button id="demoteSlotButton" class="button button--warn" data-beginner-advanced>슬롯 해제</button>
-            <button id="textEditButton" class="button button--ghost">텍스트</button>
-            <button id="duplicateButton" class="button button--ghost">복제</button>
-            <button id="deleteButton" class="button button--warn">삭제</button>
             <button id="addTextButton" class="button button--ghost" title="텍스트 도구 (T)" data-beginner-advanced>텍스트 추가</button>
             <button id="addBoxButton" class="button button--ghost" title="박스 도구 (R)" data-beginner-advanced>박스 추가</button>
             <button id="addSlotButton" class="button button--ghost" data-beginner-advanced>슬롯 추가</button>
@@ -231,6 +228,9 @@
             <button id="toggleHideButton" class="button button--ghost" data-beginner-advanced>숨김</button>
             <button id="toggleLockButton" class="button button--ghost" data-beginner-advanced>잠금</button>
             <button id="redetectButton" class="button button--ghost" data-beginner-advanced>다시 감지</button>
+            <button id="textEditButton" class="button button--ghost" hidden>텍스트</button>
+            <button id="duplicateButton" class="button button--ghost" hidden>복제</button>
+            <button id="deleteButton" class="button button--warn" hidden>삭제</button>
           </div>
         </div>
         <div class="stage-toolbar__row" data-beginner-advanced>
@@ -262,36 +262,18 @@
             <div class="canvas-context-bar__actions">
               <button class="button button--ghost button--small" data-canvas-action="duplicate" data-canvas-scope="common">복제</button>
               <button class="button button--warn button--small" data-canvas-action="delete" data-canvas-scope="common">삭제</button>
-              <button class="button button--ghost button--small" data-canvas-action="layer-index-forward" data-canvas-scope="common">앞으로</button>
-              <button class="button button--ghost button--small" data-canvas-action="layer-index-backward" data-canvas-scope="common">뒤로</button>
 
+              <button class="button button--secondary button--small" data-canvas-action="image-crop-enter" data-canvas-scope="image">크롭 편집</button>
               <button class="button button--ghost button--small" data-canvas-action="image-cover" data-canvas-scope="image">cover</button>
-              <button class="button button--ghost button--small" data-canvas-action="image-contain" data-canvas-scope="image">contain</button>
-              <button class="button button--ghost button--small" data-canvas-action="image-nudge-left" data-canvas-scope="image">← nudge</button>
-              <button class="button button--ghost button--small" data-canvas-action="image-nudge-up" data-canvas-scope="image">↑ nudge</button>
-              <button class="button button--ghost button--small" data-canvas-action="image-nudge-down" data-canvas-scope="image">↓ nudge</button>
-              <button class="button button--ghost button--small" data-canvas-action="image-nudge-right" data-canvas-scope="image">→ nudge</button>
 
               <button class="button button--secondary button--small" data-canvas-action="toggle-text-edit" data-canvas-scope="text">텍스트 편집</button>
-              <button class="button button--ghost button--small" data-canvas-action="align-left" data-canvas-scope="text">좌정렬</button>
-              <button class="button button--ghost button--small" data-canvas-action="align-center" data-canvas-scope="text">가운데</button>
-              <button class="button button--ghost button--small" data-canvas-action="align-right" data-canvas-scope="text">우정렬</button>
-              <button class="button button--ghost button--small" data-canvas-action="same-size" data-canvas-scope="text">크기 맞춤</button>
 
-              <button class="button button--ghost button--small" data-canvas-action="same-width" data-canvas-scope="multi">너비 맞춤</button>
-              <button class="button button--ghost button--small" data-canvas-action="same-height" data-canvas-scope="multi">높이 맞춤</button>
-              <button class="button button--ghost button--small" data-canvas-action="same-size" data-canvas-scope="multi">크기 맞춤</button>
               <button class="button button--ghost button--small" data-canvas-action="align-left" data-canvas-scope="multi">좌정렬</button>
-              <button class="button button--ghost button--small" data-canvas-action="align-center" data-canvas-scope="multi">가운데</button>
-              <button class="button button--ghost button--small" data-canvas-action="align-right" data-canvas-scope="multi">우정렬</button>
               <button class="button button--ghost button--small" data-canvas-action="align-top" data-canvas-scope="multi">상단</button>
-              <button class="button button--ghost button--small" data-canvas-action="align-middle" data-canvas-scope="multi">중앙</button>
-              <button class="button button--ghost button--small" data-canvas-action="align-bottom" data-canvas-scope="multi">하단</button>
               <button class="button button--ghost button--small" data-canvas-action="distribute-horizontal" data-canvas-scope="multi">가로 간격</button>
-              <button class="button button--ghost button--small" data-canvas-action="distribute-vertical" data-canvas-scope="multi">세로 간격</button>
             </div>
             <!-- 숨김 규칙:
-                 1) common(복제/삭제/앞뒤)은 항상 고정 노출
+                 1) common(복제/삭제)은 항상 고정 노출
                  2) image는 단일 이미지 슬롯 선택일 때만 노출
                  3) text는 단일 텍스트 선택일 때만 노출
                  4) multi는 2개 이상 다중 선택일 때만 노출 -->
