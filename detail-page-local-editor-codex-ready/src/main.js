@@ -40,6 +40,24 @@ const BOOT_LOCAL_POLICY = Object.freeze({
   requiresFileSystemAccessApi: false,
   requiresServerEndpoint: false,
 });
+const BEGINNER_MODE_STORAGE_KEY = 'detail_editor_beginner_mode_v1';
+const BEGINNER_MODE_TUTORIAL_SEEN_KEY = 'detail_editor_beginner_tutorial_seen_v1';
+const BEGINNER_TUTORIAL_STEPS = Object.freeze([
+  {
+    title: '1) 선택부터 시작',
+    body: '먼저 [선택] 버튼으로 요소를 클릭하세요. 선택 후 드래그하면 이동됩니다.',
+  },
+  {
+    title: '2) 크기 조절/정리',
+    body: '요소 테두리 핸들을 잡아 리사이즈하고, 필요하면 [복제]/[삭제]/[텍스트] 버튼만 사용하세요.',
+  },
+  {
+    title: '3) 결과 저장',
+    body: '완료하면 상단 [문서 저장] 또는 [PNG] 버튼으로 결과를 바로 내보내세요.',
+  },
+]);
+let isBeginnerMode = false;
+let beginnerTutorialStepIndex = 0;
 
 const historyState = {
   baseSnapshot: null,
@@ -191,7 +209,81 @@ const elements = {
   canvasActionButtons: Array.from(document.querySelectorAll('[data-canvas-action]')),
   shortcutHelpOverlay: document.getElementById('shortcutHelpOverlay'),
   shortcutHelpCloseButton: document.getElementById('shortcutHelpCloseButton'),
+  beginnerModeToggle: document.getElementById('beginnerModeToggle'),
+  advancedTopbarPanel: document.getElementById('advancedTopbarPanel'),
+  beginnerTutorialTooltip: document.getElementById('beginnerTutorialTooltip'),
+  beginnerTutorialTitle: document.getElementById('beginnerTutorialTitle'),
+  beginnerTutorialBody: document.getElementById('beginnerTutorialBody'),
+  beginnerTutorialStep: document.getElementById('beginnerTutorialStep'),
+  beginnerTutorialPrevButton: document.getElementById('beginnerTutorialPrevButton'),
+  beginnerTutorialNextButton: document.getElementById('beginnerTutorialNextButton'),
+  beginnerTutorialCloseButton: document.getElementById('beginnerTutorialCloseButton'),
 };
+
+function readFromLocalStorage(key, fallback = null) {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value == null ? fallback : value;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeToLocalStorage(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {}
+}
+
+function hasSeenBeginnerTutorial() {
+  return readFromLocalStorage(BEGINNER_MODE_TUTORIAL_SEEN_KEY, '') === '1';
+}
+
+function markBeginnerTutorialSeen() {
+  writeToLocalStorage(BEGINNER_MODE_TUTORIAL_SEEN_KEY, '1');
+}
+
+function closeBeginnerTutorial() {
+  if (elements.beginnerTutorialTooltip) elements.beginnerTutorialTooltip.hidden = true;
+  markBeginnerTutorialSeen();
+}
+
+function renderBeginnerTutorialStep() {
+  const step = BEGINNER_TUTORIAL_STEPS[beginnerTutorialStepIndex] || BEGINNER_TUTORIAL_STEPS[0];
+  if (elements.beginnerTutorialTitle) elements.beginnerTutorialTitle.textContent = step.title;
+  if (elements.beginnerTutorialBody) elements.beginnerTutorialBody.textContent = step.body;
+  if (elements.beginnerTutorialStep) elements.beginnerTutorialStep.textContent = `${beginnerTutorialStepIndex + 1} / ${BEGINNER_TUTORIAL_STEPS.length}`;
+  if (elements.beginnerTutorialPrevButton) elements.beginnerTutorialPrevButton.disabled = beginnerTutorialStepIndex < 1;
+  if (elements.beginnerTutorialNextButton) {
+    const isLast = beginnerTutorialStepIndex >= BEGINNER_TUTORIAL_STEPS.length - 1;
+    elements.beginnerTutorialNextButton.textContent = isLast ? '완료' : '다음';
+  }
+}
+
+function openBeginnerTutorialIfNeeded() {
+  if (!isBeginnerMode || hasSeenBeginnerTutorial()) return;
+  beginnerTutorialStepIndex = 0;
+  renderBeginnerTutorialStep();
+  if (elements.beginnerTutorialTooltip) elements.beginnerTutorialTooltip.hidden = false;
+}
+
+function applyBeginnerModeUi() {
+  document.body.classList.toggle('beginner-mode', isBeginnerMode);
+  if (elements.beginnerModeToggle) {
+    elements.beginnerModeToggle.textContent = `초보 모드: ${isBeginnerMode ? 'ON' : 'OFF'}`;
+    elements.beginnerModeToggle.setAttribute('aria-pressed', isBeginnerMode ? 'true' : 'false');
+  }
+  if (isBeginnerMode && elements.advancedTopbarPanel) elements.advancedTopbarPanel.open = false;
+  if (!isBeginnerMode && elements.beginnerTutorialTooltip) elements.beginnerTutorialTooltip.hidden = true;
+}
+
+function setBeginnerMode(next, { silent = false } = {}) {
+  isBeginnerMode = !!next;
+  applyBeginnerModeUi();
+  writeToLocalStorage(BEGINNER_MODE_STORAGE_KEY, isBeginnerMode ? '1' : '0');
+  if (isBeginnerMode) openBeginnerTutorialIfNeeded();
+  if (!silent) setStatus(`초보 모드를 ${isBeginnerMode ? '켰습니다' : '껐습니다'}.`);
+}
 
 function evaluateWorkflowStepReadiness(step, state) {
   const hasProject = !!state?.project;
@@ -1826,6 +1918,21 @@ elements.shortcutHelpOverlay?.addEventListener('click', (event) => {
   if (event.target === elements.shortcutHelpOverlay) toggleShortcutHelp(false);
 });
 elements.shortcutHelpCloseButton?.addEventListener('click', () => toggleShortcutHelp(false));
+elements.beginnerModeToggle?.addEventListener('click', () => setBeginnerMode(!isBeginnerMode));
+elements.beginnerTutorialPrevButton?.addEventListener('click', () => {
+  beginnerTutorialStepIndex = Math.max(0, beginnerTutorialStepIndex - 1);
+  renderBeginnerTutorialStep();
+});
+elements.beginnerTutorialNextButton?.addEventListener('click', () => {
+  if (beginnerTutorialStepIndex >= BEGINNER_TUTORIAL_STEPS.length - 1) {
+    closeBeginnerTutorial();
+    setStatus('초보 모드 튜토리얼을 완료했습니다.');
+    return;
+  }
+  beginnerTutorialStepIndex += 1;
+  renderBeginnerTutorialStep();
+});
+elements.beginnerTutorialCloseButton?.addEventListener('click', closeBeginnerTutorial);
 
 setSidebarTab('left-import');
 setSidebarTab('right-inspect');
@@ -1835,4 +1942,5 @@ restorePanelLayoutState();
 syncAdvancedFormFromState();
 syncWorkspaceButtons();
 applyShortcutTooltips();
+setBeginnerMode(readFromLocalStorage(BEGINNER_MODE_STORAGE_KEY, '0') === '1', { silent: true });
 loadFixture('F05');

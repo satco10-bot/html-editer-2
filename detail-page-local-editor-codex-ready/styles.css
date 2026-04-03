@@ -123,6 +123,9 @@ button { transition: transform 120ms ease, opacity 120ms ease; }
 .topbar [data-workflow-panel].is-hidden {
   display: none;
 }
+body.beginner-mode [data-beginner-advanced] {
+  display: none !important;
+}
 .topbar-advanced {
   width: 100%;
   border: 1px solid var(--line);
@@ -162,6 +165,32 @@ button { transition: transform 120ms ease, opacity 120ms ease; }
 .button--danger { background: #fdeaea; color: #b42318; box-shadow: none; }
 .button--small { min-height: var(--control-h-sm); padding: 0 12px; font-size: 12px; border-radius: var(--radius-sm); }
 .button--large { min-height: var(--control-h-lg); }
+.beginner-tutorial {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 999998;
+  width: min(340px, calc(100vw - 36px));
+  background: #ffffff;
+  border: 1px solid #c7d6fb;
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+.beginner-tutorial p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+  font-size: 14px;
+}
+.beginner-tutorial__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 
 .mini-control {
   display: inline-flex;
