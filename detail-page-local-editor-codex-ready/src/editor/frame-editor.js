@@ -14,11 +14,8 @@ import {
   truncate,
 } from '../utils.js';
 import { collectSlotCandidates } from '../core/slot-detector.js';
-import { beginMarqueeInteraction, applyMarqueeInteraction } from './canvas-interaction/select-interaction.js';
-import { beginMoveInteraction, applyMoveInteraction } from './canvas-interaction/move-interaction.js';
-import { beginResizeInteraction, applyResizeInteraction } from './canvas-interaction/resize-interaction.js';
-import { duplicateSelection } from './canvas-interaction/duplicate-command.js';
-import { deleteSelection } from './canvas-interaction/delete-command.js';
+import { createEditorModel, patchModelNode, applyModelNodesToDom } from '../core/editor-model.js';
+import { restoreSerializedAssetRefs } from '../core/serialize-layer.js';
 
 const FRAME_CSS_URL_RE = /url\((['"]?)([^"'()]+)\1\)/gi;
 
@@ -287,6 +284,8 @@ export function createFrameEditor({
   let overlayNodes = null;
   const slotBackupMap = new Map();
   const modifiedSlots = new Set();
+  const editorModel = createEditorModel(doc);
+  let lastCommittedSnapshot = initialSnapshot?.html ? { ...initialSnapshot } : null;
 
   function uniqueConnectedElements(items) {
     const seen = new Set();
@@ -640,7 +639,10 @@ export function createFrameEditor({
   }
 
   function emitMutation(label) {
-    onMutation(captureSnapshot(label));
+    const before = lastCommittedSnapshot || captureSnapshot('before-command');
+    const after = captureSnapshot(label);
+    lastCommittedSnapshot = after;
+    onMutation({ type: 'command', id: nextId('cmd'), label, before, after, modelVersion: editorModel.version, at: new Date().toISOString() });
   }
 
   function getElementByUid(uid) {
@@ -804,6 +806,10 @@ export function createFrameEditor({
     const keepUids = preserveSelectionUids || selectedElements.map((element) => element.dataset.nodeUid).filter(Boolean) || [];
     detection = collectSlotCandidates(doc, { markDom: true });
     slotMap = new Map(detection.candidates.map((item) => [item.uid, item]));
+    const refreshedModel = createEditorModel(doc);
+    editorModel.nodes.clear();
+    for (const [uid, node] of refreshedModel.nodes.entries()) editorModel.nodes.set(uid, node);
+    editorModel.version = refreshedModel.version;
     const keepElements = uniqueConnectedElements(keepUids.map((uid) => getElementByUid(uid)));
     if (keepElements.length) selectElements(keepElements, { silent: true });
     else if (preserveSelectionUid || initialSnapshot?.selectedUid) {
@@ -831,7 +837,8 @@ export function createFrameEditor({
     if (hidden) element.dataset.editorHidden = '1';
     else element.removeAttribute('data-editor-hidden');
     const baseDisplay = decodeData(element.dataset.editorBaseDisplay || '');
-    setInlineStyle(element, { display: hidden ? 'none' : (baseDisplay && baseDisplay !== 'none' ? baseDisplay : null) });
+    patchModelNode(editorModel, uid, { style: { display: hidden ? 'none' : (baseDisplay && baseDisplay !== 'none' ? baseDisplay : null) } });
+    applyModelNodesToDom(doc, editorModel, [uid]);
     element.dataset.editorModified = '1';
     modifiedSlots.add(uid);
     return true;
@@ -843,6 +850,7 @@ export function createFrameEditor({
     element.dataset.nodeUid = uid;
     if (locked) element.dataset.editorLocked = '1';
     else element.removeAttribute('data-editor-locked');
+    patchModelNode(editorModel, uid, {});
     element.dataset.editorModified = '1';
     modifiedSlots.add(uid);
     return true;
@@ -1136,7 +1144,13 @@ export function createFrameEditor({
     const translate = (tx || ty) ? `translate(${Number(tx.toFixed(3))}px, ${Number(ty.toFixed(3))}px)` : '';
     const base = state.base && state.base !== 'none' ? state.base : '';
     const nextTransform = [base, translate].filter(Boolean).join(' ').trim();
-    setInlineStyle(element, { transform: nextTransform || null });
+    const uid = element.dataset.nodeUid || nextId('node');
+    element.dataset.nodeUid = uid;
+    patchModelNode(editorModel, uid, {
+      bounds: { x: Number(tx.toFixed(3)), y: Number(ty.toFixed(3)) },
+      style: { transform: nextTransform || null },
+    });
+    applyModelNodesToDom(doc, editorModel, [uid]);
     element.dataset.editorModified = '1';
   }
 
@@ -1177,10 +1191,23 @@ export function createFrameEditor({
     if (!target) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
     if (isLockedElement(target)) return { ok: false, message: '잠긴 요소는 편집할 수 없습니다.' };
     if (Number.isFinite(patch.w) || Number.isFinite(patch.h)) {
+      const uid = target.dataset.nodeUid || nextId('node');
+      target.dataset.nodeUid = uid;
+      const boundsPatch = {};
       const stylePatch = {};
-      if (Number.isFinite(patch.w)) stylePatch.width = `${Math.max(8, patch.w)}px`;
-      if (Number.isFinite(patch.h)) stylePatch.height = `${Math.max(8, patch.h)}px`;
-      setInlineStyle(target, stylePatch);
+      if (Number.isFinite(patch.w)) {
+        boundsPatch.width = Math.max(8, patch.w);
+        stylePatch.width = `${Math.max(8, patch.w)}px`;
+      }
+      if (Number.isFinite(patch.h)) {
+        boundsPatch.height = Math.max(8, patch.h);
+        stylePatch.height = `${Math.max(8, patch.h)}px`;
+      }
+      patchModelNode(editorModel, uid, {
+        bounds: boundsPatch,
+        style: stylePatch,
+      });
+      applyModelNodesToDom(doc, editorModel, [uid]);
     }
     const state = readTransformState(target);
     const nextX = Number.isFinite(patch.x) ? patch.x : state.tx;
@@ -1491,30 +1518,7 @@ export function createFrameEditor({
     const parser = new DOMParser();
     const currentHtml = createDoctypeHtml(doc);
     const exportDoc = parser.parseFromString(currentHtml, 'text/html');
-
-    for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
-      if (img.dataset.exportSrc) img.setAttribute('src', img.dataset.exportSrc);
-      else if (img.dataset.originalSrc) img.setAttribute('src', img.dataset.originalSrc);
-      if (img.dataset.originalSrcset && !img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.originalSrcset);
-      else if (!img.dataset.originalSrcset) img.removeAttribute('srcset');
-      img.removeAttribute('sizes');
-    }
-
-    for (const source of Array.from(exportDoc.querySelectorAll('source'))) {
-      if (source.dataset.originalSrcset) source.setAttribute('srcset', source.dataset.originalSrcset);
-    }
-
-    for (const element of Array.from(exportDoc.querySelectorAll('[style]'))) {
-      if (element.dataset.exportStyle) element.setAttribute('style', element.dataset.exportStyle);
-      else if (element.dataset.originalStyle) element.setAttribute('style', element.dataset.originalStyle);
-    }
-
-    for (const styleBlock of Array.from(exportDoc.querySelectorAll('style'))) {
-      if (styleBlock.dataset.originalCss) {
-        try { styleBlock.textContent = decodeURIComponent(styleBlock.dataset.originalCss); } catch {}
-      }
-    }
-
+    restoreSerializedAssetRefs(exportDoc, { keepEditedAssets: true });
     if (persistDetectedSlots) persistSlotLabels(exportDoc);
     stripFinalEditorRuntime(exportDoc);
     return createDoctypeHtml(exportDoc);
@@ -1524,21 +1528,7 @@ export function createFrameEditor({
     const parser = new DOMParser();
     const currentHtml = createDoctypeHtml(doc);
     const exportDoc = parser.parseFromString(currentHtml, 'text/html');
-
-    for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
-      if (img.dataset.exportSrc) img.setAttribute('src', img.dataset.exportSrc);
-      if (img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.exportSrcset);
-      img.removeAttribute('sizes');
-    }
-
-    for (const source of Array.from(exportDoc.querySelectorAll('source'))) {
-      if (source.dataset.exportSrcset) source.setAttribute('srcset', source.dataset.exportSrcset);
-    }
-
-    for (const element of Array.from(exportDoc.querySelectorAll('[style]'))) {
-      if (element.dataset.exportStyle) element.setAttribute('style', element.dataset.exportStyle);
-    }
-
+    restoreSerializedAssetRefs(exportDoc, { keepEditedAssets: true });
     if (persistDetectedSlots) persistSlotLabels(exportDoc);
     stripFinalEditorRuntime(exportDoc);
     return exportDoc;
@@ -1955,14 +1945,39 @@ export function createFrameEditor({
   }
 
   function updateResizeDrag(event) {
-    applyResizeInteraction({
-      event,
-      resizeState,
-      setInlineStyle,
-      writeTransformState,
-      modifiedSlots: () => modifiedSlots,
-      updateResizeOverlay,
+    if (!resizeState || resizeState.pointerId !== event.pointerId) return;
+    const dx = event.clientX - resizeState.startX;
+    const dy = event.clientY - resizeState.startY;
+    if (!resizeState.moved && Math.hypot(dx, dy) < 2) return;
+    resizeState.moved = true;
+    const { corner, target } = resizeState;
+    let width = resizeState.startWidth;
+    let height = resizeState.startHeight;
+    let tx = resizeState.startTx;
+    let ty = resizeState.startTy;
+    if (corner.includes('e')) width += dx;
+    if (corner.includes('s')) height += dy;
+    if (corner.includes('w')) {
+      width -= dx;
+      tx += dx;
+    }
+    if (corner.includes('n')) {
+      height -= dy;
+      ty += dy;
+    }
+    width = Math.max(8, width);
+    height = Math.max(8, height);
+    const uid = target.dataset.nodeUid || nextId('node');
+    target.dataset.nodeUid = uid;
+    patchModelNode(editorModel, uid, {
+      bounds: { width, height },
+      style: { width: `${Math.round(width)}px`, height: `${Math.round(height)}px` },
     });
+    applyModelNodesToDom(doc, editorModel, [uid]);
+    writeTransformState(target, tx, ty);
+    target.dataset.editorModified = '1';
+    if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
+    updateResizeOverlay();
   }
 
   function finishResizeDrag(event) {
@@ -2260,7 +2275,7 @@ export function createFrameEditor({
     getReport: buildReport,
     getPreflightReport: buildPreflightReport,
     getMeta() {
-      return getDerivedMeta();
+      return { ...getDerivedMeta(), modelVersion: editorModel.version };
     },
     destroy() {
       if (destroyed) return;

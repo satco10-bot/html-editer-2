@@ -30,6 +30,7 @@ const EXPORT_SCALE_OPTIONS = [1, 2, 3];
 const DEFAULT_JPG_QUALITY = 0.92;
 
 const historyState = {
+  baseSnapshot: null,
   undoStack: [],
   redoStack: [],
 };
@@ -338,29 +339,34 @@ function persistAutosave(snapshot) {
 
 function refreshHistoryButtons() {
   const hasProject = !!store.getState().project;
-  if (elements.undoButton) elements.undoButton.disabled = !hasProject || historyState.undoStack.length <= 1;
+  if (elements.undoButton) elements.undoButton.disabled = !hasProject || historyState.undoStack.length === 0;
   if (elements.redoButton) elements.redoButton.disabled = !hasProject || historyState.redoStack.length === 0;
   if (elements.restoreAutosaveButton) elements.restoreAutosaveButton.disabled = !readAutosavePayload();
 }
 
-function resetHistory() {
+function resetHistory(baseSnapshot = null) {
+  historyState.baseSnapshot = baseSnapshot?.html ? baseSnapshot : null;
   historyState.undoStack = [];
   historyState.redoStack = [];
   refreshHistoryButtons();
 }
 
-function recordHistorySnapshot(snapshot, { clearRedo = true } = {}) {
-  if (!snapshot?.html) return;
+function latestHistorySnapshot() {
+  return historyState.undoStack.at(-1)?.after || historyState.baseSnapshot;
+}
+
+function recordHistoryCommand(command, { clearRedo = true } = {}) {
+  if (!command?.after?.html || !command?.before?.html) return;
   const last = historyState.undoStack.at(-1);
-  if (last && last.html === snapshot.html && last.selectedUid === snapshot.selectedUid && last.selectionMode === snapshot.selectionMode) {
-    persistAutosave(snapshot);
+  if (last?.after?.html === command.after.html) {
+    persistAutosave(command.after);
     refreshHistoryButtons();
     return;
   }
-  historyState.undoStack.push(snapshot);
+  historyState.undoStack.push(command);
   if (historyState.undoStack.length > HISTORY_LIMIT) historyState.undoStack.shift();
   if (clearRedo) historyState.redoStack = [];
-  persistAutosave(snapshot);
+  persistAutosave(command.after);
   refreshHistoryButtons();
 }
 
@@ -372,15 +378,14 @@ function restoreHistorySnapshot(snapshot, label) {
 }
 
 function undoHistory() {
-  if (historyState.undoStack.length <= 1) {
+  if (!historyState.undoStack.length) {
     setStatus('되돌릴 작업이 없습니다.');
     return;
   }
   const current = historyState.undoStack.pop();
   historyState.redoStack.push(current);
-  const previous = historyState.undoStack.at(-1);
   refreshHistoryButtons();
-  restoreHistorySnapshot(previous, '이전 작업으로 되돌렸습니다.');
+  restoreHistorySnapshot(current.before, '이전 작업으로 되돌렸습니다.');
 }
 
 function redoHistory() {
@@ -391,7 +396,7 @@ function redoHistory() {
   const next = historyState.redoStack.pop();
   historyState.undoStack.push(next);
   refreshHistoryButtons();
-  restoreHistorySnapshot(next, '되돌린 작업을 다시 적용했습니다.');
+  restoreHistorySnapshot(next.after, '되돌린 작업을 다시 적용했습니다.');
 }
 
 function buildReportPayload(project, report) {
@@ -662,8 +667,8 @@ function mountProject(project, { snapshot = null, preserveHistory = false, force
       initialSnapshot: snapshot,
       onStateChange: (meta) => store.setEditorMeta(meta),
       onStatus: setStatus,
-      onMutation: (nextSnapshot) => {
-        recordHistorySnapshot(nextSnapshot);
+      onMutation: (command) => {
+        recordHistoryCommand(command);
         if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
       },
       onShortcut: handleEditorShortcut,
@@ -672,10 +677,11 @@ function mountProject(project, { snapshot = null, preserveHistory = false, force
     store.setEditorMeta(activeEditor.getMeta());
     applyPreviewZoom();
     if (!preserveHistory) {
-      resetHistory();
-      recordHistorySnapshot(activeEditor.captureSnapshot('initial'));
+      resetHistory(activeEditor.captureSnapshot('initial'));
+      persistAutosave(historyState.baseSnapshot);
+      refreshHistoryButtons();
     } else {
-      persistAutosave(historyState.undoStack.at(-1) || activeEditor.captureSnapshot('restore'));
+      persistAutosave(latestHistorySnapshot() || activeEditor.captureSnapshot('restore'));
       refreshHistoryButtons();
     }
     if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());

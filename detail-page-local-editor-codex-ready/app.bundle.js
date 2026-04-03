@@ -1269,6 +1269,140 @@ function createProjectStore() {
 }
 
 
+/* ===== src/core/editor-model.js ===== */
+
+function parseStyle(styleText = '') {
+  const map = new Map();
+  for (const raw of String(styleText || '').split(';')) {
+    const [key, ...rest] = raw.split(':');
+    if (!key || !rest.length) continue;
+    map.set(key.trim().toLowerCase(), rest.join(':').trim());
+  }
+  return map;
+}
+
+function serializeStyle(map) {
+  return Array.from(map.entries()).map(([key, value]) => `${key}: ${value}`).join('; ');
+}
+
+function pxValue(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const match = raw.match(/^-?\d+(\.\d+)?/);
+  if (!match) return null;
+  const num = Number.parseFloat(match[0]);
+  return Number.isFinite(num) ? num : null;
+}
+
+function readNodeState(element) {
+  const uid = element.dataset.nodeUid || '';
+  const styleMap = parseStyle(element.getAttribute('style') || '');
+  const tx = pxValue(element.dataset.editorTx) || 0;
+  const ty = pxValue(element.dataset.editorTy) || 0;
+  return {
+    uid,
+    bounds: {
+      x: tx,
+      y: ty,
+      width: pxValue(styleMap.get('width')),
+      height: pxValue(styleMap.get('height')),
+    },
+    style: Object.fromEntries(styleMap.entries()),
+    slotMeta: {
+      detectedType: element.getAttribute('data-detected-slot') || '',
+      label: element.getAttribute('data-slot-label') || '',
+      score: Number.parseFloat(element.getAttribute('data-detected-slot-score') || '0') || 0,
+      reasons: (element.getAttribute('data-detected-slot-reasons') || '').split('|').map((item) => item.trim()).filter(Boolean),
+    },
+  };
+}
+function createEditorModel(doc) {
+  const nodes = new Map();
+  for (const element of Array.from(doc.querySelectorAll('[data-node-uid]'))) {
+    const state = readNodeState(element);
+    if (state.uid) nodes.set(state.uid, state);
+  }
+  return { version: 1, nodes };
+}
+function patchModelNode(model, uid, patch = {}) {
+  if (!model || !uid) return null;
+  const current = model.nodes.get(uid) || {
+    uid,
+    bounds: { x: 0, y: 0, width: null, height: null },
+    style: {},
+    slotMeta: { detectedType: '', label: '', score: 0, reasons: [] },
+  };
+  const next = {
+    ...current,
+    bounds: { ...current.bounds, ...(patch.bounds || {}) },
+    style: { ...current.style, ...(patch.style || {}) },
+    slotMeta: { ...current.slotMeta, ...(patch.slotMeta || {}) },
+  };
+  model.nodes.set(uid, next);
+  model.version += 1;
+  return next;
+}
+function applyModelNodesToDom(doc, model, uids = []) {
+  if (!model || !doc) return;
+  const targets = uids.length ? uids : Array.from(model.nodes.keys());
+  for (const uid of targets) {
+    const state = model.nodes.get(uid);
+    if (!state) continue;
+    const element = doc.querySelector(`[data-node-uid="${uid}"]`);
+    if (!element) continue;
+    const styleMap = parseStyle(element.getAttribute('style') || '');
+    if (state.bounds.width != null) styleMap.set('width', `${Math.round(state.bounds.width)}px`);
+    if (state.bounds.height != null) styleMap.set('height', `${Math.round(state.bounds.height)}px`);
+    for (const [key, value] of Object.entries(state.style || {})) {
+      if (value == null || value === '') styleMap.delete(String(key).toLowerCase());
+      else styleMap.set(String(key).toLowerCase(), String(value));
+    }
+    const styleText = serializeStyle(styleMap);
+    if (styleText) element.setAttribute('style', styleText);
+    else element.removeAttribute('style');
+    if (styleText) element.dataset.exportStyle = styleText;
+    else element.removeAttribute('data-export-style');
+    element.dataset.editorTx = String(Math.round(state.bounds.x || 0));
+    element.dataset.editorTy = String(Math.round(state.bounds.y || 0));
+    if (state.slotMeta?.label) element.setAttribute('data-slot-label', state.slotMeta.label);
+    if (state.slotMeta?.detectedType) element.setAttribute('data-detected-slot', state.slotMeta.detectedType);
+  }
+}
+
+
+/* ===== src/core/serialize-layer.js ===== */
+
+function restoreSerializedAssetRefs(exportDoc, { keepEditedAssets = true } = {}) {
+  for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
+    if (keepEditedAssets) {
+      if (img.dataset.exportSrc) img.setAttribute('src', img.dataset.exportSrc);
+      else if (img.dataset.originalSrc) img.setAttribute('src', img.dataset.originalSrc);
+    } else if (img.dataset.originalSrc) {
+      img.setAttribute('src', img.dataset.originalSrc);
+    }
+    if (img.dataset.originalSrcset && !img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.originalSrcset);
+    else if (!img.dataset.originalSrcset && !img.dataset.exportSrcset) img.removeAttribute('srcset');
+    if (keepEditedAssets && img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.exportSrcset);
+    img.removeAttribute('sizes');
+  }
+
+  for (const source of Array.from(exportDoc.querySelectorAll('source'))) {
+    if (keepEditedAssets && source.dataset.exportSrcset) source.setAttribute('srcset', source.dataset.exportSrcset);
+    else if (source.dataset.originalSrcset) source.setAttribute('srcset', source.dataset.originalSrcset);
+  }
+
+  for (const element of Array.from(exportDoc.querySelectorAll('[style]'))) {
+    if (keepEditedAssets && element.dataset.exportStyle) element.setAttribute('style', element.dataset.exportStyle);
+    else if (element.dataset.originalStyle) element.setAttribute('style', element.dataset.originalStyle);
+  }
+
+  for (const styleBlock of Array.from(exportDoc.querySelectorAll('style'))) {
+    if (!styleBlock.dataset.originalCss) continue;
+    try { styleBlock.textContent = decodeURIComponent(styleBlock.dataset.originalCss); } catch {}
+  }
+}
+
+
 /* ===== src/editor/frame-editor.js ===== */
 
 const FRAME_CSS_URL_RE = /url\((['"]?)([^"'()]+)\1\)/gi;
@@ -1536,6 +1670,8 @@ function createFrameEditor({
   let overlayNodes = null;
   const slotBackupMap = new Map();
   const modifiedSlots = new Set();
+  const editorModel = createEditorModel(doc);
+  let lastCommittedSnapshot = initialSnapshot?.html ? { ...initialSnapshot } : null;
 
   function uniqueConnectedElements(items) {
     const seen = new Set();
@@ -1889,7 +2025,10 @@ function createFrameEditor({
   }
 
   function emitMutation(label) {
-    onMutation(captureSnapshot(label));
+    const before = lastCommittedSnapshot || captureSnapshot('before-command');
+    const after = captureSnapshot(label);
+    lastCommittedSnapshot = after;
+    onMutation({ type: 'command', id: nextId('cmd'), label, before, after, modelVersion: editorModel.version, at: new Date().toISOString() });
   }
 
   function getElementByUid(uid) {
@@ -2053,6 +2192,10 @@ function createFrameEditor({
     const keepUids = preserveSelectionUids || selectedElements.map((element) => element.dataset.nodeUid).filter(Boolean) || [];
     detection = collectSlotCandidates(doc, { markDom: true });
     slotMap = new Map(detection.candidates.map((item) => [item.uid, item]));
+    const refreshedModel = createEditorModel(doc);
+    editorModel.nodes.clear();
+    for (const [uid, node] of refreshedModel.nodes.entries()) editorModel.nodes.set(uid, node);
+    editorModel.version = refreshedModel.version;
     const keepElements = uniqueConnectedElements(keepUids.map((uid) => getElementByUid(uid)));
     if (keepElements.length) selectElements(keepElements, { silent: true });
     else if (preserveSelectionUid || initialSnapshot?.selectedUid) {
@@ -2080,7 +2223,8 @@ function createFrameEditor({
     if (hidden) element.dataset.editorHidden = '1';
     else element.removeAttribute('data-editor-hidden');
     const baseDisplay = decodeData(element.dataset.editorBaseDisplay || '');
-    setInlineStyle(element, { display: hidden ? 'none' : (baseDisplay && baseDisplay !== 'none' ? baseDisplay : null) });
+    patchModelNode(editorModel, uid, { style: { display: hidden ? 'none' : (baseDisplay && baseDisplay !== 'none' ? baseDisplay : null) } });
+    applyModelNodesToDom(doc, editorModel, [uid]);
     element.dataset.editorModified = '1';
     modifiedSlots.add(uid);
     return true;
@@ -2092,6 +2236,7 @@ function createFrameEditor({
     element.dataset.nodeUid = uid;
     if (locked) element.dataset.editorLocked = '1';
     else element.removeAttribute('data-editor-locked');
+    patchModelNode(editorModel, uid, {});
     element.dataset.editorModified = '1';
     modifiedSlots.add(uid);
     return true;
@@ -2385,7 +2530,13 @@ function createFrameEditor({
     const translate = (tx || ty) ? `translate(${Number(tx.toFixed(3))}px, ${Number(ty.toFixed(3))}px)` : '';
     const base = state.base && state.base !== 'none' ? state.base : '';
     const nextTransform = [base, translate].filter(Boolean).join(' ').trim();
-    setInlineStyle(element, { transform: nextTransform || null });
+    const uid = element.dataset.nodeUid || nextId('node');
+    element.dataset.nodeUid = uid;
+    patchModelNode(editorModel, uid, {
+      bounds: { x: Number(tx.toFixed(3)), y: Number(ty.toFixed(3)) },
+      style: { transform: nextTransform || null },
+    });
+    applyModelNodesToDom(doc, editorModel, [uid]);
     element.dataset.editorModified = '1';
   }
 
@@ -2426,10 +2577,23 @@ function createFrameEditor({
     if (!target) return { ok: false, message: '먼저 요소를 선택해 주세요.' };
     if (isLockedElement(target)) return { ok: false, message: '잠긴 요소는 편집할 수 없습니다.' };
     if (Number.isFinite(patch.w) || Number.isFinite(patch.h)) {
+      const uid = target.dataset.nodeUid || nextId('node');
+      target.dataset.nodeUid = uid;
+      const boundsPatch = {};
       const stylePatch = {};
-      if (Number.isFinite(patch.w)) stylePatch.width = `${Math.max(8, patch.w)}px`;
-      if (Number.isFinite(patch.h)) stylePatch.height = `${Math.max(8, patch.h)}px`;
-      setInlineStyle(target, stylePatch);
+      if (Number.isFinite(patch.w)) {
+        boundsPatch.width = Math.max(8, patch.w);
+        stylePatch.width = `${Math.max(8, patch.w)}px`;
+      }
+      if (Number.isFinite(patch.h)) {
+        boundsPatch.height = Math.max(8, patch.h);
+        stylePatch.height = `${Math.max(8, patch.h)}px`;
+      }
+      patchModelNode(editorModel, uid, {
+        bounds: boundsPatch,
+        style: stylePatch,
+      });
+      applyModelNodesToDom(doc, editorModel, [uid]);
     }
     const state = readTransformState(target);
     const nextX = Number.isFinite(patch.x) ? patch.x : state.tx;
@@ -2741,30 +2905,7 @@ function createFrameEditor({
     const parser = new DOMParser();
     const currentHtml = createDoctypeHtml(doc);
     const exportDoc = parser.parseFromString(currentHtml, 'text/html');
-
-    for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
-      if (img.dataset.exportSrc) img.setAttribute('src', img.dataset.exportSrc);
-      else if (img.dataset.originalSrc) img.setAttribute('src', img.dataset.originalSrc);
-      if (img.dataset.originalSrcset && !img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.originalSrcset);
-      else if (!img.dataset.originalSrcset) img.removeAttribute('srcset');
-      img.removeAttribute('sizes');
-    }
-
-    for (const source of Array.from(exportDoc.querySelectorAll('source'))) {
-      if (source.dataset.originalSrcset) source.setAttribute('srcset', source.dataset.originalSrcset);
-    }
-
-    for (const element of Array.from(exportDoc.querySelectorAll('[style]'))) {
-      if (element.dataset.exportStyle) element.setAttribute('style', element.dataset.exportStyle);
-      else if (element.dataset.originalStyle) element.setAttribute('style', element.dataset.originalStyle);
-    }
-
-    for (const styleBlock of Array.from(exportDoc.querySelectorAll('style'))) {
-      if (styleBlock.dataset.originalCss) {
-        try { styleBlock.textContent = decodeURIComponent(styleBlock.dataset.originalCss); } catch {}
-      }
-    }
-
+    restoreSerializedAssetRefs(exportDoc, { keepEditedAssets: true });
     if (persistDetectedSlots) persistSlotLabels(exportDoc);
     stripFinalEditorRuntime(exportDoc);
     return createDoctypeHtml(exportDoc);
@@ -2774,21 +2915,7 @@ function createFrameEditor({
     const parser = new DOMParser();
     const currentHtml = createDoctypeHtml(doc);
     const exportDoc = parser.parseFromString(currentHtml, 'text/html');
-
-    for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
-      if (img.dataset.exportSrc) img.setAttribute('src', img.dataset.exportSrc);
-      if (img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.exportSrcset);
-      img.removeAttribute('sizes');
-    }
-
-    for (const source of Array.from(exportDoc.querySelectorAll('source'))) {
-      if (source.dataset.exportSrcset) source.setAttribute('srcset', source.dataset.exportSrcset);
-    }
-
-    for (const element of Array.from(exportDoc.querySelectorAll('[style]'))) {
-      if (element.dataset.exportStyle) element.setAttribute('style', element.dataset.exportStyle);
-    }
-
+    restoreSerializedAssetRefs(exportDoc, { keepEditedAssets: true });
     if (persistDetectedSlots) persistSlotLabels(exportDoc);
     stripFinalEditorRuntime(exportDoc);
     return exportDoc;
@@ -3249,7 +3376,13 @@ function createFrameEditor({
     }
     width = Math.max(8, width);
     height = Math.max(8, height);
-    setInlineStyle(target, { width: `${Math.round(width)}px`, height: `${Math.round(height)}px` });
+    const uid = target.dataset.nodeUid || nextId('node');
+    target.dataset.nodeUid = uid;
+    patchModelNode(editorModel, uid, {
+      bounds: { width, height },
+      style: { width: `${Math.round(width)}px`, height: `${Math.round(height)}px` },
+    });
+    applyModelNodesToDom(doc, editorModel, [uid]);
     writeTransformState(target, tx, ty);
     target.dataset.editorModified = '1';
     if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
@@ -3516,7 +3649,7 @@ function createFrameEditor({
     getReport: buildReport,
     getPreflightReport: buildPreflightReport,
     getMeta() {
-      return getDerivedMeta();
+      return { ...getDerivedMeta(), modelVersion: editorModel.version };
     },
     destroy() {
       if (destroyed) return;
@@ -3832,6 +3965,7 @@ const EXPORT_SCALE_OPTIONS = [1, 2, 3];
 const DEFAULT_JPG_QUALITY = 0.92;
 
 const historyState = {
+  baseSnapshot: null,
   undoStack: [],
   redoStack: [],
 };
@@ -4140,29 +4274,34 @@ function persistAutosave(snapshot) {
 
 function refreshHistoryButtons() {
   const hasProject = !!store.getState().project;
-  if (elements.undoButton) elements.undoButton.disabled = !hasProject || historyState.undoStack.length <= 1;
+  if (elements.undoButton) elements.undoButton.disabled = !hasProject || historyState.undoStack.length === 0;
   if (elements.redoButton) elements.redoButton.disabled = !hasProject || historyState.redoStack.length === 0;
   if (elements.restoreAutosaveButton) elements.restoreAutosaveButton.disabled = !readAutosavePayload();
 }
 
-function resetHistory() {
+function resetHistory(baseSnapshot = null) {
+  historyState.baseSnapshot = baseSnapshot?.html ? baseSnapshot : null;
   historyState.undoStack = [];
   historyState.redoStack = [];
   refreshHistoryButtons();
 }
 
-function recordHistorySnapshot(snapshot, { clearRedo = true } = {}) {
-  if (!snapshot?.html) return;
+function latestHistorySnapshot() {
+  return historyState.undoStack.at(-1)?.after || historyState.baseSnapshot;
+}
+
+function recordHistoryCommand(command, { clearRedo = true } = {}) {
+  if (!command?.after?.html || !command?.before?.html) return;
   const last = historyState.undoStack.at(-1);
-  if (last && last.html === snapshot.html && last.selectedUid === snapshot.selectedUid && last.selectionMode === snapshot.selectionMode) {
-    persistAutosave(snapshot);
+  if (last?.after?.html === command.after.html) {
+    persistAutosave(command.after);
     refreshHistoryButtons();
     return;
   }
-  historyState.undoStack.push(snapshot);
+  historyState.undoStack.push(command);
   if (historyState.undoStack.length > HISTORY_LIMIT) historyState.undoStack.shift();
   if (clearRedo) historyState.redoStack = [];
-  persistAutosave(snapshot);
+  persistAutosave(command.after);
   refreshHistoryButtons();
 }
 
@@ -4174,15 +4313,14 @@ function restoreHistorySnapshot(snapshot, label) {
 }
 
 function undoHistory() {
-  if (historyState.undoStack.length <= 1) {
+  if (!historyState.undoStack.length) {
     setStatus('되돌릴 작업이 없습니다.');
     return;
   }
   const current = historyState.undoStack.pop();
   historyState.redoStack.push(current);
-  const previous = historyState.undoStack.at(-1);
   refreshHistoryButtons();
-  restoreHistorySnapshot(previous, '이전 작업으로 되돌렸습니다.');
+  restoreHistorySnapshot(current.before, '이전 작업으로 되돌렸습니다.');
 }
 
 function redoHistory() {
@@ -4193,7 +4331,7 @@ function redoHistory() {
   const next = historyState.redoStack.pop();
   historyState.undoStack.push(next);
   refreshHistoryButtons();
-  restoreHistorySnapshot(next, '되돌린 작업을 다시 적용했습니다.');
+  restoreHistorySnapshot(next.after, '되돌린 작업을 다시 적용했습니다.');
 }
 
 function buildReportPayload(project, report) {
@@ -4449,8 +4587,8 @@ function mountProject(project, { snapshot = null, preserveHistory = false, force
       initialSnapshot: snapshot,
       onStateChange: (meta) => store.setEditorMeta(meta),
       onStatus: setStatus,
-      onMutation: (nextSnapshot) => {
-        recordHistorySnapshot(nextSnapshot);
+      onMutation: (command) => {
+        recordHistoryCommand(command);
         if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
       },
       onShortcut: handleEditorShortcut,
@@ -4459,10 +4597,11 @@ function mountProject(project, { snapshot = null, preserveHistory = false, force
     store.setEditorMeta(activeEditor.getMeta());
     applyPreviewZoom();
     if (!preserveHistory) {
-      resetHistory();
-      recordHistorySnapshot(activeEditor.captureSnapshot('initial'));
+      resetHistory(activeEditor.captureSnapshot('initial'));
+      persistAutosave(historyState.baseSnapshot);
+      refreshHistoryButtons();
     } else {
-      persistAutosave(historyState.undoStack.at(-1) || activeEditor.captureSnapshot('restore'));
+      persistAutosave(latestHistorySnapshot() || activeEditor.captureSnapshot('restore'));
       refreshHistoryButtons();
     }
     if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
