@@ -127,7 +127,8 @@ function shallowDescendantMedia(element) {
     const { node, depth } = queue.shift();
     if (depth > 2) continue;
     for (const child of Array.from(node.children || [])) {
-      if (child.tagName === 'IMG' || child.tagName === 'PICTURE') return { kind: 'img', element: child.tagName === 'IMG' ? child : child.querySelector('img') };
+      if (child.tagName === 'IMG') return { kind: 'img', element: child };
+      if (child.tagName === 'PICTURE') return { kind: 'picture', element: child };
       const style = (child.getAttribute('style') || '').toLowerCase();
       if (style.includes('background-image')) return { kind: 'background', element: child };
       queue.push({ node: child, depth: depth + 1 });
@@ -139,6 +140,12 @@ function shallowDescendantMedia(element) {
 function hasBackgroundImage(element) {
   const style = (element.getAttribute('style') || '').toLowerCase();
   return style.includes('background-image') || style.includes('background:url(') || style.includes('background: url(');
+}
+
+function resolveNudgeStep(event) {
+  if (event?.shiftKey) return FRAME_NUDGE_STEP_RULE.shift;
+  if (event?.altKey) return FRAME_NUDGE_STEP_RULE.alt;
+  return FRAME_NUDGE_STEP_RULE.base;
 }
 
 function isSimpleSlotContainer(element) {
@@ -208,6 +215,26 @@ function decodeData(value) {
     return String(value || '');
   }
 }
+
+const LAYOUT_ENGINE_ATTR = 'data-layout-engine';
+const LAYOUT_CONTAINER_ATTRS = [
+  LAYOUT_ENGINE_ATTR,
+  'data-layout-direction',
+  'data-layout-gap',
+  'data-layout-padding',
+  'data-layout-align',
+  'data-layout-wrap',
+  'data-layout-version',
+];
+const LAYOUT_CHILD_ATTRS = [
+  'data-layout-size',
+  'data-layout-min-w',
+  'data-layout-max-w',
+  'data-layout-min-h',
+  'data-layout-max-h',
+  'data-layout-constraint-x',
+  'data-layout-constraint-y',
+];
 
 function stripTransientRuntime(doc) {
   doc.getElementById(FRAME_STYLE_ID)?.remove();
@@ -872,6 +899,82 @@ export function createFrameEditor({
     };
   }
 
+  function pickSharedStyleValue(elements, getter) {
+    if (!elements.length) return { mixed: false, value: '' };
+    const first = getter(win.getComputedStyle(elements[0]));
+    const same = elements.every((element) => getter(win.getComputedStyle(element)) === first);
+    return {
+      mixed: !same,
+      value: same ? first : '',
+    };
+  }
+
+  function buildObjectInspectorProfile() {
+    const targets = uniqueConnectedElements(selectedElements).filter(Boolean);
+    if (!targets.length) return null;
+    const geometry = summarizeGeometryForSelection(targets);
+    const typeSet = new Set(targets.map((element) => selectionTypeOf(element)));
+    const sharedOpacity = pickSharedStyleValue(targets, (style) => formatNumberString(style.opacity, 2));
+    const sharedDisplay = pickSharedStyleValue(targets, (style) => style.display || '');
+    const sharedVisibility = pickSharedStyleValue(targets, (style) => style.visibility || '');
+    const sharedPosition = pickSharedStyleValue(targets, (style) => style.position || '');
+    const sharedZIndex = pickSharedStyleValue(targets, (style) => style.zIndex || '');
+    const primary = selectedElement || targets[0];
+    const imageElement = primary?.querySelector?.('img') || (primary?.tagName === 'IMG' ? primary : null);
+    const primaryStyle = primary ? win.getComputedStyle(primary) : null;
+    const imageStyle = imageElement ? win.getComputedStyle(imageElement) : null;
+    const textState = getTextStyleState();
+    return {
+      common: {
+        transform: {
+          x: geometry?.relative?.x ?? '',
+          y: geometry?.relative?.y ?? '',
+          w: geometry?.relative?.w ?? '',
+          h: geometry?.relative?.h ?? '',
+          mixed: geometry?.relative?.mixed || {},
+        },
+        appearance: {
+          opacity: sharedOpacity.mixed ? '' : sharedOpacity.value,
+          display: sharedDisplay.mixed ? '' : sharedDisplay.value,
+          visibility: sharedVisibility.mixed ? '' : sharedVisibility.value,
+          mixed: {
+            opacity: sharedOpacity.mixed,
+            display: sharedDisplay.mixed,
+            visibility: sharedVisibility.mixed,
+          },
+        },
+        layout: {
+          position: sharedPosition.mixed ? '' : sharedPosition.value,
+          zIndex: sharedZIndex.mixed ? '' : sharedZIndex.value,
+          mixed: {
+            position: sharedPosition.mixed,
+            zIndex: sharedZIndex.mixed,
+          },
+        },
+      },
+      plugins: {
+        text: textState.enabled ? {
+          targetCount: textState.targetCount,
+          fontSize: textState.fontSize,
+          lineHeight: textState.lineHeight,
+          letterSpacing: textState.letterSpacing,
+          color: textState.color,
+          fontWeight: textState.fontWeight,
+          textAlign: textState.textAlign,
+        } : null,
+        image: typeSet.has('slot') ? {
+          fit: imageStyle?.objectFit || primaryStyle?.backgroundSize || '',
+          position: imageStyle?.objectPosition || primaryStyle?.backgroundPosition || '',
+        } : null,
+        vector: typeSet.has('box') ? {
+          borderRadius: primaryStyle?.borderRadius || '',
+          background: primaryStyle?.backgroundColor || '',
+          border: primaryStyle?.border || '',
+        } : null,
+      },
+    };
+  }
+
   function getDerivedMeta() {
     const selectedItems = selectedElements.map((element) => buildSelectionInfo(element)).filter(Boolean);
     const layerTree = buildLayerTree();
@@ -903,6 +1006,7 @@ export function createFrameEditor({
       preflight: buildPreflightReport(),
       canGroupSelection: canGroupSelection(),
       canUngroupSelection: canUngroupSelection(),
+      objectInspector: buildObjectInspectorProfile(),
     };
   }
 
@@ -919,7 +1023,42 @@ export function createFrameEditor({
     const before = lastCommittedSnapshot || captureSnapshot('before-command');
     const after = captureSnapshot(label);
     lastCommittedSnapshot = after;
-    onMutation({ type: 'command', id: nextId('cmd'), label, before, after, modelVersion: editorModel.version, at: new Date().toISOString() });
+    const nowPerf = win.performance?.now?.() || Date.now();
+    const inputLatencyMs = lastInputTs > 0 ? Math.max(0, nowPerf - lastInputTs) : null;
+    onMutation({
+      type: 'command',
+      id: nextId('cmd'),
+      label,
+      before,
+      after,
+      modelVersion: editorModel.version,
+      at: new Date().toISOString(),
+      inputLatencyMs: Number.isFinite(inputLatencyMs) ? Number(inputLatencyMs.toFixed(2)) : null,
+      dirtyRect: collectSelectionDirtyRect(),
+    });
+  }
+
+  function collectSelectionDirtyRect() {
+    if (!selectedElements.length) return null;
+    const records = selectedElements
+      .filter((element) => element?.isConnected)
+      .map((element) => element.getBoundingClientRect())
+      .filter((rect) => rect.width > 0 && rect.height > 0);
+    if (!records.length) return null;
+    const left = Math.min(...records.map((rect) => rect.left));
+    const top = Math.min(...records.map((rect) => rect.top));
+    const right = Math.max(...records.map((rect) => rect.right));
+    const bottom = Math.max(...records.map((rect) => rect.bottom));
+    return {
+      x: Math.max(0, Math.round(left)),
+      y: Math.max(0, Math.round(top)),
+      width: Math.max(1, Math.round(right - left)),
+      height: Math.max(1, Math.round(bottom - top)),
+    };
+  }
+
+  function markInputTimestamp() {
+    lastInputTs = win.performance?.now?.() || Date.now();
   }
 
   function unsupportedCommandResult(command) {
@@ -1178,7 +1317,7 @@ export function createFrameEditor({
 
   function findSlotMediaTarget(slot) {
     const shallow = shallowDescendantMedia(slot);
-    if (shallow?.kind === 'img' && shallow.element) return shallow;
+    if ((shallow?.kind === 'img' || shallow?.kind === 'picture') && shallow.element) return shallow;
     if (slot.dataset.slotMode === 'background') return { kind: 'background', element: slot };
     if (hasBackgroundImage(slot) && !isSimpleSlotContainer(slot)) return { kind: 'background', element: slot };
     if (shallow?.kind === 'background' && shallow.element && !isSimpleSlotContainer(slot)) return shallow;
@@ -1188,6 +1327,17 @@ export function createFrameEditor({
   function clearSimplePlaceholder(slot) {
     if (!isSimpleSlotContainer(slot)) return;
     slot.innerHTML = '';
+  }
+
+  function applyDataUrlToSourceSrcset(source, dataUrl) {
+    if (!source) return;
+    const candidates = parseSrcsetCandidates(source.getAttribute('srcset') || '');
+    const rewritten = candidates.length
+      ? candidates.map((candidate) => ({ ...candidate, url: dataUrl }))
+      : [{ url: dataUrl, descriptor: '' }];
+    const nextSrcset = serializeSrcsetCandidates(rewritten);
+    source.setAttribute('srcset', nextSrcset);
+    source.dataset.exportSrcset = nextSrcset;
   }
 
   async function applyFileToSlot(slot, file, { emit = true } = {}) {
@@ -1209,19 +1359,25 @@ export function createFrameEditor({
       styleTarget.dataset.exportStyle = nextStyle;
       slot.dataset.editorModified = '1';
     } else {
-      let img = target.element;
+      let img = target.kind === 'picture'
+        ? target.element?.querySelector('img')
+        : target.element;
       if (!img || !img.isConnected || img === slot) {
         clearSimplePlaceholder(slot);
         img = doc.createElement('img');
         img.className = '__phase5_runtime_image';
-        slot.appendChild(img);
+        if (target.kind === 'picture' && target.element?.isConnected) target.element.appendChild(img);
+        else slot.appendChild(img);
       }
       img.classList.add('__phase5_runtime_image');
       img.setAttribute('src', dataUrl);
       img.dataset.exportSrc = dataUrl;
       img.dataset.editorImageModified = '1';
-      img.removeAttribute('srcset');
-      img.removeAttribute('sizes');
+      if (target.kind === 'picture') {
+        for (const source of Array.from(target.element.querySelectorAll('source[srcset]'))) {
+          applyDataUrlToSourceSrcset(source, dataUrl);
+        }
+      }
       setInlineStyle(img, {
         width: '100%',
         height: '100%',
@@ -1468,12 +1624,15 @@ export function createFrameEditor({
     if (editingTextElement) finishTextEdit({ commit: true, emit: false });
     if (imageCropRuntime?.slot === slot) return { ok: true, message: '이미 이미지 크롭 편집 중입니다. Enter=적용, Esc=취소.' };
     if (imageCropRuntime) finishImageCropMode({ apply: true, emit: false });
+    const initialZoom = Number.parseFloat(slot.dataset.editorCropZoom || '1');
+    const initialOffsetX = Number.parseFloat(slot.dataset.editorCropOffsetX || '0');
+    const initialOffsetY = Number.parseFloat(slot.dataset.editorCropOffsetY || '0');
     imageCropRuntime = {
       slot,
       img,
-      zoom: 1,
-      offsetX: 0,
-      offsetY: 0,
+      zoom: Number.isFinite(initialZoom) ? initialZoom : 1,
+      offsetX: Number.isFinite(initialOffsetX) ? initialOffsetX : 0,
+      offsetY: Number.isFinite(initialOffsetY) ? initialOffsetY : 0,
       initialStyle: img.getAttribute('style') || '',
       initialExportStyle: img.dataset.exportStyle || '',
     };
@@ -1501,11 +1660,49 @@ export function createFrameEditor({
   function parseTranslateFromTransform(transformText) {
     const value = String(transformText || '').trim();
     if (!value || value === 'none') return { base: '', tx: 0, ty: 0 };
-    const match = value.match(/translate\(\s*([-+]?\d*\.?\d+)px\s*,\s*([-+]?\d*\.?\d+)px\s*\)\s*$/i);
-    if (!match) return { base: value, tx: 0, ty: 0 };
-    const tx = Number.parseFloat(match[1]) || 0;
-    const ty = Number.parseFloat(match[2]) || 0;
-    const base = value.slice(0, match.index).trim();
+    const translateRe = /(translate(?:3d|x|y)?\(([^)]+)\))/ig;
+    let tx = 0;
+    let ty = 0;
+    let consumed = false;
+    const base = value.replace(translateRe, (full, _fnName, rawArgs) => {
+      const args = String(rawArgs || '').split(',').map((item) => item.trim());
+      const parsePx = (token) => {
+        const match = String(token || '').match(/^([-+]?\d*\.?\d+)(px)?$/i);
+        if (!match) return null;
+        return Number.parseFloat(match[1]);
+      };
+      if (/^translatex\(/i.test(full)) {
+        const px = parsePx(args[0]);
+        if (px == null) return full;
+        tx += px;
+        consumed = true;
+        return '';
+      }
+      if (/^translatey\(/i.test(full)) {
+        const py = parsePx(args[0]);
+        if (py == null) return full;
+        ty += py;
+        consumed = true;
+        return '';
+      }
+      if (/^translate3d\(/i.test(full)) {
+        const px = parsePx(args[0]);
+        const py = parsePx(args[1]);
+        if (px == null || py == null) return full;
+        tx += px;
+        ty += py;
+        consumed = true;
+        return '';
+      }
+      const px = parsePx(args[0]);
+      const py = parsePx(args[1] ?? '0');
+      if (px == null || py == null) return full;
+      tx += px;
+      ty += py;
+      consumed = true;
+      return '';
+    }).replace(/\s{2,}/g, ' ').trim();
+    if (!consumed) return { base: value, tx: 0, ty: 0 };
     return { base, tx, ty };
   }
 
@@ -1612,15 +1809,6 @@ export function createFrameEditor({
     emitState();
     emitMutation('geometry-patch');
     return { ok: true, message: `선택 요소 ${changed}개에 XYWH를 적용했습니다.` };
-  }
-
-  function nudgeSelectedElements(dx = 0, dy = 0) {
-    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
-    if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
-    for (const element of targets) shiftElementBy(element, dx, dy);
-    emitState();
-    emitMutation('nudge');
-    return { ok: true, message: `선택 요소 ${targets.length}개를 (${dx}, ${dy})만큼 이동했습니다.` };
   }
 
   function duplicateSelected() {
@@ -1878,9 +2066,164 @@ export function createFrameEditor({
     return { ok: true, message: `이미지 위치를 ${dx || 0}, ${dy || 0}만큼 미세 조정했습니다.` };
   }
 
+  function parseLayoutPadding(value = '0') {
+    const nums = String(value || '0').split(/[,\s]+/).map((item) => Number.parseFloat(item)).filter((item) => Number.isFinite(item));
+    if (!nums.length) return { top: 0, right: 0, bottom: 0, left: 0 };
+    if (nums.length === 1) return { top: nums[0], right: nums[0], bottom: nums[0], left: nums[0] };
+    if (nums.length === 2) return { top: nums[0], right: nums[1], bottom: nums[0], left: nums[1] };
+    if (nums.length === 3) return { top: nums[0], right: nums[1], bottom: nums[2], left: nums[1] };
+    return { top: nums[0], right: nums[1], bottom: nums[2], left: nums[3] };
+  }
+
+  function clampWithMinMax(size, minRaw, maxRaw) {
+    const min = Number.parseFloat(minRaw);
+    const max = Number.parseFloat(maxRaw);
+    let next = Number.isFinite(size) ? size : 0;
+    if (Number.isFinite(min)) next = Math.max(next, min);
+    if (Number.isFinite(max)) next = Math.min(next, max);
+    return next;
+  }
+
+  function getLayoutChildren(container) {
+    return Array.from(container?.children || []).filter((child) => isElement(child) && !isHiddenElement(child));
+  }
+
+  function applyConstraintsForContainerResize(container, beforeRect, afterRect) {
+    if (!container || !beforeRect || !afterRect) return;
+    const dx = afterRect.width - beforeRect.width;
+    const dy = afterRect.height - beforeRect.height;
+    if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return;
+    for (const child of getLayoutChildren(container)) {
+      if (child.dataset.layoutSize) continue;
+      const constraintsX = child.dataset.layoutConstraintX || 'left';
+      const constraintsY = child.dataset.layoutConstraintY || 'top';
+      if (constraintsX === 'right') shiftElementBy(child, dx, 0);
+      else if (constraintsX === 'center') shiftElementBy(child, dx / 2, 0);
+      else if (constraintsX === 'scale') {
+        const ratio = beforeRect.width > 0 ? afterRect.width / beforeRect.width : 1;
+        const width = clampWithMinMax(child.getBoundingClientRect().width * ratio, child.dataset.layoutMinW, child.dataset.layoutMaxW);
+        setInlineStyle(child, { width: `${Math.round(width)}px` });
+      } else if (constraintsX === 'stretch') {
+        const width = clampWithMinMax(child.getBoundingClientRect().width + dx, child.dataset.layoutMinW, child.dataset.layoutMaxW);
+        setInlineStyle(child, { width: `${Math.round(width)}px` });
+      }
+
+      if (constraintsY === 'bottom') shiftElementBy(child, 0, dy);
+      else if (constraintsY === 'center') shiftElementBy(child, 0, dy / 2);
+      else if (constraintsY === 'scale') {
+        const ratio = beforeRect.height > 0 ? afterRect.height / beforeRect.height : 1;
+        const height = clampWithMinMax(child.getBoundingClientRect().height * ratio, child.dataset.layoutMinH, child.dataset.layoutMaxH);
+        setInlineStyle(child, { height: `${Math.round(height)}px` });
+      } else if (constraintsY === 'stretch') {
+        const height = clampWithMinMax(child.getBoundingClientRect().height + dy, child.dataset.layoutMinH, child.dataset.layoutMaxH);
+        setInlineStyle(child, { height: `${Math.round(height)}px` });
+      }
+    }
+  }
+
+  function runLayoutEngine(container) {
+    if (!container || container.getAttribute(LAYOUT_ENGINE_ATTR) !== '1') return false;
+    const direction = container.dataset.layoutDirection === 'horizontal' ? 'horizontal' : 'vertical';
+    const axis = direction === 'horizontal' ? 'x' : 'y';
+    const gap = Math.max(0, Number.parseFloat(container.dataset.layoutGap || '24') || 24);
+    const align = container.dataset.layoutAlign || 'start';
+    const wrap = container.dataset.layoutWrap === 'wrap';
+    const padding = parseLayoutPadding(container.dataset.layoutPadding || '0');
+    const containerRect = container.getBoundingClientRect();
+    const innerMain = axis === 'x'
+      ? Math.max(0, containerRect.width - padding.left - padding.right)
+      : Math.max(0, containerRect.height - padding.top - padding.bottom);
+    const records = getLayoutChildren(container).map((element) => {
+      const rect = element.getBoundingClientRect();
+      const sizeMode = element.dataset.layoutSize || 'fixed';
+      const mainSizeRaw = axis === 'x' ? rect.width : rect.height;
+      const crossSizeRaw = axis === 'x' ? rect.height : rect.width;
+      const minMain = axis === 'x' ? element.dataset.layoutMinW : element.dataset.layoutMinH;
+      const maxMain = axis === 'x' ? element.dataset.layoutMaxW : element.dataset.layoutMaxH;
+      const minCross = axis === 'x' ? element.dataset.layoutMinH : element.dataset.layoutMinW;
+      const maxCross = axis === 'x' ? element.dataset.layoutMaxH : element.dataset.layoutMaxW;
+      return {
+        element,
+        rect,
+        sizeMode,
+        mainSize: clampWithMinMax(mainSizeRaw, minMain, maxMain),
+        crossSize: clampWithMinMax(crossSizeRaw, minCross, maxCross),
+        minMain,
+        maxMain,
+        minCross,
+        maxCross,
+      };
+    });
+    if (!records.length) return false;
+    const lines = [];
+    let line = [];
+    let lineMain = 0;
+    for (const record of records) {
+      const projected = line.length ? lineMain + gap + record.mainSize : record.mainSize;
+      if (wrap && line.length && projected > innerMain) {
+        lines.push(line);
+        line = [record];
+        lineMain = record.mainSize;
+      } else {
+        line.push(record);
+        lineMain = projected;
+      }
+    }
+    if (line.length) lines.push(line);
+
+    let crossCursor = axis === 'x' ? padding.top : padding.left;
+    for (const currentLine of lines) {
+      const fillItems = currentLine.filter((item) => item.sizeMode === 'fill');
+      const fixedMain = currentLine.reduce((sum, item) => sum + (item.sizeMode === 'fill' ? 0 : item.mainSize), 0);
+      const freeMain = Math.max(0, innerMain - fixedMain - gap * Math.max(0, currentLine.length - 1));
+      const fillMain = fillItems.length ? freeMain / fillItems.length : 0;
+      const lineCross = currentLine.reduce((max, item) => Math.max(max, item.crossSize), 0);
+      let mainCursor = axis === 'x' ? padding.left : padding.top;
+      for (const item of currentLine) {
+        const nextMain = item.sizeMode === 'fill'
+          ? clampWithMinMax(fillMain, item.minMain, item.maxMain)
+          : clampWithMinMax(item.mainSize, item.minMain, item.maxMain);
+        const nextCross = align === 'stretch'
+          ? clampWithMinMax(lineCross, item.minCross, item.maxCross)
+          : clampWithMinMax(item.crossSize, item.minCross, item.maxCross);
+        let crossPos = crossCursor;
+        if (align === 'center') crossPos = crossCursor + (lineCross - nextCross) / 2;
+        else if (align === 'end') crossPos = crossCursor + Math.max(0, lineCross - nextCross);
+        const targetX = axis === 'x' ? mainCursor : crossPos;
+        const targetY = axis === 'x' ? crossPos : mainCursor;
+        const currentRect = item.element.getBoundingClientRect();
+        const dx = targetX - (currentRect.left - containerRect.left);
+        const dy = targetY - (currentRect.top - containerRect.top);
+        shiftElementBy(item.element, dx, dy);
+        setInlineStyle(item.element, {
+          width: `${Math.round(axis === 'x' ? nextMain : nextCross)}px`,
+          height: `${Math.round(axis === 'x' ? nextCross : nextMain)}px`,
+        });
+        mainCursor += nextMain + gap;
+      }
+      crossCursor += lineCross + gap;
+    }
+    return true;
+  }
+
+  function migrateLayoutContainerToManual(container) {
+    if (!container || container.getAttribute(LAYOUT_ENGINE_ATTR) !== '1') return false;
+    for (const attr of LAYOUT_CONTAINER_ATTRS) container.removeAttribute(attr);
+    for (const child of getLayoutChildren(container)) {
+      for (const attr of LAYOUT_CHILD_ATTRS) child.removeAttribute(attr);
+    }
+    return true;
+  }
+
   function applyBatchLayout(action) {
     const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
     if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
+    const managedContainers = new Set(
+      targets
+        .map((element) => element.parentElement)
+        .filter((parent) => parent?.getAttribute?.(LAYOUT_ENGINE_ATTR) === '1'),
+    );
+    for (const container of managedContainers) migrateLayoutContainerToManual(container);
     if (action !== 'reset-transform' && targets.length < 2) return { ok: false, message: '정렬/간격 작업은 2개 이상 선택해야 합니다.' };
     const records = targets.map((element) => ({ element, rect: element.getBoundingClientRect() }));
     const anchor = records[0];
@@ -1959,34 +2302,30 @@ export function createFrameEditor({
   }
 
   function applyStackLayout({ direction = 'vertical', gap = 24, align = 'start' } = {}) {
-    const axis = direction === 'horizontal' ? 'x' : 'y';
-    const crossAxis = axis === 'x' ? 'y' : 'x';
     const normalizedGap = Number.isFinite(gap) ? Math.max(0, gap) : 24;
     const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
     if (targets.length < 2) return { ok: false, message: '스택 정렬은 2개 이상 선택해야 합니다.' };
-    const records = targets.map((element) => ({ element, rect: element.getBoundingClientRect() }));
-    const sorted = [...records].sort((a, b) => axis === 'x' ? a.rect.left - b.rect.left : a.rect.top - b.rect.top);
-    const anchor = sorted[0].rect;
-    let cursor = axis === 'x' ? anchor.left : anchor.top;
-    for (const record of sorted) {
-      const primary = axis === 'x' ? record.rect.left : record.rect.top;
-      const secondary = axis === 'x' ? record.rect.top : record.rect.left;
-      const size = axis === 'x' ? record.rect.width : record.rect.height;
-      const crossSize = axis === 'x' ? record.rect.height : record.rect.width;
-      let targetCross = axis === 'x' ? anchor.top : anchor.left;
-      if (align === 'center') {
-        targetCross = (axis === 'x' ? anchor.top + (anchor.height - crossSize) / 2 : anchor.left + (anchor.width - crossSize) / 2);
-      } else if (align === 'end') {
-        targetCross = axis === 'x' ? anchor.bottom - crossSize : anchor.right - crossSize;
-      }
-      const deltaPrimary = cursor - primary;
-      const deltaCross = targetCross - secondary;
-      shiftElementBy(record.element, axis === 'x' ? deltaPrimary : deltaCross, axis === 'x' ? deltaCross : deltaPrimary);
-      cursor += size + normalizedGap;
+    const parents = new Set(targets.map((element) => element.parentElement).filter(Boolean));
+    if (parents.size !== 1) return { ok: false, message: '스택 정렬은 같은 부모 안의 요소만 가능합니다.' };
+    const container = Array.from(parents)[0];
+    container.setAttribute(LAYOUT_ENGINE_ATTR, '1');
+    container.dataset.layoutVersion = '1';
+    container.dataset.layoutDirection = direction === 'horizontal' ? 'horizontal' : 'vertical';
+    container.dataset.layoutGap = String(Math.round(normalizedGap));
+    container.dataset.layoutAlign = ['start', 'center', 'end', 'stretch'].includes(align) ? align : 'start';
+    if (!container.dataset.layoutPadding) container.dataset.layoutPadding = '0';
+    if (!container.dataset.layoutWrap) container.dataset.layoutWrap = 'nowrap';
+    for (const element of targets) {
+      if (!element.dataset.layoutSize) element.dataset.layoutSize = 'fixed';
+      if (!element.dataset.layoutConstraintX) element.dataset.layoutConstraintX = 'left';
+      if (!element.dataset.layoutConstraintY) element.dataset.layoutConstraintY = 'top';
+      element.dataset.editorModified = '1';
+      if (element.dataset.nodeUid) modifiedSlots.add(element.dataset.nodeUid);
     }
+    runLayoutEngine(container);
     emitState();
-    emitMutation(axis === 'x' ? 'stack-horizontal' : 'stack-vertical');
-    return { ok: true, message: `선택 요소 ${records.length}개를 ${direction === 'horizontal' ? '가로' : '세로'} 스택으로 정렬했습니다.` };
+    emitMutation(direction === 'horizontal' ? 'stack-horizontal' : 'stack-vertical');
+    return { ok: true, message: `선택 요소 ${targets.length}개를 오토 레이아웃(${direction === 'horizontal' ? '가로' : '세로'})으로 변환했습니다.` };
   }
 
   function tidySelection({ axis = 'x' } = {}) {
@@ -2013,6 +2352,58 @@ export function createFrameEditor({
     emitState();
     emitMutation(normalizedAxis === 'x' ? 'tidy-horizontal' : 'tidy-vertical');
     return { ok: true, message: `선택 요소 ${records.length}개의 ${normalizedAxis === 'x' ? '가로' : '세로'} 간격을 균등화했습니다.` };
+  }
+
+  function configureSelectedLayoutContainer({
+    direction,
+    gap,
+    padding,
+    align,
+    wrap,
+  } = {}) {
+    const container = selectedElement;
+    if (!container) return { ok: false, message: '먼저 컨테이너를 선택해 주세요.' };
+    container.setAttribute(LAYOUT_ENGINE_ATTR, '1');
+    container.dataset.layoutVersion = '1';
+    if (direction) container.dataset.layoutDirection = direction === 'horizontal' ? 'horizontal' : 'vertical';
+    if (gap != null) container.dataset.layoutGap = String(Math.max(0, Number.parseFloat(gap) || 0));
+    if (padding != null) container.dataset.layoutPadding = String(padding);
+    if (align) container.dataset.layoutAlign = align;
+    if (wrap) container.dataset.layoutWrap = wrap === 'wrap' ? 'wrap' : 'nowrap';
+    runLayoutEngine(container);
+    emitState();
+    emitMutation('layout-container-config');
+    return { ok: true, message: '컨테이너 레이아웃 규칙을 업데이트했습니다.' };
+  }
+
+  function configureSelectedChildLayout({
+    size = null,
+    minW = null,
+    maxW = null,
+    minH = null,
+    maxH = null,
+    constraintX = null,
+    constraintY = null,
+  } = {}) {
+    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
+    if (!targets.length) return { ok: false, message: '먼저 자식 요소를 선택해 주세요.' };
+    let hasLayoutContainer = false;
+    for (const element of targets) {
+      if (size) element.dataset.layoutSize = size;
+      if (minW != null) element.dataset.layoutMinW = String(minW);
+      if (maxW != null) element.dataset.layoutMaxW = String(maxW);
+      if (minH != null) element.dataset.layoutMinH = String(minH);
+      if (maxH != null) element.dataset.layoutMaxH = String(maxH);
+      if (constraintX) element.dataset.layoutConstraintX = constraintX;
+      if (constraintY) element.dataset.layoutConstraintY = constraintY;
+      const container = element.parentElement;
+      if (container?.getAttribute?.(LAYOUT_ENGINE_ATTR) === '1') hasLayoutContainer = runLayoutEngine(container) || hasLayoutContainer;
+      element.dataset.editorModified = '1';
+      if (element.dataset.nodeUid) modifiedSlots.add(element.dataset.nodeUid);
+    }
+    emitState();
+    emitMutation(hasLayoutContainer ? 'layout-child-config' : 'constraints-config');
+    return { ok: true, message: `자식 요소 ${targets.length}개의 레이아웃/constraints를 업데이트했습니다.` };
   }
 
   function applyTextStyle(patch = {}, { clear = false } = {}) {
@@ -2417,18 +2808,47 @@ export function createFrameEditor({
   function collectLinkedPathWarnings(exportDoc) {
     const warnings = [];
     const unresolvedTokenRe = /%EB%AF%B8%ED%95%B4%EA%B2%B0|미해결/i;
+    const seen = new Set();
+    const pushWarning = ({ ref = '', uid = '', code = 'BROKEN_LINKED_PATH' } = {}) => {
+      const kind = classifyAssetPath(ref);
+      if (!['relative', 'uploaded'].includes(kind)) return;
+      const key = `${code}::${uid}::${ref}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      warnings.push({ code, kind, uid, ref });
+    };
+
     for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
       const src = img.getAttribute('src') || '';
-      const kind = classifyAssetPath(src);
-      if (!['relative', 'uploaded'].includes(kind)) continue;
       const unresolved = img.dataset.normalizedUnresolvedImage === '1' || unresolvedTokenRe.test(src);
-      if (!unresolved) continue;
-      warnings.push({
-        code: 'BROKEN_LINKED_PATH',
-        kind,
-        uid: img.dataset.nodeUid || '',
-        ref: src,
-      });
+      if (unresolved) pushWarning({ ref: src, uid: img.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_IMG' });
+    }
+
+    for (const source of Array.from(exportDoc.querySelectorAll('source[srcset]'))) {
+      for (const item of parseSrcsetCandidates(source.getAttribute('srcset') || '')) {
+        if (!unresolvedTokenRe.test(item.url || '')) continue;
+        pushWarning({ ref: item.url, uid: source.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_SOURCE' });
+      }
+    }
+
+    for (const element of Array.from(exportDoc.querySelectorAll('[style]'))) {
+      const styleValue = element.getAttribute('style') || '';
+      if (!styleValue.includes('url(')) continue;
+      for (const match of Array.from(styleValue.matchAll(FRAME_CSS_URL_RE))) {
+        const ref = String(match[2] || '');
+        if (!unresolvedTokenRe.test(ref)) continue;
+        pushWarning({ ref, uid: element.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_STYLE' });
+      }
+    }
+
+    for (const styleBlock of Array.from(exportDoc.querySelectorAll('style'))) {
+      const css = styleBlock.textContent || '';
+      if (!css.includes('url(')) continue;
+      for (const match of Array.from(css.matchAll(FRAME_CSS_URL_RE))) {
+        const ref = String(match[2] || '');
+        if (!unresolvedTokenRe.test(ref)) continue;
+        pushWarning({ ref, uid: styleBlock.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_STYLE_BLOCK' });
+      }
     }
     return warnings;
   }
@@ -3018,6 +3438,8 @@ export function createFrameEditor({
       win,
     });
     if (!nextState) return false;
+    nextState.startRect = nextState.target.getBoundingClientRect();
+    nextState.lastRect = nextState.startRect;
     resizeState = nextState;
     return true;
   }
@@ -3053,6 +3475,12 @@ export function createFrameEditor({
     });
     applyModelNodesToDom(doc, editorModel, [uid]);
     writeTransformState(target, tx, ty);
+    const currentRect = target.getBoundingClientRect();
+    if (target.getAttribute(LAYOUT_ENGINE_ATTR) === '1') runLayoutEngine(target);
+    else {
+      applyConstraintsForContainerResize(target, resizeState.lastRect || resizeState.startRect, currentRect);
+      resizeState.lastRect = currentRect;
+    }
     target.dataset.editorModified = '1';
     if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
     updateResizeOverlay();
@@ -3189,6 +3617,8 @@ export function createFrameEditor({
     if (command === 'layer-index-back') return applyLayerIndexCommand('back');
     if (command === 'stack-horizontal') return applyStackLayout({ ...payload, direction: 'horizontal' });
     if (command === 'stack-vertical') return applyStackLayout({ ...payload, direction: 'vertical' });
+    if (command === 'layout-config-container') return configureSelectedLayoutContainer(payload);
+    if (command === 'layout-config-children') return configureSelectedChildLayout(payload);
     if (command === 'tidy-horizontal') return tidySelection({ axis: 'x' });
     if (command === 'tidy-vertical') return tidySelection({ axis: 'y' });
     if (command === 'undo' || command === 'redo' || command === 'save-edited') {
@@ -3200,7 +3630,7 @@ export function createFrameEditor({
 
   function handleKeydown(event) {
     if (imageCropRuntime) {
-      const step = event.shiftKey ? 10 : event.altKey ? 1 : 2;
+      const step = resolveNudgeStep(event);
       if (event.key === 'Escape') {
         event.preventDefault();
         onStatus(finishImageCropMode({ apply: false }).message);
@@ -3305,7 +3735,7 @@ export function createFrameEditor({
     }
     if (!withModifier && !editingTextElement && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
       event.preventDefault();
-      const unit = event.altKey ? 1 : event.shiftKey ? 10 : 2;
+      const unit = resolveNudgeStep(event);
       const dx = event.key === 'ArrowLeft' ? -unit : event.key === 'ArrowRight' ? unit : 0;
       const dy = event.key === 'ArrowUp' ? -unit : event.key === 'ArrowDown' ? unit : 0;
       onStatus(executeCommand('nudge-selection', { dx, dy }).message);
@@ -3358,7 +3788,10 @@ export function createFrameEditor({
   doc.addEventListener('click', handleDocClick, true);
   doc.addEventListener('dblclick', handleDocDoubleClick, true);
   doc.addEventListener('keydown', handleKeydown, true);
+  doc.addEventListener('beforeinput', markInputTimestamp, true);
+  doc.addEventListener('input', markInputTimestamp, true);
   doc.addEventListener('pointerdown', handlePointerDown, true);
+  doc.addEventListener('pointerdown', markInputTimestamp, true);
   doc.addEventListener('pointermove', handlePointerMove, true);
   doc.addEventListener('pointerup', finishPointerDrag, true);
   doc.addEventListener('pointercancel', finishPointerDrag, true);
@@ -3415,6 +3848,8 @@ export function createFrameEditor({
     applyTypographyDefinition,
     applyBatchLayout,
     applyStackLayout,
+    configureSelectedLayoutContainer,
+    configureSelectedChildLayout,
     tidySelection,
     duplicateSelected,
     deleteSelected,
@@ -3484,7 +3919,10 @@ export function createFrameEditor({
       doc.removeEventListener('click', handleDocClick, true);
       doc.removeEventListener('dblclick', handleDocDoubleClick, true);
       doc.removeEventListener('keydown', handleKeydown, true);
+      doc.removeEventListener('beforeinput', markInputTimestamp, true);
+      doc.removeEventListener('input', markInputTimestamp, true);
       doc.removeEventListener('pointerdown', handlePointerDown, true);
+      doc.removeEventListener('pointerdown', markInputTimestamp, true);
       doc.removeEventListener('pointermove', handlePointerMove, true);
       doc.removeEventListener('pointerup', finishPointerDrag, true);
       doc.removeEventListener('pointercancel', finishPointerDrag, true);

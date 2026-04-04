@@ -604,8 +604,10 @@ function createAssetResolver(fileIndex, htmlEntryRelativePath = '') {
   const blobUrlCache = new Map();
   const htmlDirPath = normalizeRelativePath(htmlEntryRelativePath.split('/').slice(0, -1).join('/'));
 
-  function getBlobUrl(file) {
-    const cacheKey = `${file.name}__${file.size}__${file.lastModified}`;
+  function getBlobUrl(entry) {
+    const file = entry?.file;
+    if (!file) return '';
+    const cacheKey = `${entry.relativePath || file.webkitRelativePath || file.name}__${file.name}__${file.size}__${file.lastModified}`;
     if (!blobUrlCache.has(cacheKey)) blobUrlCache.set(cacheKey, URL.createObjectURL(file));
     return blobUrlCache.get(cacheKey);
   }
@@ -630,7 +632,7 @@ function createAssetResolver(fileIndex, htmlEntryRelativePath = '') {
       if (hit) {
         return {
           status: 'resolved',
-          previewUrl: getBlobUrl(hit.file),
+          previewUrl: getBlobUrl(hit),
           scheme: refInfo.scheme,
           matchedPath: candidate,
           method: 'relative-path',
@@ -641,11 +643,22 @@ function createAssetResolver(fileIndex, htmlEntryRelativePath = '') {
 
     const name = basename(stripQueryHash(originalRef)).toLowerCase();
     if (name && fileIndex?.byBasename?.has(name)) {
-      const [first] = fileIndex.byBasename.get(name);
+      const candidates = fileIndex.byBasename.get(name);
+      if (candidates.length > 1) {
+        return {
+          status: 'unresolved',
+          previewUrl: '',
+          scheme: refInfo.scheme,
+          matchedPath: '',
+          method: 'basename-ambiguous',
+          likelyImage: true,
+        };
+      }
+      const [first] = candidates;
       if (first?.file) {
         return {
           status: 'resolved',
-          previewUrl: getBlobUrl(first.file),
+          previewUrl: getBlobUrl(first),
           scheme: refInfo.scheme,
           matchedPath: first.relativePath,
           method: 'basename-fallback',
@@ -1296,6 +1309,8 @@ function normalizeProject({
     assets,
     slotDetection,
     remoteStylesheets,
+    importFileIndex: fileIndex || null,
+    htmlEntryPath,
     releaseResources: () => resolver.release(),
     fileContext: {
       mode: fileIndex?.mode || sourceType,
@@ -1534,7 +1549,6 @@ function restoreSerializedAssetRefs(exportDoc, { keepEditedAssets = true } = {})
     if (img.dataset.originalSrcset && !img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.originalSrcset);
     else if (!img.dataset.originalSrcset && !img.dataset.exportSrcset) img.removeAttribute('srcset');
     if (keepEditedAssets && img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.exportSrcset);
-    img.removeAttribute('sizes');
   }
 
   for (const source of Array.from(exportDoc.querySelectorAll('source'))) {
@@ -1666,7 +1680,8 @@ function shallowDescendantMedia(element) {
     const { node, depth } = queue.shift();
     if (depth > 2) continue;
     for (const child of Array.from(node.children || [])) {
-      if (child.tagName === 'IMG' || child.tagName === 'PICTURE') return { kind: 'img', element: child.tagName === 'IMG' ? child : child.querySelector('img') };
+      if (child.tagName === 'IMG') return { kind: 'img', element: child };
+      if (child.tagName === 'PICTURE') return { kind: 'picture', element: child };
       const style = (child.getAttribute('style') || '').toLowerCase();
       if (style.includes('background-image')) return { kind: 'background', element: child };
       queue.push({ node: child, depth: depth + 1 });
@@ -1678,6 +1693,12 @@ function shallowDescendantMedia(element) {
 function hasBackgroundImage(element) {
   const style = (element.getAttribute('style') || '').toLowerCase();
   return style.includes('background-image') || style.includes('background:url(') || style.includes('background: url(');
+}
+
+function resolveNudgeStep(event) {
+  if (event?.shiftKey) return FRAME_NUDGE_STEP_RULE.shift;
+  if (event?.altKey) return FRAME_NUDGE_STEP_RULE.alt;
+  return FRAME_NUDGE_STEP_RULE.base;
 }
 
 function isSimpleSlotContainer(element) {
@@ -1747,6 +1768,26 @@ function decodeData(value) {
     return String(value || '');
   }
 }
+
+const LAYOUT_ENGINE_ATTR = 'data-layout-engine';
+const LAYOUT_CONTAINER_ATTRS = [
+  LAYOUT_ENGINE_ATTR,
+  'data-layout-direction',
+  'data-layout-gap',
+  'data-layout-padding',
+  'data-layout-align',
+  'data-layout-wrap',
+  'data-layout-version',
+];
+const LAYOUT_CHILD_ATTRS = [
+  'data-layout-size',
+  'data-layout-min-w',
+  'data-layout-max-w',
+  'data-layout-min-h',
+  'data-layout-max-h',
+  'data-layout-constraint-x',
+  'data-layout-constraint-y',
+];
 
 function stripTransientRuntime(doc) {
   doc.getElementById(FRAME_STYLE_ID)?.remove();
@@ -2409,6 +2450,82 @@ function createFrameEditor({
     };
   }
 
+  function pickSharedStyleValue(elements, getter) {
+    if (!elements.length) return { mixed: false, value: '' };
+    const first = getter(win.getComputedStyle(elements[0]));
+    const same = elements.every((element) => getter(win.getComputedStyle(element)) === first);
+    return {
+      mixed: !same,
+      value: same ? first : '',
+    };
+  }
+
+  function buildObjectInspectorProfile() {
+    const targets = uniqueConnectedElements(selectedElements).filter(Boolean);
+    if (!targets.length) return null;
+    const geometry = summarizeGeometryForSelection(targets);
+    const typeSet = new Set(targets.map((element) => selectionTypeOf(element)));
+    const sharedOpacity = pickSharedStyleValue(targets, (style) => formatNumberString(style.opacity, 2));
+    const sharedDisplay = pickSharedStyleValue(targets, (style) => style.display || '');
+    const sharedVisibility = pickSharedStyleValue(targets, (style) => style.visibility || '');
+    const sharedPosition = pickSharedStyleValue(targets, (style) => style.position || '');
+    const sharedZIndex = pickSharedStyleValue(targets, (style) => style.zIndex || '');
+    const primary = selectedElement || targets[0];
+    const imageElement = primary?.querySelector?.('img') || (primary?.tagName === 'IMG' ? primary : null);
+    const primaryStyle = primary ? win.getComputedStyle(primary) : null;
+    const imageStyle = imageElement ? win.getComputedStyle(imageElement) : null;
+    const textState = getTextStyleState();
+    return {
+      common: {
+        transform: {
+          x: geometry?.relative?.x ?? '',
+          y: geometry?.relative?.y ?? '',
+          w: geometry?.relative?.w ?? '',
+          h: geometry?.relative?.h ?? '',
+          mixed: geometry?.relative?.mixed || {},
+        },
+        appearance: {
+          opacity: sharedOpacity.mixed ? '' : sharedOpacity.value,
+          display: sharedDisplay.mixed ? '' : sharedDisplay.value,
+          visibility: sharedVisibility.mixed ? '' : sharedVisibility.value,
+          mixed: {
+            opacity: sharedOpacity.mixed,
+            display: sharedDisplay.mixed,
+            visibility: sharedVisibility.mixed,
+          },
+        },
+        layout: {
+          position: sharedPosition.mixed ? '' : sharedPosition.value,
+          zIndex: sharedZIndex.mixed ? '' : sharedZIndex.value,
+          mixed: {
+            position: sharedPosition.mixed,
+            zIndex: sharedZIndex.mixed,
+          },
+        },
+      },
+      plugins: {
+        text: textState.enabled ? {
+          targetCount: textState.targetCount,
+          fontSize: textState.fontSize,
+          lineHeight: textState.lineHeight,
+          letterSpacing: textState.letterSpacing,
+          color: textState.color,
+          fontWeight: textState.fontWeight,
+          textAlign: textState.textAlign,
+        } : null,
+        image: typeSet.has('slot') ? {
+          fit: imageStyle?.objectFit || primaryStyle?.backgroundSize || '',
+          position: imageStyle?.objectPosition || primaryStyle?.backgroundPosition || '',
+        } : null,
+        vector: typeSet.has('box') ? {
+          borderRadius: primaryStyle?.borderRadius || '',
+          background: primaryStyle?.backgroundColor || '',
+          border: primaryStyle?.border || '',
+        } : null,
+      },
+    };
+  }
+
   function getDerivedMeta() {
     const selectedItems = selectedElements.map((element) => buildSelectionInfo(element)).filter(Boolean);
     const layerTree = buildLayerTree();
@@ -2440,6 +2557,7 @@ function createFrameEditor({
       preflight: buildPreflightReport(),
       canGroupSelection: canGroupSelection(),
       canUngroupSelection: canUngroupSelection(),
+      objectInspector: buildObjectInspectorProfile(),
     };
   }
 
@@ -2456,7 +2574,42 @@ function createFrameEditor({
     const before = lastCommittedSnapshot || captureSnapshot('before-command');
     const after = captureSnapshot(label);
     lastCommittedSnapshot = after;
-    onMutation({ type: 'command', id: nextId('cmd'), label, before, after, modelVersion: editorModel.version, at: new Date().toISOString() });
+    const nowPerf = win.performance?.now?.() || Date.now();
+    const inputLatencyMs = lastInputTs > 0 ? Math.max(0, nowPerf - lastInputTs) : null;
+    onMutation({
+      type: 'command',
+      id: nextId('cmd'),
+      label,
+      before,
+      after,
+      modelVersion: editorModel.version,
+      at: new Date().toISOString(),
+      inputLatencyMs: Number.isFinite(inputLatencyMs) ? Number(inputLatencyMs.toFixed(2)) : null,
+      dirtyRect: collectSelectionDirtyRect(),
+    });
+  }
+
+  function collectSelectionDirtyRect() {
+    if (!selectedElements.length) return null;
+    const records = selectedElements
+      .filter((element) => element?.isConnected)
+      .map((element) => element.getBoundingClientRect())
+      .filter((rect) => rect.width > 0 && rect.height > 0);
+    if (!records.length) return null;
+    const left = Math.min(...records.map((rect) => rect.left));
+    const top = Math.min(...records.map((rect) => rect.top));
+    const right = Math.max(...records.map((rect) => rect.right));
+    const bottom = Math.max(...records.map((rect) => rect.bottom));
+    return {
+      x: Math.max(0, Math.round(left)),
+      y: Math.max(0, Math.round(top)),
+      width: Math.max(1, Math.round(right - left)),
+      height: Math.max(1, Math.round(bottom - top)),
+    };
+  }
+
+  function markInputTimestamp() {
+    lastInputTs = win.performance?.now?.() || Date.now();
   }
 
   function unsupportedCommandResult(command) {
@@ -2715,7 +2868,7 @@ function createFrameEditor({
 
   function findSlotMediaTarget(slot) {
     const shallow = shallowDescendantMedia(slot);
-    if (shallow?.kind === 'img' && shallow.element) return shallow;
+    if ((shallow?.kind === 'img' || shallow?.kind === 'picture') && shallow.element) return shallow;
     if (slot.dataset.slotMode === 'background') return { kind: 'background', element: slot };
     if (hasBackgroundImage(slot) && !isSimpleSlotContainer(slot)) return { kind: 'background', element: slot };
     if (shallow?.kind === 'background' && shallow.element && !isSimpleSlotContainer(slot)) return shallow;
@@ -2725,6 +2878,17 @@ function createFrameEditor({
   function clearSimplePlaceholder(slot) {
     if (!isSimpleSlotContainer(slot)) return;
     slot.innerHTML = '';
+  }
+
+  function applyDataUrlToSourceSrcset(source, dataUrl) {
+    if (!source) return;
+    const candidates = parseSrcsetCandidates(source.getAttribute('srcset') || '');
+    const rewritten = candidates.length
+      ? candidates.map((candidate) => ({ ...candidate, url: dataUrl }))
+      : [{ url: dataUrl, descriptor: '' }];
+    const nextSrcset = serializeSrcsetCandidates(rewritten);
+    source.setAttribute('srcset', nextSrcset);
+    source.dataset.exportSrcset = nextSrcset;
   }
 
   async function applyFileToSlot(slot, file, { emit = true } = {}) {
@@ -2746,19 +2910,25 @@ function createFrameEditor({
       styleTarget.dataset.exportStyle = nextStyle;
       slot.dataset.editorModified = '1';
     } else {
-      let img = target.element;
+      let img = target.kind === 'picture'
+        ? target.element?.querySelector('img')
+        : target.element;
       if (!img || !img.isConnected || img === slot) {
         clearSimplePlaceholder(slot);
         img = doc.createElement('img');
         img.className = '__phase5_runtime_image';
-        slot.appendChild(img);
+        if (target.kind === 'picture' && target.element?.isConnected) target.element.appendChild(img);
+        else slot.appendChild(img);
       }
       img.classList.add('__phase5_runtime_image');
       img.setAttribute('src', dataUrl);
       img.dataset.exportSrc = dataUrl;
       img.dataset.editorImageModified = '1';
-      img.removeAttribute('srcset');
-      img.removeAttribute('sizes');
+      if (target.kind === 'picture') {
+        for (const source of Array.from(target.element.querySelectorAll('source[srcset]'))) {
+          applyDataUrlToSourceSrcset(source, dataUrl);
+        }
+      }
       setInlineStyle(img, {
         width: '100%',
         height: '100%',
@@ -3005,12 +3175,15 @@ function createFrameEditor({
     if (editingTextElement) finishTextEdit({ commit: true, emit: false });
     if (imageCropRuntime?.slot === slot) return { ok: true, message: '이미 이미지 크롭 편집 중입니다. Enter=적용, Esc=취소.' };
     if (imageCropRuntime) finishImageCropMode({ apply: true, emit: false });
+    const initialZoom = Number.parseFloat(slot.dataset.editorCropZoom || '1');
+    const initialOffsetX = Number.parseFloat(slot.dataset.editorCropOffsetX || '0');
+    const initialOffsetY = Number.parseFloat(slot.dataset.editorCropOffsetY || '0');
     imageCropRuntime = {
       slot,
       img,
-      zoom: 1,
-      offsetX: 0,
-      offsetY: 0,
+      zoom: Number.isFinite(initialZoom) ? initialZoom : 1,
+      offsetX: Number.isFinite(initialOffsetX) ? initialOffsetX : 0,
+      offsetY: Number.isFinite(initialOffsetY) ? initialOffsetY : 0,
       initialStyle: img.getAttribute('style') || '',
       initialExportStyle: img.dataset.exportStyle || '',
     };
@@ -3038,11 +3211,49 @@ function createFrameEditor({
   function parseTranslateFromTransform(transformText) {
     const value = String(transformText || '').trim();
     if (!value || value === 'none') return { base: '', tx: 0, ty: 0 };
-    const match = value.match(/translate\(\s*([-+]?\d*\.?\d+)px\s*,\s*([-+]?\d*\.?\d+)px\s*\)\s*$/i);
-    if (!match) return { base: value, tx: 0, ty: 0 };
-    const tx = Number.parseFloat(match[1]) || 0;
-    const ty = Number.parseFloat(match[2]) || 0;
-    const base = value.slice(0, match.index).trim();
+    const translateRe = /(translate(?:3d|x|y)?\(([^)]+)\))/ig;
+    let tx = 0;
+    let ty = 0;
+    let consumed = false;
+    const base = value.replace(translateRe, (full, _fnName, rawArgs) => {
+      const args = String(rawArgs || '').split(',').map((item) => item.trim());
+      const parsePx = (token) => {
+        const match = String(token || '').match(/^([-+]?\d*\.?\d+)(px)?$/i);
+        if (!match) return null;
+        return Number.parseFloat(match[1]);
+      };
+      if (/^translatex\(/i.test(full)) {
+        const px = parsePx(args[0]);
+        if (px == null) return full;
+        tx += px;
+        consumed = true;
+        return '';
+      }
+      if (/^translatey\(/i.test(full)) {
+        const py = parsePx(args[0]);
+        if (py == null) return full;
+        ty += py;
+        consumed = true;
+        return '';
+      }
+      if (/^translate3d\(/i.test(full)) {
+        const px = parsePx(args[0]);
+        const py = parsePx(args[1]);
+        if (px == null || py == null) return full;
+        tx += px;
+        ty += py;
+        consumed = true;
+        return '';
+      }
+      const px = parsePx(args[0]);
+      const py = parsePx(args[1] ?? '0');
+      if (px == null || py == null) return full;
+      tx += px;
+      ty += py;
+      consumed = true;
+      return '';
+    }).replace(/\s{2,}/g, ' ').trim();
+    if (!consumed) return { base: value, tx: 0, ty: 0 };
     return { base, tx, ty };
   }
 
@@ -3149,15 +3360,6 @@ function createFrameEditor({
     emitState();
     emitMutation('geometry-patch');
     return { ok: true, message: `선택 요소 ${changed}개에 XYWH를 적용했습니다.` };
-  }
-
-  function nudgeSelectedElements(dx = 0, dy = 0) {
-    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
-    if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
-    for (const element of targets) shiftElementBy(element, dx, dy);
-    emitState();
-    emitMutation('nudge');
-    return { ok: true, message: `선택 요소 ${targets.length}개를 (${dx}, ${dy})만큼 이동했습니다.` };
   }
 
   function duplicateSelected() {
@@ -3415,9 +3617,164 @@ function createFrameEditor({
     return { ok: true, message: `이미지 위치를 ${dx || 0}, ${dy || 0}만큼 미세 조정했습니다.` };
   }
 
+  function parseLayoutPadding(value = '0') {
+    const nums = String(value || '0').split(/[,\s]+/).map((item) => Number.parseFloat(item)).filter((item) => Number.isFinite(item));
+    if (!nums.length) return { top: 0, right: 0, bottom: 0, left: 0 };
+    if (nums.length === 1) return { top: nums[0], right: nums[0], bottom: nums[0], left: nums[0] };
+    if (nums.length === 2) return { top: nums[0], right: nums[1], bottom: nums[0], left: nums[1] };
+    if (nums.length === 3) return { top: nums[0], right: nums[1], bottom: nums[2], left: nums[1] };
+    return { top: nums[0], right: nums[1], bottom: nums[2], left: nums[3] };
+  }
+
+  function clampWithMinMax(size, minRaw, maxRaw) {
+    const min = Number.parseFloat(minRaw);
+    const max = Number.parseFloat(maxRaw);
+    let next = Number.isFinite(size) ? size : 0;
+    if (Number.isFinite(min)) next = Math.max(next, min);
+    if (Number.isFinite(max)) next = Math.min(next, max);
+    return next;
+  }
+
+  function getLayoutChildren(container) {
+    return Array.from(container?.children || []).filter((child) => isElement(child) && !isHiddenElement(child));
+  }
+
+  function applyConstraintsForContainerResize(container, beforeRect, afterRect) {
+    if (!container || !beforeRect || !afterRect) return;
+    const dx = afterRect.width - beforeRect.width;
+    const dy = afterRect.height - beforeRect.height;
+    if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return;
+    for (const child of getLayoutChildren(container)) {
+      if (child.dataset.layoutSize) continue;
+      const constraintsX = child.dataset.layoutConstraintX || 'left';
+      const constraintsY = child.dataset.layoutConstraintY || 'top';
+      if (constraintsX === 'right') shiftElementBy(child, dx, 0);
+      else if (constraintsX === 'center') shiftElementBy(child, dx / 2, 0);
+      else if (constraintsX === 'scale') {
+        const ratio = beforeRect.width > 0 ? afterRect.width / beforeRect.width : 1;
+        const width = clampWithMinMax(child.getBoundingClientRect().width * ratio, child.dataset.layoutMinW, child.dataset.layoutMaxW);
+        setInlineStyle(child, { width: `${Math.round(width)}px` });
+      } else if (constraintsX === 'stretch') {
+        const width = clampWithMinMax(child.getBoundingClientRect().width + dx, child.dataset.layoutMinW, child.dataset.layoutMaxW);
+        setInlineStyle(child, { width: `${Math.round(width)}px` });
+      }
+
+      if (constraintsY === 'bottom') shiftElementBy(child, 0, dy);
+      else if (constraintsY === 'center') shiftElementBy(child, 0, dy / 2);
+      else if (constraintsY === 'scale') {
+        const ratio = beforeRect.height > 0 ? afterRect.height / beforeRect.height : 1;
+        const height = clampWithMinMax(child.getBoundingClientRect().height * ratio, child.dataset.layoutMinH, child.dataset.layoutMaxH);
+        setInlineStyle(child, { height: `${Math.round(height)}px` });
+      } else if (constraintsY === 'stretch') {
+        const height = clampWithMinMax(child.getBoundingClientRect().height + dy, child.dataset.layoutMinH, child.dataset.layoutMaxH);
+        setInlineStyle(child, { height: `${Math.round(height)}px` });
+      }
+    }
+  }
+
+  function runLayoutEngine(container) {
+    if (!container || container.getAttribute(LAYOUT_ENGINE_ATTR) !== '1') return false;
+    const direction = container.dataset.layoutDirection === 'horizontal' ? 'horizontal' : 'vertical';
+    const axis = direction === 'horizontal' ? 'x' : 'y';
+    const gap = Math.max(0, Number.parseFloat(container.dataset.layoutGap || '24') || 24);
+    const align = container.dataset.layoutAlign || 'start';
+    const wrap = container.dataset.layoutWrap === 'wrap';
+    const padding = parseLayoutPadding(container.dataset.layoutPadding || '0');
+    const containerRect = container.getBoundingClientRect();
+    const innerMain = axis === 'x'
+      ? Math.max(0, containerRect.width - padding.left - padding.right)
+      : Math.max(0, containerRect.height - padding.top - padding.bottom);
+    const records = getLayoutChildren(container).map((element) => {
+      const rect = element.getBoundingClientRect();
+      const sizeMode = element.dataset.layoutSize || 'fixed';
+      const mainSizeRaw = axis === 'x' ? rect.width : rect.height;
+      const crossSizeRaw = axis === 'x' ? rect.height : rect.width;
+      const minMain = axis === 'x' ? element.dataset.layoutMinW : element.dataset.layoutMinH;
+      const maxMain = axis === 'x' ? element.dataset.layoutMaxW : element.dataset.layoutMaxH;
+      const minCross = axis === 'x' ? element.dataset.layoutMinH : element.dataset.layoutMinW;
+      const maxCross = axis === 'x' ? element.dataset.layoutMaxH : element.dataset.layoutMaxW;
+      return {
+        element,
+        rect,
+        sizeMode,
+        mainSize: clampWithMinMax(mainSizeRaw, minMain, maxMain),
+        crossSize: clampWithMinMax(crossSizeRaw, minCross, maxCross),
+        minMain,
+        maxMain,
+        minCross,
+        maxCross,
+      };
+    });
+    if (!records.length) return false;
+    const lines = [];
+    let line = [];
+    let lineMain = 0;
+    for (const record of records) {
+      const projected = line.length ? lineMain + gap + record.mainSize : record.mainSize;
+      if (wrap && line.length && projected > innerMain) {
+        lines.push(line);
+        line = [record];
+        lineMain = record.mainSize;
+      } else {
+        line.push(record);
+        lineMain = projected;
+      }
+    }
+    if (line.length) lines.push(line);
+
+    let crossCursor = axis === 'x' ? padding.top : padding.left;
+    for (const currentLine of lines) {
+      const fillItems = currentLine.filter((item) => item.sizeMode === 'fill');
+      const fixedMain = currentLine.reduce((sum, item) => sum + (item.sizeMode === 'fill' ? 0 : item.mainSize), 0);
+      const freeMain = Math.max(0, innerMain - fixedMain - gap * Math.max(0, currentLine.length - 1));
+      const fillMain = fillItems.length ? freeMain / fillItems.length : 0;
+      const lineCross = currentLine.reduce((max, item) => Math.max(max, item.crossSize), 0);
+      let mainCursor = axis === 'x' ? padding.left : padding.top;
+      for (const item of currentLine) {
+        const nextMain = item.sizeMode === 'fill'
+          ? clampWithMinMax(fillMain, item.minMain, item.maxMain)
+          : clampWithMinMax(item.mainSize, item.minMain, item.maxMain);
+        const nextCross = align === 'stretch'
+          ? clampWithMinMax(lineCross, item.minCross, item.maxCross)
+          : clampWithMinMax(item.crossSize, item.minCross, item.maxCross);
+        let crossPos = crossCursor;
+        if (align === 'center') crossPos = crossCursor + (lineCross - nextCross) / 2;
+        else if (align === 'end') crossPos = crossCursor + Math.max(0, lineCross - nextCross);
+        const targetX = axis === 'x' ? mainCursor : crossPos;
+        const targetY = axis === 'x' ? crossPos : mainCursor;
+        const currentRect = item.element.getBoundingClientRect();
+        const dx = targetX - (currentRect.left - containerRect.left);
+        const dy = targetY - (currentRect.top - containerRect.top);
+        shiftElementBy(item.element, dx, dy);
+        setInlineStyle(item.element, {
+          width: `${Math.round(axis === 'x' ? nextMain : nextCross)}px`,
+          height: `${Math.round(axis === 'x' ? nextCross : nextMain)}px`,
+        });
+        mainCursor += nextMain + gap;
+      }
+      crossCursor += lineCross + gap;
+    }
+    return true;
+  }
+
+  function migrateLayoutContainerToManual(container) {
+    if (!container || container.getAttribute(LAYOUT_ENGINE_ATTR) !== '1') return false;
+    for (const attr of LAYOUT_CONTAINER_ATTRS) container.removeAttribute(attr);
+    for (const child of getLayoutChildren(container)) {
+      for (const attr of LAYOUT_CHILD_ATTRS) child.removeAttribute(attr);
+    }
+    return true;
+  }
+
   function applyBatchLayout(action) {
     const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
     if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
+    const managedContainers = new Set(
+      targets
+        .map((element) => element.parentElement)
+        .filter((parent) => parent?.getAttribute?.(LAYOUT_ENGINE_ATTR) === '1'),
+    );
+    for (const container of managedContainers) migrateLayoutContainerToManual(container);
     if (action !== 'reset-transform' && targets.length < 2) return { ok: false, message: '정렬/간격 작업은 2개 이상 선택해야 합니다.' };
     const records = targets.map((element) => ({ element, rect: element.getBoundingClientRect() }));
     const anchor = records[0];
@@ -3496,34 +3853,30 @@ function createFrameEditor({
   }
 
   function applyStackLayout({ direction = 'vertical', gap = 24, align = 'start' } = {}) {
-    const axis = direction === 'horizontal' ? 'x' : 'y';
-    const crossAxis = axis === 'x' ? 'y' : 'x';
     const normalizedGap = Number.isFinite(gap) ? Math.max(0, gap) : 24;
     const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
     if (targets.length < 2) return { ok: false, message: '스택 정렬은 2개 이상 선택해야 합니다.' };
-    const records = targets.map((element) => ({ element, rect: element.getBoundingClientRect() }));
-    const sorted = [...records].sort((a, b) => axis === 'x' ? a.rect.left - b.rect.left : a.rect.top - b.rect.top);
-    const anchor = sorted[0].rect;
-    let cursor = axis === 'x' ? anchor.left : anchor.top;
-    for (const record of sorted) {
-      const primary = axis === 'x' ? record.rect.left : record.rect.top;
-      const secondary = axis === 'x' ? record.rect.top : record.rect.left;
-      const size = axis === 'x' ? record.rect.width : record.rect.height;
-      const crossSize = axis === 'x' ? record.rect.height : record.rect.width;
-      let targetCross = axis === 'x' ? anchor.top : anchor.left;
-      if (align === 'center') {
-        targetCross = (axis === 'x' ? anchor.top + (anchor.height - crossSize) / 2 : anchor.left + (anchor.width - crossSize) / 2);
-      } else if (align === 'end') {
-        targetCross = axis === 'x' ? anchor.bottom - crossSize : anchor.right - crossSize;
-      }
-      const deltaPrimary = cursor - primary;
-      const deltaCross = targetCross - secondary;
-      shiftElementBy(record.element, axis === 'x' ? deltaPrimary : deltaCross, axis === 'x' ? deltaCross : deltaPrimary);
-      cursor += size + normalizedGap;
+    const parents = new Set(targets.map((element) => element.parentElement).filter(Boolean));
+    if (parents.size !== 1) return { ok: false, message: '스택 정렬은 같은 부모 안의 요소만 가능합니다.' };
+    const container = Array.from(parents)[0];
+    container.setAttribute(LAYOUT_ENGINE_ATTR, '1');
+    container.dataset.layoutVersion = '1';
+    container.dataset.layoutDirection = direction === 'horizontal' ? 'horizontal' : 'vertical';
+    container.dataset.layoutGap = String(Math.round(normalizedGap));
+    container.dataset.layoutAlign = ['start', 'center', 'end', 'stretch'].includes(align) ? align : 'start';
+    if (!container.dataset.layoutPadding) container.dataset.layoutPadding = '0';
+    if (!container.dataset.layoutWrap) container.dataset.layoutWrap = 'nowrap';
+    for (const element of targets) {
+      if (!element.dataset.layoutSize) element.dataset.layoutSize = 'fixed';
+      if (!element.dataset.layoutConstraintX) element.dataset.layoutConstraintX = 'left';
+      if (!element.dataset.layoutConstraintY) element.dataset.layoutConstraintY = 'top';
+      element.dataset.editorModified = '1';
+      if (element.dataset.nodeUid) modifiedSlots.add(element.dataset.nodeUid);
     }
+    runLayoutEngine(container);
     emitState();
-    emitMutation(axis === 'x' ? 'stack-horizontal' : 'stack-vertical');
-    return { ok: true, message: `선택 요소 ${records.length}개를 ${direction === 'horizontal' ? '가로' : '세로'} 스택으로 정렬했습니다.` };
+    emitMutation(direction === 'horizontal' ? 'stack-horizontal' : 'stack-vertical');
+    return { ok: true, message: `선택 요소 ${targets.length}개를 오토 레이아웃(${direction === 'horizontal' ? '가로' : '세로'})으로 변환했습니다.` };
   }
 
   function tidySelection({ axis = 'x' } = {}) {
@@ -3550,6 +3903,58 @@ function createFrameEditor({
     emitState();
     emitMutation(normalizedAxis === 'x' ? 'tidy-horizontal' : 'tidy-vertical');
     return { ok: true, message: `선택 요소 ${records.length}개의 ${normalizedAxis === 'x' ? '가로' : '세로'} 간격을 균등화했습니다.` };
+  }
+
+  function configureSelectedLayoutContainer({
+    direction,
+    gap,
+    padding,
+    align,
+    wrap,
+  } = {}) {
+    const container = selectedElement;
+    if (!container) return { ok: false, message: '먼저 컨테이너를 선택해 주세요.' };
+    container.setAttribute(LAYOUT_ENGINE_ATTR, '1');
+    container.dataset.layoutVersion = '1';
+    if (direction) container.dataset.layoutDirection = direction === 'horizontal' ? 'horizontal' : 'vertical';
+    if (gap != null) container.dataset.layoutGap = String(Math.max(0, Number.parseFloat(gap) || 0));
+    if (padding != null) container.dataset.layoutPadding = String(padding);
+    if (align) container.dataset.layoutAlign = align;
+    if (wrap) container.dataset.layoutWrap = wrap === 'wrap' ? 'wrap' : 'nowrap';
+    runLayoutEngine(container);
+    emitState();
+    emitMutation('layout-container-config');
+    return { ok: true, message: '컨테이너 레이아웃 규칙을 업데이트했습니다.' };
+  }
+
+  function configureSelectedChildLayout({
+    size = null,
+    minW = null,
+    maxW = null,
+    minH = null,
+    maxH = null,
+    constraintX = null,
+    constraintY = null,
+  } = {}) {
+    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
+    if (!targets.length) return { ok: false, message: '먼저 자식 요소를 선택해 주세요.' };
+    let hasLayoutContainer = false;
+    for (const element of targets) {
+      if (size) element.dataset.layoutSize = size;
+      if (minW != null) element.dataset.layoutMinW = String(minW);
+      if (maxW != null) element.dataset.layoutMaxW = String(maxW);
+      if (minH != null) element.dataset.layoutMinH = String(minH);
+      if (maxH != null) element.dataset.layoutMaxH = String(maxH);
+      if (constraintX) element.dataset.layoutConstraintX = constraintX;
+      if (constraintY) element.dataset.layoutConstraintY = constraintY;
+      const container = element.parentElement;
+      if (container?.getAttribute?.(LAYOUT_ENGINE_ATTR) === '1') hasLayoutContainer = runLayoutEngine(container) || hasLayoutContainer;
+      element.dataset.editorModified = '1';
+      if (element.dataset.nodeUid) modifiedSlots.add(element.dataset.nodeUid);
+    }
+    emitState();
+    emitMutation(hasLayoutContainer ? 'layout-child-config' : 'constraints-config');
+    return { ok: true, message: `자식 요소 ${targets.length}개의 레이아웃/constraints를 업데이트했습니다.` };
   }
 
   function applyTextStyle(patch = {}, { clear = false } = {}) {
@@ -3954,18 +4359,47 @@ function createFrameEditor({
   function collectLinkedPathWarnings(exportDoc) {
     const warnings = [];
     const unresolvedTokenRe = /%EB%AF%B8%ED%95%B4%EA%B2%B0|미해결/i;
+    const seen = new Set();
+    const pushWarning = ({ ref = '', uid = '', code = 'BROKEN_LINKED_PATH' } = {}) => {
+      const kind = classifyAssetPath(ref);
+      if (!['relative', 'uploaded'].includes(kind)) return;
+      const key = `${code}::${uid}::${ref}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      warnings.push({ code, kind, uid, ref });
+    };
+
     for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
       const src = img.getAttribute('src') || '';
-      const kind = classifyAssetPath(src);
-      if (!['relative', 'uploaded'].includes(kind)) continue;
       const unresolved = img.dataset.normalizedUnresolvedImage === '1' || unresolvedTokenRe.test(src);
-      if (!unresolved) continue;
-      warnings.push({
-        code: 'BROKEN_LINKED_PATH',
-        kind,
-        uid: img.dataset.nodeUid || '',
-        ref: src,
-      });
+      if (unresolved) pushWarning({ ref: src, uid: img.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_IMG' });
+    }
+
+    for (const source of Array.from(exportDoc.querySelectorAll('source[srcset]'))) {
+      for (const item of parseSrcsetCandidates(source.getAttribute('srcset') || '')) {
+        if (!unresolvedTokenRe.test(item.url || '')) continue;
+        pushWarning({ ref: item.url, uid: source.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_SOURCE' });
+      }
+    }
+
+    for (const element of Array.from(exportDoc.querySelectorAll('[style]'))) {
+      const styleValue = element.getAttribute('style') || '';
+      if (!styleValue.includes('url(')) continue;
+      for (const match of Array.from(styleValue.matchAll(FRAME_CSS_URL_RE))) {
+        const ref = String(match[2] || '');
+        if (!unresolvedTokenRe.test(ref)) continue;
+        pushWarning({ ref, uid: element.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_STYLE' });
+      }
+    }
+
+    for (const styleBlock of Array.from(exportDoc.querySelectorAll('style'))) {
+      const css = styleBlock.textContent || '';
+      if (!css.includes('url(')) continue;
+      for (const match of Array.from(css.matchAll(FRAME_CSS_URL_RE))) {
+        const ref = String(match[2] || '');
+        if (!unresolvedTokenRe.test(ref)) continue;
+        pushWarning({ ref, uid: styleBlock.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_STYLE_BLOCK' });
+      }
     }
     return warnings;
   }
@@ -4555,6 +4989,7 @@ function createFrameEditor({
       win,
     });
     if (!nextState) return false;
+    nextState.startRect = nextState.target.getBoundingClientRect();
     resizeState = nextState;
     return true;
   }
@@ -4590,6 +5025,8 @@ function createFrameEditor({
     });
     applyModelNodesToDom(doc, editorModel, [uid]);
     writeTransformState(target, tx, ty);
+    if (target.getAttribute(LAYOUT_ENGINE_ATTR) === '1') runLayoutEngine(target);
+    else applyConstraintsForContainerResize(target, resizeState.startRect, target.getBoundingClientRect());
     target.dataset.editorModified = '1';
     if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
     updateResizeOverlay();
@@ -4726,6 +5163,8 @@ function createFrameEditor({
     if (command === 'layer-index-back') return applyLayerIndexCommand('back');
     if (command === 'stack-horizontal') return applyStackLayout({ ...payload, direction: 'horizontal' });
     if (command === 'stack-vertical') return applyStackLayout({ ...payload, direction: 'vertical' });
+    if (command === 'layout-config-container') return configureSelectedLayoutContainer(payload);
+    if (command === 'layout-config-children') return configureSelectedChildLayout(payload);
     if (command === 'tidy-horizontal') return tidySelection({ axis: 'x' });
     if (command === 'tidy-vertical') return tidySelection({ axis: 'y' });
     if (command === 'undo' || command === 'redo' || command === 'save-edited') {
@@ -4737,7 +5176,7 @@ function createFrameEditor({
 
   function handleKeydown(event) {
     if (imageCropRuntime) {
-      const step = event.shiftKey ? 10 : event.altKey ? 1 : 2;
+      const step = resolveNudgeStep(event);
       if (event.key === 'Escape') {
         event.preventDefault();
         onStatus(finishImageCropMode({ apply: false }).message);
@@ -4842,7 +5281,7 @@ function createFrameEditor({
     }
     if (!withModifier && !editingTextElement && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
       event.preventDefault();
-      const unit = event.altKey ? 1 : event.shiftKey ? 10 : 2;
+      const unit = resolveNudgeStep(event);
       const dx = event.key === 'ArrowLeft' ? -unit : event.key === 'ArrowRight' ? unit : 0;
       const dy = event.key === 'ArrowUp' ? -unit : event.key === 'ArrowDown' ? unit : 0;
       onStatus(executeCommand('nudge-selection', { dx, dy }).message);
@@ -4895,7 +5334,10 @@ function createFrameEditor({
   doc.addEventListener('click', handleDocClick, true);
   doc.addEventListener('dblclick', handleDocDoubleClick, true);
   doc.addEventListener('keydown', handleKeydown, true);
+  doc.addEventListener('beforeinput', markInputTimestamp, true);
+  doc.addEventListener('input', markInputTimestamp, true);
   doc.addEventListener('pointerdown', handlePointerDown, true);
+  doc.addEventListener('pointerdown', markInputTimestamp, true);
   doc.addEventListener('pointermove', handlePointerMove, true);
   doc.addEventListener('pointerup', finishPointerDrag, true);
   doc.addEventListener('pointercancel', finishPointerDrag, true);
@@ -4952,6 +5394,8 @@ function createFrameEditor({
     applyTypographyDefinition,
     applyBatchLayout,
     applyStackLayout,
+    configureSelectedLayoutContainer,
+    configureSelectedChildLayout,
     tidySelection,
     duplicateSelected,
     deleteSelected,
@@ -5021,7 +5465,10 @@ function createFrameEditor({
       doc.removeEventListener('click', handleDocClick, true);
       doc.removeEventListener('dblclick', handleDocDoubleClick, true);
       doc.removeEventListener('keydown', handleKeydown, true);
+      doc.removeEventListener('beforeinput', markInputTimestamp, true);
+      doc.removeEventListener('input', markInputTimestamp, true);
       doc.removeEventListener('pointerdown', handlePointerDown, true);
+      doc.removeEventListener('pointerdown', markInputTimestamp, true);
       doc.removeEventListener('pointermove', handlePointerMove, true);
       doc.removeEventListener('pointerup', finishPointerDrag, true);
       doc.removeEventListener('pointercancel', finishPointerDrag, true);
@@ -5035,6 +5482,69 @@ function createFrameEditor({
     },
   };
 }
+
+
+/* ===== src/ui/object-inspector-schema.js ===== */
+
+const OBJECT_INSPECTOR_SCHEMA = Object.freeze({
+  sections: Object.freeze([
+    Object.freeze({
+      id: 'transform',
+      title: 'Transform',
+      fields: Object.freeze([
+        Object.freeze({ key: 'x', label: 'X' }),
+        Object.freeze({ key: 'y', label: 'Y' }),
+        Object.freeze({ key: 'w', label: 'W' }),
+        Object.freeze({ key: 'h', label: 'H' }),
+      ]),
+    }),
+    Object.freeze({
+      id: 'appearance',
+      title: 'Appearance',
+      fields: Object.freeze([
+        Object.freeze({ key: 'opacity', label: 'Opacity' }),
+        Object.freeze({ key: 'display', label: 'Display' }),
+        Object.freeze({ key: 'visibility', label: 'Visibility' }),
+      ]),
+    }),
+    Object.freeze({
+      id: 'layout',
+      title: 'Layout',
+      fields: Object.freeze([
+        Object.freeze({ key: 'position', label: 'Position' }),
+        Object.freeze({ key: 'zIndex', label: 'z-index' }),
+      ]),
+    }),
+  ]),
+  plugins: Object.freeze({
+    text: Object.freeze({
+      title: 'Text Plugin',
+      fields: Object.freeze([
+        Object.freeze({ key: 'fontSize', label: 'Font size' }),
+        Object.freeze({ key: 'lineHeight', label: 'Line height' }),
+        Object.freeze({ key: 'letterSpacing', label: 'Letter spacing' }),
+        Object.freeze({ key: 'fontWeight', label: 'Weight' }),
+        Object.freeze({ key: 'color', label: 'Color' }),
+        Object.freeze({ key: 'textAlign', label: 'Align' }),
+      ]),
+    }),
+    image: Object.freeze({
+      title: 'Image Plugin',
+      fields: Object.freeze([
+        Object.freeze({ key: 'fit', label: 'Fit' }),
+        Object.freeze({ key: 'position', label: 'Position' }),
+      ]),
+    }),
+    vector: Object.freeze({
+      title: 'Vector Plugin',
+      fields: Object.freeze([
+        Object.freeze({ key: 'borderRadius', label: 'Radius' }),
+        Object.freeze({ key: 'background', label: 'Background' }),
+        Object.freeze({ key: 'border', label: 'Border' }),
+      ]),
+    }),
+  }),
+});
 
 
 /* ===== src/ui/renderers.js ===== */
@@ -5076,6 +5586,8 @@ const LEFT_TAB_STEP_GUIDES = Object.freeze({
     ]),
   }),
 });
+const LAYER_ROW_HEIGHT = 86;
+const LAYER_OVERSCAN = 10;
 function renderLeftTabStepGuide(container, tabId) {
   if (!container) return;
   const guide = LEFT_TAB_STEP_GUIDES[String(tabId || '')];
@@ -5106,7 +5618,20 @@ function renderSummaryCards(container, project, editorMeta = null) {
     ['기존 IMG', project.summary.existingImageCount, `blob URL ${project.fileContext.blobUrlCount}`],
     ['근접 후보', slotSummary.nearMissCount ?? project.summary.nearMissCount ?? 0, '수동 보정 후보'],
     ['편집 수정', editorMeta?.modifiedSlotCount ?? 0, editorMeta?.selectionCount ? `선택 ${editorMeta.selectionCount}개` : '아직 없음'],
+    [
+      '입력 지연 p95(ms)',
+      Number(editorMeta?.performance?.p95InputLatencyMs || 0).toFixed(1),
+      `최근 ${formatNumber(editorMeta?.performance?.sampleCount || 0)}회 · slow(≥50ms) ${formatNumber(editorMeta?.performance?.slowFrames || 0)}회`,
+    ],
   ];
+  const dirtyRect = editorMeta?.performance?.lastDirtyRect;
+  if (dirtyRect) {
+    cards.push([
+      'Dirty-Rect',
+      `${formatNumber(dirtyRect.width)}×${formatNumber(dirtyRect.height)}`,
+      `x:${formatNumber(dirtyRect.x)} y:${formatNumber(dirtyRect.y)} 부분 렌더`,
+    ]);
+  }
   container.innerHTML = cards.map(([label, value, sub]) => `
     <article class="metric-card">
       <div class="metric-card__label">${escapeHtml(label)}</div>
@@ -5157,22 +5682,97 @@ function renderSelectionInspector(container, editorMeta, imageDiagnostic = null)
   }
   const selected = editorMeta.selected;
   const summary = editorMeta.slotSummary || { totalCount: 0, nearMissCount: 0 };
+  const objectInspector = editorMeta?.objectInspector || null;
+  const renderFieldRows = (source, fields, mixedMap = {}) => fields.map((field) => {
+    const mixed = !!mixedMap?.[field.key];
+    const raw = source?.[field.key];
+    const value = mixed ? '혼합' : (raw === '' || raw == null ? '-' : String(raw));
+    return `<div class="inspector-kv"><strong>${escapeHtml(field.label)}</strong><span>${escapeHtml(value)}</span></div>`;
+  }).join('');
+  const commonSectionsHtml = objectInspector
+    ? OBJECT_INSPECTOR_SCHEMA.sections.map((section) => {
+      const source = objectInspector.common?.[section.id] || {};
+      return `
+        <article class="inspector-card">
+          <h4>${escapeHtml(section.title)}</h4>
+          ${renderFieldRows(source, section.fields, source.mixed)}
+        </article>
+      `;
+    }).join('')
+    : '<div class="asset-empty">선택하면 공통 속성을 계산해 표시합니다.</div>';
+  const pluginSectionsHtml = objectInspector
+    ? Object.entries(OBJECT_INSPECTOR_SCHEMA.plugins).map(([pluginKey, schema]) => {
+      const source = objectInspector.plugins?.[pluginKey];
+      if (!source) return '';
+      return `
+        <article class="inspector-card">
+          <h4>${escapeHtml(schema.title)}</h4>
+          ${renderFieldRows(source, schema.fields)}
+        </article>
+      `;
+    }).join('') || '<div class="asset-empty">선택 타입 전용 플러그인이 없습니다.</div>'
+    : '';
   const selectedItemsHtml = editorMeta.selectedItems?.length
     ? `<div class="selected-pill-list">${editorMeta.selectedItems.slice(0, 8).map((item) => `<span class="selected-pill">${escapeHtml(truncate(item.label || item.uid || '-', 24))}</span>`).join('')}</div>`
     : '';
+  const inspectorSchemaByType = {
+    text: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['라벨', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['텍스트 편집', (node) => node.textEditing ? '진행 중' : '아님'],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+    ],
+    image: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['라벨', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['감지 타입', (node) => node.detectedType || '-'],
+      ['점수', (node) => String(node.score ?? '-')],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+    ],
+    slot: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['라벨', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['감지 타입', (node) => node.detectedType || '-'],
+      ['점수', (node) => String(node.score ?? '-')],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+    ],
+    section: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['섹션명', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['선택 개수', () => `${formatNumber(editorMeta.selectionCount || 0)}개`],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+    ],
+    default: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['라벨', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['감지', (node) => node.detectedType || '-'],
+      ['점수', (node) => String(node.score ?? '-')],
+      ['선택 개수', () => `${formatNumber(editorMeta.selectionCount || 0)}개`],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['텍스트 편집', (node) => node.textEditing ? '진행 중' : '아님'],
+    ],
+  };
+  const schemaRows = (selected
+    ? (inspectorSchemaByType[selected.type] || inspectorSchemaByType.default)
+    : []).map(([label, valueResolver]) => `
+      <div class="inspector-kv"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(String(valueResolver(selected)))}</span></div>
+    `).join('');
   const selectionHtml = !selected
     ? '<div class="asset-empty">현재 선택된 요소가 없습니다.</div>'
     : `
       <div class="inspector-card">
-        <div class="inspector-kv"><strong>선택 타입</strong><span>${escapeHtml(selected.type || '-')}</span></div>
-        <div class="inspector-kv"><strong>라벨</strong><span>${escapeHtml(selected.label || '-')}</span></div>
-        <div class="inspector-kv"><strong>UID</strong><span>${escapeHtml(selected.uid || '-')}</span></div>
-        <div class="inspector-kv"><strong>감지</strong><span>${escapeHtml(selected.detectedType || '-')}</span></div>
-        <div class="inspector-kv"><strong>점수</strong><span>${escapeHtml(String(selected.score ?? '-'))}</span></div>
-        <div class="inspector-kv"><strong>선택 개수</strong><span>${formatNumber(editorMeta.selectionCount || 0)}개</span></div>
-        <div class="inspector-kv"><strong>숨김</strong><span>${selected.hidden ? '예' : '아니오'}</span></div>
-        <div class="inspector-kv"><strong>잠금</strong><span>${selected.locked ? '예' : '아니오'}</span></div>
-        <div class="inspector-kv"><strong>텍스트 편집</strong><span>${selected.textEditing ? '진행 중' : '아님'}</span></div>
+        <div class="asset-ref">Inspector schema: <strong>${escapeHtml(selected.type || 'default')}</strong></div>
+        ${schemaRows}
         ${selectedItemsHtml}
         <div class="inspector-reasons">${(selected.reasons || []).length ? selected.reasons.map((item) => `<div>${escapeHtml(item)}</div>`).join('') : '감지 이유가 없습니다.'}</div>
       </div>`;
@@ -5232,6 +5832,14 @@ function renderSelectionInspector(container, editorMeta, imageDiagnostic = null)
         <li>selection mode ${escapeHtml(editorMeta.selectionMode || 'smart')}</li>
       </ul>
     </article>
+    <article class="slot-card">
+      <h3>Object Inspector (Schema 기반)</h3>
+      ${commonSectionsHtml}
+    </article>
+    <article class="slot-card">
+      <h3>Type Plugins</h3>
+      ${pluginSectionsHtml}
+    </article>
     ${diagnosticHtml}
   `;
 }
@@ -5286,25 +5894,50 @@ function renderLayerTree(container, editorMeta, filterText = '') {
     container.innerHTML = '<div class="asset-empty">필터에 맞는 레이어가 없습니다.</div>';
     return;
   }
-  container.innerHTML = rows.map((node) => `
-    <div class="layer-item ${(selectedUids.has(node.uid) || node.selectedViaGroup) ? 'is-active' : ''} ${node.hidden ? 'is-hidden' : ''} ${node.locked ? 'is-locked' : ''} ${node.type === 'group' ? 'is-group' : ''}" data-layer-uid="${escapeHtml(node.uid)}" style="--depth:${Math.max(0, Number(node.depth || 0))}" role="button" tabindex="0">
-      <span class="layer-item__indent" aria-hidden="true"></span>
-      <span class="layer-item__body">
-        <strong>${node.type === 'group' ? '🗂️ ' : ''}${escapeHtml(truncate(node.label || node.uid, 40))}</strong>
-        <span class="layer-item__meta">${escapeHtml(node.type)} · ${escapeHtml(node.tagName || '')}${node.childCount ? ` · child ${escapeHtml(String(node.childCount))}` : ''}</span>
-        <span class="layer-item__status">
-          ${node.hidden ? '<span class="status-chip" data-status="hidden">숨김</span>' : ''}
-          ${node.locked ? '<span class="status-chip" data-status="locked">잠금</span>' : ''}
-          ${node.selectedViaGroup ? '<span class="status-chip" data-status="selected">그룹선택</span>' : ''}
-        </span>
-      </span>
-      <span class="layer-item__actions">
-        <button class="layer-item__action ${node.hidden ? 'is-on' : ''}" data-layer-action="hide" data-layer-uid="${escapeHtml(node.uid)}">숨김</button>
-        <button class="layer-item__action ${node.locked ? 'is-on' : ''}" data-layer-action="lock" data-layer-uid="${escapeHtml(node.uid)}">잠금</button>
-        <span class="slot-badge" data-kind="${escapeHtml(node.type)}">${escapeHtml(node.type)}</span>
-      </span>
-    </div>
-  `).join('');
+  const fingerprint = rows.map((node) => `${node.uid}:${node.hidden ? 1 : 0}:${node.locked ? 1 : 0}:${node.selectedViaGroup ? 1 : 0}`).join('|');
+  const needsReset = container.dataset.layerRowsFingerprint !== fingerprint;
+  container.dataset.layerRowsFingerprint = fingerprint;
+  container.__layerRows = rows;
+  container.__layerSelectedUids = selectedUids;
+  if (!container.__layerVirtualRender) {
+    container.__layerVirtualRender = () => {
+      const sourceRows = container.__layerRows || [];
+      if (!sourceRows.length) return;
+      const viewportHeight = Math.max(1, container.clientHeight || 320);
+      const totalHeight = sourceRows.length * LAYER_ROW_HEIGHT;
+      const scrollTop = Math.max(0, Math.min(container.scrollTop, Math.max(0, totalHeight - viewportHeight)));
+      const start = Math.max(0, Math.floor(scrollTop / LAYER_ROW_HEIGHT) - LAYER_OVERSCAN);
+      const visibleCount = Math.ceil(viewportHeight / LAYER_ROW_HEIGHT) + LAYER_OVERSCAN * 2;
+      const end = Math.min(sourceRows.length, start + visibleCount);
+      const offsetY = start * LAYER_ROW_HEIGHT;
+      const selected = container.__layerSelectedUids || new Set();
+      const windowHtml = sourceRows.slice(start, end).map((node) => `
+        <div class="layer-item ${(selected.has(node.uid) || node.selectedViaGroup) ? 'is-active' : ''} ${node.hidden ? 'is-hidden' : ''} ${node.locked ? 'is-locked' : ''} ${node.type === 'group' ? 'is-group' : ''}" data-layer-uid="${escapeHtml(node.uid)}" style="--depth:${Math.max(0, Number(node.depth || 0))}" role="button" tabindex="0">
+          <span class="layer-item__indent" aria-hidden="true"></span>
+          <span class="layer-item__body">
+            <strong>${node.type === 'group' ? '🗂️ ' : ''}${escapeHtml(truncate(node.label || node.uid, 40))}</strong>
+            <span class="layer-item__meta">${escapeHtml(node.type)} · ${escapeHtml(node.tagName || '')}${node.childCount ? ` · child ${escapeHtml(String(node.childCount))}` : ''}</span>
+            <span class="layer-item__status">
+              ${node.hidden ? '<span class="status-chip" data-status="hidden">숨김</span>' : ''}
+              ${node.locked ? '<span class="status-chip" data-status="locked">잠금</span>' : ''}
+              ${node.selectedViaGroup ? '<span class="status-chip" data-status="selected">그룹선택</span>' : ''}
+            </span>
+          </span>
+          <span class="layer-item__actions">
+            <button class="layer-item__action ${node.hidden ? 'is-on' : ''}" data-layer-action="hide" data-layer-uid="${escapeHtml(node.uid)}">숨김</button>
+            <button class="layer-item__action ${node.locked ? 'is-on' : ''}" data-layer-action="lock" data-layer-uid="${escapeHtml(node.uid)}">잠금</button>
+            <span class="slot-badge" data-kind="${escapeHtml(node.type)}">${escapeHtml(node.type)}</span>
+          </span>
+        </div>
+      `).join('');
+      container.innerHTML = `
+        <div class="layer-tree__spacer" style="height:${Math.max(totalHeight, 1)}px"></div>
+        <div class="layer-tree__window" style="transform:translateY(${offsetY}px)">${windowHtml}</div>`;
+    };
+    container.addEventListener('scroll', container.__layerVirtualRender, { passive: true });
+  }
+  if (needsReset) container.scrollTop = 0;
+  container.__layerVirtualRender();
 }
 function renderPreflight(container, editorMeta) {
   if (!container) return;
@@ -5457,6 +6090,8 @@ let advancedSettingsDirty = false;
 let lastFocusedBeforeShortcutHelp = null;
 let lastFocusedBeforeDownloadModal = null;
 let importRequestSequence = 0;
+let autosaveWriteSequence = 0;
+let lastStorageWriteFailureAt = 0;
 const zoomState = { mode: 'fit', value: 1 };
 const viewFeatureFlags = {
   snap: true,
@@ -5465,6 +6100,11 @@ const viewFeatureFlags = {
 };
 const OPEN_DOWNLOAD_MODAL_BUTTON_LABEL = '저장/출력 열기';
 const DEFAULT_JPG_QUALITY = 0.92;
+const NUDGE_STEP_RULE = Object.freeze({
+  base: 2,
+  shift: 10,
+  alt: 1,
+});
 const WORKFLOW_STEP_GUIDES = Object.freeze({
   load: 'HTML 파일이나 폴더를 먼저 불러오세요.',
   edit: '요소를 클릭한 뒤 드래그하세요.',
@@ -5498,6 +6138,8 @@ let currentAppState = APP_STATES.launch;
 const BEGINNER_MODE_STORAGE_KEY = 'detail_editor_beginner_mode_v1';
 const ONBOARDING_COMPLETED_STORAGE_KEY = 'detail_editor_onboarding_completed_v1';
 const ONBOARDING_SAMPLE_CHECKED_STORAGE_KEY = 'detail_editor_onboarding_sample_checked_v1';
+const PANEL_LAYOUT_STORAGE_KEY_PREFIX = 'detail_editor_panel_layout_v2';
+const PANEL_LAYOUT_USER_KEY = 'detail_editor_layout_user_v1';
 const COMMAND_REGISTRY = Object.freeze([
   { id: 'tool-select', label: '선택 도구', shortcut: 'V', keywords: ['선택', '화살표', 'v'], run: () => { setSelectionMode('smart'); return { ok: true, message: '선택 도구(V)로 전환했습니다.' }; } },
   { id: 'tool-text', label: '텍스트 도구', shortcut: 'T', keywords: ['텍스트', '글자', 't'], run: () => { setSelectionMode('text'); return { ok: true, message: '텍스트 도구(T)로 전환했습니다.' }; } },
@@ -5506,6 +6148,8 @@ const COMMAND_REGISTRY = Object.freeze([
   { id: 'delete', label: '선택 삭제', shortcut: 'Delete', keywords: ['삭제', '지우기', 'remove'], run: () => executeEditorCommand('delete') },
   { id: 'group', label: '그룹 묶기', shortcut: 'Ctrl/Cmd + G', keywords: ['그룹', '묶기'], run: () => executeEditorCommand('group-selection') },
   { id: 'ungroup', label: '그룹 해제', shortcut: 'Shift + Ctrl/Cmd + G', keywords: ['그룹해제', '해제', 'ungroup'], run: () => executeEditorCommand('ungroup-selection') },
+  { id: 'undo-history', label: '실행 취소', shortcut: 'Ctrl/Cmd + Z', keywords: ['undo', '실행취소'], run: () => undoHistory() },
+  { id: 'redo-history', label: '다시 실행', shortcut: 'Shift + Ctrl/Cmd + Z', keywords: ['redo', '다시실행'], run: () => redoHistory() },
   { id: 'save-edited', label: '문서 저장', shortcut: 'Ctrl/Cmd + S', keywords: ['저장', '세이브', 'save'], run: () => { downloadEditedHtml().catch((error) => setStatus(`문서 저장 중 오류: ${error?.message || error}`)); return { ok: true, message: '문서 저장을 실행했습니다.' }; } },
   { id: 'export-png', label: '전체 PNG 내보내기', shortcut: '-', keywords: ['png', '내보내기', '이미지'], run: () => { exportFullPng().catch((error) => setStatus(`PNG 내보내기 오류: ${error?.message || error}`)); return { ok: true, message: '전체 PNG 내보내기를 실행했습니다.' }; } },
   { id: 'section-add', label: '섹션 추가', shortcut: '-', keywords: ['섹션 추가', 'section', '블록 추가'], run: () => {
@@ -5517,7 +6161,19 @@ const COMMAND_REGISTRY = Object.freeze([
   { id: 'stack-vertical', label: '세로 스택 정렬', shortcut: '-', keywords: ['세로', 'stack', '정렬'], run: () => applyStackCommand('vertical') },
   { id: 'tidy-horizontal', label: '가로 간격 맞춤', shortcut: '-', keywords: ['가로 간격', 'tidy', '균등'], run: () => applyTidyCommand('x') },
   { id: 'tidy-vertical', label: '세로 간격 맞춤', shortcut: '-', keywords: ['세로 간격', 'tidy', '균등'], run: () => applyTidyCommand('y') },
+  { id: 'align-left', label: '왼쪽 정렬', shortcut: '-', keywords: ['정렬', '왼쪽'], run: () => applyBatchAction('align-left') },
+  { id: 'align-center', label: '가운데 정렬', shortcut: '-', keywords: ['정렬', '가운데'], run: () => applyBatchAction('align-center') },
+  { id: 'align-right', label: '오른쪽 정렬', shortcut: '-', keywords: ['정렬', '오른쪽'], run: () => applyBatchAction('align-right') },
+  { id: 'align-top', label: '위쪽 정렬', shortcut: '-', keywords: ['정렬', '위쪽'], run: () => applyBatchAction('align-top') },
+  { id: 'align-middle', label: '세로 중앙 정렬', shortcut: '-', keywords: ['정렬', '세로 중앙'], run: () => applyBatchAction('align-middle') },
+  { id: 'align-bottom', label: '아래쪽 정렬', shortcut: '-', keywords: ['정렬', '아래쪽'], run: () => applyBatchAction('align-bottom') },
+  { id: 'distribute-horizontal', label: '가로 균등 분배', shortcut: '-', keywords: ['분배', '간격', '가로'], run: () => applyBatchAction('distribute-horizontal') },
+  { id: 'distribute-vertical', label: '세로 균등 분배', shortcut: '-', keywords: ['분배', '간격', '세로'], run: () => applyBatchAction('distribute-vertical') },
+  { id: 'reset-transform', label: '배치 초기화', shortcut: '-', keywords: ['리셋', '배치'], run: () => applyBatchAction('reset-transform') },
+  ...ARRANGE_PRESETS.map((preset) => ({ id: `arrange-${preset.id}`, label: `배치 프리셋 · ${preset.label}`, shortcut: '-', keywords: [...preset.keywords, 'preset'], run: preset.run })),
   { id: 'toggle-shortcut-help', label: '단축키 치트시트 열기/닫기', shortcut: '?', keywords: ['도움말', '단축키', '치트시트'], run: () => ({ ok: true, message: toggleShortcutHelp() ? '단축키 치트시트를 열었습니다.' : '단축키 치트시트를 닫았습니다.' }) },
+  { id: 'shortcut-export', label: '단축키 JSON 내보내기', shortcut: '-', keywords: ['단축키', 'json', '내보내기'], run: () => exportShortcutMapJson() },
+  { id: 'shortcut-import', label: '단축키 JSON 불러오기', shortcut: '-', keywords: ['단축키', 'json', '불러오기'], run: () => openShortcutMapImportDialog() },
 ]);
 const BEGINNER_TUTORIAL_STEPS = Object.freeze([
   {
@@ -5545,11 +6201,20 @@ let onboardingCompleted = false;
 let lastFocusedBeforeCommandPalette = null;
 let commandPaletteResults = [];
 let commandPaletteActiveIndex = 0;
+let commandPaletteRecentIds = [];
 
 const historyState = {
   baseSnapshot: null,
   undoStack: [],
   redoStack: [],
+};
+const perfState = {
+  inputLatencies: [],
+  sampleLimit: 240,
+  p95InputLatencyMs: 0,
+  lastInputLatencyMs: 0,
+  slowFrames: 0,
+  lastDirtyRect: null,
 };
 const HISTORY_MERGE_WINDOW_MS = 700;
 const LIVE_HISTORY_LABELS = new Set(['geometry-patch', 'apply-text-style', 'clear-text-style']);
@@ -5610,6 +6275,10 @@ const elements = {
   restoreAutosaveButton: document.getElementById('restoreAutosaveButton'),
   saveProjectSnapshotButton: document.getElementById('saveProjectSnapshotButton'),
   openDownloadModalButton: document.getElementById('openDownloadModalButton'),
+  shareProjectButton: document.getElementById('shareProjectButton'),
+  projectNameDisplay: document.getElementById('projectNameDisplay'),
+  projectNameInput: document.getElementById('projectNameInput'),
+  topbarSaveStatusBadge: document.getElementById('topbarSaveStatusBadge'),
   downloadModal: document.getElementById('downloadModal'),
   closeDownloadModalButton: document.getElementById('closeDownloadModalButton'),
   downloadChoiceSelect: document.getElementById('downloadChoiceSelect'),
@@ -5640,6 +6309,9 @@ const elements = {
   exportJpgQualityInputMain: document.getElementById('exportJpgQualityInputMain'),
   exportJpgQualityInputs: Array.from(document.querySelectorAll('[data-export-jpg-quality-control]')),
   downloadReportButton: document.getElementById('downloadReportButton'),
+  shareReportButton: document.getElementById('shareReportButton'),
+  leftSidebarWidthInput: document.getElementById('leftSidebarWidthInput'),
+  rightSidebarWidthInput: document.getElementById('rightSidebarWidthInput'),
   htmlFileInput: document.getElementById('htmlFileInput'),
   folderInput: document.getElementById('folderInput'),
   replaceImageInput: document.getElementById('replaceImageInput'),
@@ -5772,9 +6444,15 @@ const elements = {
   commandPaletteInput: document.getElementById('commandPaletteInput'),
   commandPaletteList: document.getElementById('commandPaletteList'),
   commandPaletteRunButton: document.getElementById('commandPaletteRunButton'),
+  commandPaletteRecentHint: document.getElementById('commandPaletteRecentHint'),
+  commandPaletteShortcutExportButton: document.getElementById('commandPaletteShortcutExportButton'),
+  commandPaletteShortcutImportButton: document.getElementById('commandPaletteShortcutImportButton'),
+  shortcutMapImportInput: document.getElementById('shortcutMapImportInput'),
   stackDirectionSelect: document.getElementById('stackDirectionSelect'),
   stackGapInput: document.getElementById('stackGapInput'),
   stackAlignSelect: document.getElementById('stackAlignSelect'),
+  arrangePresetSelect: document.getElementById('arrangePresetSelect'),
+  applyArrangePresetButton: document.getElementById('applyArrangePresetButton'),
   stackHorizontalButton: document.getElementById('stackHorizontalButton'),
   stackVerticalButton: document.getElementById('stackVerticalButton'),
   tidyHorizontalButton: document.getElementById('tidyHorizontalButton'),
@@ -5820,6 +6498,48 @@ function writeToLocalStorage(key, value) {
     window.localStorage.setItem(key, value);
   } catch {}
 }
+
+function readJsonStorage(key, fallback) {
+  const raw = readFromLocalStorage(key, '');
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function saveJsonStorage(key, value) {
+  writeToLocalStorage(key, JSON.stringify(value));
+}
+
+function normalizeShortcutCombo(combo = '') {
+  return String(combo || '').trim().toLowerCase().replace(/\s+/g, '');
+}
+
+const DEFAULT_SHORTCUT_MAP = Object.freeze({
+  'v': 'tool-select',
+  't': 'tool-text',
+  'r': 'tool-box',
+  'delete': 'delete',
+  'meta+d': 'duplicate',
+  'ctrl+d': 'duplicate',
+  'meta+g': 'group',
+  'ctrl+g': 'group',
+  'meta+shift+g': 'ungroup',
+  'ctrl+shift+g': 'ungroup',
+  'meta+s': 'save-edited',
+  'ctrl+s': 'save-edited',
+  'meta+k': 'command-palette-open',
+  'ctrl+k': 'command-palette-open',
+  'meta+z': 'undo-history',
+  'ctrl+z': 'undo-history',
+  'meta+shift+z': 'redo-history',
+  'ctrl+shift+z': 'redo-history',
+  'ctrl+y': 'redo-history',
+});
+
+let userShortcutMap = {};
 
 function hasCompletedOnboarding() {
   return readFromLocalStorage(ONBOARDING_COMPLETED_STORAGE_KEY, '') === '1';
@@ -6006,32 +6726,6 @@ function setImageApplyDiagnostic(diagnostic) {
   store.setImageApplyDiagnostic(diagnostic || null);
 }
 
-function buildImageFailureDiagnostic({ files = [], editorMeta = null, statusMessage = '' } = {}) {
-  const firstFile = files[0] || null;
-  const fileName = firstFile?.name || '';
-  const selected = editorMeta?.selected || null;
-  const selectedSlotLabel = selected?.label || selected?.uid || '';
-  const extension = fileName.includes('.') ? fileName.slice(fileName.lastIndexOf('.')).toLowerCase() : '';
-  const unsupportedFormat = !!extension && !SUPPORTED_IMAGE_EXTENSIONS.includes(extension);
-  const filenameMismatch = !!fileName && !!selectedSlotLabel && !fileName.toLowerCase().includes(String(selectedSlotLabel).toLowerCase());
-  const slotUnselected = !selected || selected.type !== 'slot';
-
-  return {
-    status: 'failed',
-    message: statusMessage || '이미지 적용 실패 원인을 확인해 주세요.',
-    reasons: {
-      slotUnselected,
-      filenameMismatch,
-      unsupportedFormat,
-    },
-    details: {
-      slotUnselected: slotUnselected ? '슬롯을 먼저 선택한 뒤 이미지를 넣어 주세요.' : '',
-      filenameMismatch: filenameMismatch ? `선택 슬롯(${selectedSlotLabel})과 파일명(${fileName})이 다릅니다.` : '',
-      unsupportedFormat: unsupportedFormat ? `지원하지 않는 확장자입니다: ${extension}` : '',
-    },
-  };
-}
-
 function setAppState(nextState) {
   const normalized = nextState === APP_STATES.editor ? APP_STATES.editor : APP_STATES.launch;
   currentAppState = normalized;
@@ -6045,7 +6739,7 @@ function refreshLauncherRecentButton() {
   if (!elements.launcherRecentButton) return;
   const payload = readAutosavePayload();
   const hasSnapshot = !!payload?.snapshot?.html;
-  elements.launcherRecentButton.disabled = false;
+  elements.launcherRecentButton.disabled = !hasSnapshot;
   elements.launcherRecentButton.dataset.available = hasSnapshot ? 'true' : 'false';
 }
 
@@ -6065,17 +6759,23 @@ function setStatusWithError(prefix, error, { logTag = 'APP_ERROR' } = {}) {
 
 function buildImageFailureDiagnostic({ files = [], editorMeta = null, statusMessage = '' } = {}) {
   const firstFile = files[0] || null;
+  const fileName = firstFile?.name || '';
+  const extension = fileName.includes('.') ? fileName.slice(fileName.lastIndexOf('.')).toLowerCase() : '';
   const selected = editorMeta?.selected || null;
+  const selectedSlotLabel = selected?.label || selected?.uid || '';
   const selectedSlotLike = !!selected && (selected.type === 'slot' || selected.detectedType === 'slot');
+  const mimeUnsupported = !!firstFile && !String(firstFile.type || '').startsWith('image/');
+  const extensionUnsupported = !!extension && !SUPPORTED_IMAGE_EXTENSIONS.includes(extension);
+  const filenameMismatch = !!fileName && !!selectedSlotLabel && !fileName.toLowerCase().includes(String(selectedSlotLabel).toLowerCase());
   const reasons = {
     slotUnselected: !selectedSlotLike,
-    filenameMismatch: false,
-    unsupportedFormat: !!firstFile && !String(firstFile.type || '').startsWith('image/'),
+    filenameMismatch,
+    unsupportedFormat: mimeUnsupported || extensionUnsupported,
   };
   const details = {
     slotUnselected: selectedSlotLike ? '선택된 슬롯이 있습니다.' : '이미지를 적용할 슬롯을 먼저 선택해 주세요.',
-    filenameMismatch: '필요하면 파일명에 슬롯 이름 일부를 포함해 자동 매칭 정확도를 높이세요.',
-    unsupportedFormat: reasons.unsupportedFormat ? `현재 파일 형식: ${firstFile.type || 'unknown'}` : '이미지 파일 형식입니다.',
+    filenameMismatch: filenameMismatch ? `선택 슬롯(${selectedSlotLabel})과 파일명(${fileName})이 다를 수 있습니다.` : '파일명과 슬롯명이 크게 어긋나지 않습니다.',
+    unsupportedFormat: reasons.unsupportedFormat ? `현재 파일 형식: ${firstFile.type || 'unknown'}, 확장자: ${extension || '없음'}` : '이미지 파일 형식입니다.',
   };
   return {
     status: 'failed',
@@ -6172,6 +6872,36 @@ function renderShortcutHelpList() {
   }
 }
 
+function pushRecentCommand(commandId) {
+  if (!commandId) return;
+  commandPaletteRecentIds = [commandId, ...commandPaletteRecentIds.filter((id) => id !== commandId)].slice(0, 8);
+  saveJsonStorage(COMMAND_RECENTS_STORAGE_KEY, commandPaletteRecentIds);
+}
+
+function getRecentCommands() {
+  return commandPaletteRecentIds
+    .map((id) => COMMAND_REGISTRY.find((item) => item.id === id))
+    .filter(Boolean);
+}
+
+function eventToShortcutCombo(event) {
+  const key = String(event.key || '').toLowerCase();
+  const normalizedKey = key === ' ' ? 'space' : key;
+  const parts = [];
+  if (event.ctrlKey) parts.push('ctrl');
+  if (event.metaKey) parts.push('meta');
+  if (event.altKey) parts.push('alt');
+  if (event.shiftKey && normalizedKey !== 'shift') parts.push('shift');
+  if (!['control', 'meta', 'alt', 'shift'].includes(normalizedKey)) parts.push(normalizedKey);
+  return normalizeShortcutCombo(parts.join('+'));
+}
+
+function resolveShortcutCommand(event) {
+  const combo = eventToShortcutCombo(event);
+  const mergedShortcutMap = { ...DEFAULT_SHORTCUT_MAP, ...userShortcutMap };
+  return mergedShortcutMap[combo] || '';
+}
+
 function getCommandPaletteFocusable() {
   if (!elements.commandPaletteOverlay) return [];
   return Array.from(elements.commandPaletteOverlay.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])'))
@@ -6199,13 +6929,18 @@ function performCommandAction(commandId) {
   if (!command) return { ok: false, message: '명령을 찾지 못했습니다.' };
   const result = command.run?.() || { ok: false, message: '명령 실행기를 찾지 못했습니다.' };
   if (result?.message) setStatus(result.message);
+  if (result?.ok) pushRecentCommand(commandId);
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
   return result;
 }
 
 function filterCommandPalette(query) {
   const normalized = String(query || '').trim().toLowerCase();
-  if (!normalized) return [...COMMAND_REGISTRY];
+  if (!normalized) {
+    const recents = getRecentCommands();
+    const tail = COMMAND_REGISTRY.filter((item) => !recents.some((recent) => recent.id === item.id));
+    return [...recents, ...tail];
+  }
   return COMMAND_REGISTRY.filter((item) => {
     const target = [item.label, item.shortcut, ...(item.keywords || [])].join(' ').toLowerCase();
     return target.includes(normalized);
@@ -6246,6 +6981,8 @@ function runActiveCommandPaletteItem() {
 }
 
 function updateCommandPaletteResults() {
+  const isRecentMode = !String(elements.commandPaletteInput?.value || '').trim();
+  if (elements.commandPaletteRecentHint) elements.commandPaletteRecentHint.hidden = !isRecentMode;
   commandPaletteResults = filterCommandPalette(elements.commandPaletteInput?.value || '');
   commandPaletteActiveIndex = 0;
   renderCommandPaletteResults();
@@ -6320,6 +7057,13 @@ function populateExportPresetSelect() {
     .map((preset) => `<option value="${preset.id}">${preset.label}</option>`)
     .join('');
   elements.exportPresetSelect.value = currentExportPresetId;
+}
+
+function populateArrangePresetSelect() {
+  if (!elements.arrangePresetSelect) return;
+  elements.arrangePresetSelect.innerHTML = ARRANGE_PRESETS
+    .map((preset) => `<option value="${preset.id}">${preset.label}</option>`)
+    .join('');
 }
 
 function currentExportPreset() {
@@ -6464,14 +7208,22 @@ function applyAdvancedSettingsIfDirty() {
 }
 
 function readPanelLayoutState() {
+  const storageKey = getPanelLayoutStorageKey();
   try {
-    const raw = window.localStorage.getItem(PANEL_LAYOUT_STORAGE_KEY);
+    const raw = window.localStorage.getItem(storageKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;
     return {
       basicOpen: parsed.basicOpen !== false,
       advancedOpen: parsed.advancedOpen === true,
+      leftCollapsed: parsed.leftCollapsed === true,
+      rightCollapsed: parsed.rightCollapsed === true,
+      focusStage: parsed.focusStage === true,
+      leftTab: String(parsed.leftTab || ''),
+      rightTab: String(parsed.rightTab || ''),
+      leftWidth: normalizeSidebarWidth(parsed.leftWidth, 340, 260, 480),
+      rightWidth: normalizeSidebarWidth(parsed.rightWidth, 420, 300, 560),
     };
   } catch {
     return null;
@@ -6479,10 +7231,18 @@ function readPanelLayoutState() {
 }
 
 function persistPanelLayoutState() {
+  const storageKey = getPanelLayoutStorageKey();
   try {
-    window.localStorage.setItem(PANEL_LAYOUT_STORAGE_KEY, JSON.stringify({
+    window.localStorage.setItem(storageKey, JSON.stringify({
       basicOpen: !!elements.basicAttributeSection?.open,
       advancedOpen: !!elements.advancedAttributeSection?.open,
+      leftCollapsed: document.body.classList.contains('layout--left-collapsed'),
+      rightCollapsed: document.body.classList.contains('layout--right-collapsed'),
+      focusStage: document.body.classList.contains('layout--focus-stage'),
+      leftTab: getActiveSidebarTab('left'),
+      rightTab: getActiveSidebarTab('right'),
+      leftWidth: normalizeSidebarWidth(elements.leftSidebarWidthInput?.value, 340, 260, 480),
+      rightWidth: normalizeSidebarWidth(elements.rightSidebarWidthInput?.value, 420, 300, 560),
     }));
   } catch {}
 }
@@ -6492,6 +7252,50 @@ function restorePanelLayoutState() {
   if (!saved) return;
   if (elements.basicAttributeSection) elements.basicAttributeSection.open = saved.basicOpen;
   if (elements.advancedAttributeSection) elements.advancedAttributeSection.open = saved.advancedOpen;
+  document.body.classList.toggle('layout--left-collapsed', saved.leftCollapsed);
+  document.body.classList.toggle('layout--right-collapsed', saved.rightCollapsed);
+  document.body.classList.toggle('layout--focus-stage', saved.focusStage);
+  applySidebarWidths(saved.leftWidth, saved.rightWidth);
+  if (saved.leftTab) setSidebarTab(saved.leftTab, { syncWorkflow: false, persist: false });
+  if (saved.rightTab) setSidebarTab(saved.rightTab, { syncWorkflow: false, persist: false });
+}
+
+function getPanelLayoutStorageKey() {
+  const uid = getLayoutUserId();
+  return `${PANEL_LAYOUT_STORAGE_KEY_PREFIX}:${uid}`;
+}
+
+function getLayoutUserId() {
+  const fallbackId = 'local-default';
+  const stored = readFromLocalStorage(PANEL_LAYOUT_USER_KEY, '');
+  if (stored) return String(stored);
+  const generated = `u${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  writeToLocalStorage(PANEL_LAYOUT_USER_KEY, generated);
+  return generated || fallbackId;
+}
+
+function normalizeSidebarWidth(rawValue, fallback, min, max) {
+  const value = Number.parseFloat(String(rawValue ?? ''));
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function applySidebarWidths(leftWidth, rightWidth) {
+  const nextLeft = normalizeSidebarWidth(leftWidth, 340, 260, 480);
+  const nextRight = normalizeSidebarWidth(rightWidth, 420, 300, 560);
+  document.body.style.setProperty('--left-sidebar-width', `${nextLeft}px`);
+  document.body.style.setProperty('--right-sidebar-width', `${nextRight}px`);
+  if (elements.leftSidebarWidthInput) elements.leftSidebarWidthInput.value = String(nextLeft);
+  if (elements.rightSidebarWidthInput) elements.rightSidebarWidthInput.value = String(nextRight);
+}
+
+function getActiveSidebarTab(scope) {
+  if (scope !== 'left' && scope !== 'right') return '';
+  const active = elements.sidebarTabButtons.find((button) => {
+    const id = String(button.dataset.sidebarTab || '');
+    return id.startsWith(`${scope}-`) && button.classList.contains('is-active');
+  });
+  return active?.dataset.sidebarTab || '';
 }
 
 function resolveSidebarTab(panelId) {
@@ -6509,7 +7313,7 @@ function resolveSidebarTab(panelId) {
   return fallback?.dataset.sidebarTab || '';
 }
 
-function setSidebarTab(panelId, { syncWorkflow = true } = {}) {
+function setSidebarTab(panelId, { syncWorkflow = true, persist = true } = {}) {
   const targetPanelId = resolveSidebarTab(panelId);
   const scope = String(targetPanelId || '').startsWith('left-')
     ? 'left'
@@ -6530,6 +7334,7 @@ function setSidebarTab(panelId, { syncWorkflow = true } = {}) {
     panel.classList.toggle('is-active', panel.dataset.sidebarPanel === targetPanelId);
   }
   if (scope === 'left' && syncWorkflow) syncWorkflowGuideStepByLeftTab(targetPanelId);
+  if (persist) persistPanelLayoutState();
 }
 
 function getSlotRuntimeMeta(slotUid) {
@@ -6772,19 +7577,42 @@ function readAutosavePayload() {
   }
 }
 
-function persistAutosave(snapshot) {
+function notifyStorageWriteFailure(context, error) {
+  const now = Date.now();
+  if (now - lastStorageWriteFailureAt < 2000) return;
+  lastStorageWriteFailureAt = now;
+  const detail = extractErrorMessage(error) || '브라우저 저장소 용량 초과 또는 접근 제한';
+  store.setLastError(detail);
+  setStatus(`${context} 저장에 실패했습니다. 용량을 비우고 다시 시도해 주세요.`, { preserveLastError: true });
+  console.error('[LOCAL_STORAGE_WRITE_ERROR]', context, error);
+}
+
+async function persistAutosave(snapshot) {
   const project = store.getState().project;
   if (!project || !snapshot) return;
+  const writeId = ++autosaveWriteSequence;
+  let portableHtml = snapshot.html || '';
+  if (activeEditor?.getCurrentPortableHtml) {
+    try {
+      portableHtml = await activeEditor.getCurrentPortableHtml();
+    } catch {}
+  }
+  if (writeId !== autosaveWriteSequence) return;
   const payload = {
     savedAt: new Date().toISOString(),
     sourceName: project.sourceName,
     sourceType: project.sourceType,
     fixtureId: project.fixtureId || '',
-    snapshot,
+    snapshot: {
+      ...snapshot,
+      html: portableHtml,
+    },
   };
   try {
     localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(payload));
-  } catch {}
+  } catch (error) {
+    notifyStorageWriteFailure('자동저장', error);
+  }
 }
 
 function resolveSnapshotProjectKey(project) {
@@ -6807,7 +7635,11 @@ function readProjectSnapshotPayload() {
 function writeProjectSnapshotPayload(payload) {
   try {
     localStorage.setItem(PROJECT_SNAPSHOT_KEY, JSON.stringify(payload));
-  } catch {}
+    return true;
+  } catch (error) {
+    notifyStorageWriteFailure('스냅샷', error);
+    return false;
+  }
 }
 
 function buildSnapshotThumbnail(snapshotHtml = '') {
@@ -6830,7 +7662,7 @@ function getSnapshotEntriesForProject(project) {
   return readProjectSnapshotPayload().entries.filter((entry) => entry.projectKey === key);
 }
 
-function createProjectSnapshot({
+async function createProjectSnapshot({
   title = '',
   note = '',
   auto = false,
@@ -6846,8 +7678,13 @@ function createProjectSnapshot({
     setStatus('스냅샷 저장에 실패했습니다. 다시 시도해 주세요.');
     return null;
   }
+  let portableHtml = snapshot.html;
+  try {
+    portableHtml = await activeEditor.getCurrentPortableHtml();
+  } catch {}
+  const portableSnapshot = { ...snapshot, html: portableHtml };
   const now = new Date();
-  const thumbnail = buildSnapshotThumbnail(snapshot.html);
+  const thumbnail = buildSnapshotThumbnail(portableSnapshot.html);
   const entry = {
     id: `snap_${Math.random().toString(36).slice(2, 10)}`,
     projectKey: resolveSnapshotProjectKey(project),
@@ -6857,23 +7694,23 @@ function createProjectSnapshot({
     note: (note || '').trim(),
     auto: !!auto,
     thumbnail,
-    snapshot,
+    snapshot: portableSnapshot,
   };
   const payload = readProjectSnapshotPayload();
   payload.entries = [entry, ...payload.entries].slice(0, PROJECT_SNAPSHOT_LIMIT);
-  writeProjectSnapshotPayload(payload);
+  if (!writeProjectSnapshotPayload(payload)) return null;
   renderProjectSnapshotList(store.getState());
   setStatus(statusMessage);
   return entry;
 }
 
-function restoreProjectSnapshotById(snapshotId) {
+async function restoreProjectSnapshotById(snapshotId) {
   const state = store.getState();
   const project = state.project;
   if (!project) return setStatus('먼저 프로젝트를 불러와 주세요.');
   const entry = getSnapshotEntriesForProject(project).find((item) => item.id === snapshotId);
   if (!entry?.snapshot?.html) return setStatus('복원할 스냅샷을 찾지 못했습니다.');
-  createProjectSnapshot({
+  await createProjectSnapshot({
     auto: true,
     title: `복원 전 자동백업 (${entry.title || '스냅샷'})`,
     statusMessage: '복원 전 자동백업을 저장했습니다.',
@@ -6904,11 +7741,64 @@ function resetHistory(baseSnapshot = null) {
   historyState.baseSnapshot = baseSnapshot?.html ? baseSnapshot : null;
   historyState.undoStack = [];
   historyState.redoStack = [];
+  perfState.inputLatencies = [];
+  perfState.p95InputLatencyMs = 0;
+  perfState.lastInputLatencyMs = 0;
+  perfState.slowFrames = 0;
+  perfState.lastDirtyRect = null;
   refreshHistoryButtons();
 }
 
 function latestHistorySnapshot() {
-  return historyState.undoStack.at(-1)?.after || historyState.baseSnapshot;
+  const latest = historyState.undoStack.at(-1);
+  if (!latest) return historyState.baseSnapshot;
+  return resolveHistoryEntrySnapshot(latest, 'after');
+}
+
+function createHtmlPatch(fromHtml = '', toHtml = '') {
+  if (fromHtml === toHtml) return { start: 0, deleteCount: 0, insert: '' };
+  let start = 0;
+  const fromLen = fromHtml.length;
+  const toLen = toHtml.length;
+  while (start < fromLen && start < toLen && fromHtml[start] === toHtml[start]) start += 1;
+  let fromEnd = fromLen - 1;
+  let toEnd = toLen - 1;
+  while (fromEnd >= start && toEnd >= start && fromHtml[fromEnd] === toHtml[toEnd]) {
+    fromEnd -= 1;
+    toEnd -= 1;
+  }
+  return {
+    start,
+    deleteCount: Math.max(0, fromEnd - start + 1),
+    insert: toHtml.slice(start, toEnd + 1),
+  };
+}
+
+function applyHtmlPatch(baseHtml = '', patch = null) {
+  if (!patch) return baseHtml;
+  const start = Math.max(0, Number(patch.start) || 0);
+  const deleteCount = Math.max(0, Number(patch.deleteCount) || 0);
+  const insert = String(patch.insert || '');
+  return `${baseHtml.slice(0, start)}${insert}${baseHtml.slice(start + deleteCount)}`;
+}
+
+function toPatchSnapshot(snapshot, patch) {
+  if (!snapshot?.html) return null;
+  return { ...snapshot, htmlPatch: patch, html: undefined };
+}
+
+function resolvePatchSnapshot(patchedSnapshot, baseHtml = '') {
+  if (!patchedSnapshot) return null;
+  if (patchedSnapshot.html) return patchedSnapshot;
+  return { ...patchedSnapshot, html: applyHtmlPatch(baseHtml, patchedSnapshot.htmlPatch) };
+}
+
+function resolveHistoryEntrySnapshot(entry, key) {
+  if (!entry) return null;
+  const baseHtml = historyState.baseSnapshot?.html || '';
+  if (key === 'before') return resolvePatchSnapshot(entry.before, baseHtml);
+  if (key === 'after') return resolvePatchSnapshot(entry.after, baseHtml);
+  return null;
 }
 
 function shouldMergeHistoryCommand(previous, next) {
@@ -6923,23 +7813,32 @@ function shouldMergeHistoryCommand(previous, next) {
 
 function recordHistoryCommand(command, { clearRedo = true } = {}) {
   if (!command?.after?.html || !command?.before?.html) return;
+  const beforePatch = createHtmlPatch(historyState.baseSnapshot?.html || '', command.before.html);
+  const afterPatch = createHtmlPatch(historyState.baseSnapshot?.html || '', command.after.html);
+  const compactCommand = {
+    ...command,
+    before: toPatchSnapshot(command.before, beforePatch),
+    after: toPatchSnapshot(command.after, afterPatch),
+  };
   const last = historyState.undoStack.at(-1);
-  if (shouldMergeHistoryCommand(last, command)) {
-    last.after = command.after;
-    last.at = command.at;
-    persistAutosave(command.after);
+  if (shouldMergeHistoryCommand(last, compactCommand)) {
+    last.after = compactCommand.after;
+    last.at = compactCommand.at;
+    persistAutosave(resolvePatchSnapshot(compactCommand.after, historyState.baseSnapshot?.html || ''));
     refreshHistoryButtons();
     return;
   }
-  if (last?.after?.html === command.after.html) {
-    persistAutosave(command.after);
+  const lastAfter = resolveHistoryEntrySnapshot(last, 'after');
+  if (lastAfter?.html === command.after.html) {
+    persistAutosave(resolvePatchSnapshot(compactCommand.after, historyState.baseSnapshot?.html || ''));
     refreshHistoryButtons();
     return;
   }
-  historyState.undoStack.push(command);
+  historyState.undoStack.push(compactCommand);
   if (historyState.undoStack.length > HISTORY_LIMIT) historyState.undoStack.shift();
   if (clearRedo) historyState.redoStack = [];
-  persistAutosave(command.after);
+  persistAutosave(resolvePatchSnapshot(compactCommand.after, historyState.baseSnapshot?.html || ''));
+  updateLatencyDashboard(compactCommand);
   refreshHistoryButtons();
 }
 
@@ -6958,7 +7857,7 @@ function undoHistory() {
   const current = historyState.undoStack.pop();
   historyState.redoStack.push(current);
   refreshHistoryButtons();
-  restoreHistorySnapshot(current.before, '이전 작업으로 되돌렸습니다.');
+  restoreHistorySnapshot(resolveHistoryEntrySnapshot(current, 'before'), '이전 작업으로 되돌렸습니다.');
 }
 
 function redoHistory() {
@@ -6969,7 +7868,25 @@ function redoHistory() {
   const next = historyState.redoStack.pop();
   historyState.undoStack.push(next);
   refreshHistoryButtons();
-  restoreHistorySnapshot(next.after, '되돌린 작업을 다시 적용했습니다.');
+  restoreHistorySnapshot(resolveHistoryEntrySnapshot(next, 'after'), '되돌린 작업을 다시 적용했습니다.');
+}
+
+function percentile(values, ratio = 0.95) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * ratio) - 1));
+  return sorted[index];
+}
+
+function updateLatencyDashboard(command) {
+  const latency = Number(command?.inputLatencyMs);
+  if (!Number.isFinite(latency) || latency < 0) return;
+  perfState.inputLatencies.push(latency);
+  if (perfState.inputLatencies.length > perfState.sampleLimit) perfState.inputLatencies.shift();
+  perfState.lastInputLatencyMs = latency;
+  perfState.p95InputLatencyMs = Number(percentile(perfState.inputLatencies, 0.95).toFixed(2));
+  perfState.slowFrames = perfState.inputLatencies.filter((item) => item >= 50).length;
+  perfState.lastDirtyRect = command?.dirtyRect || null;
 }
 
 function buildReportPayload(project, report) {
@@ -7269,48 +8186,65 @@ function applyGeometryFromInputs() {
 }
 
 function renderShell(state) {
+  const editorMeta = state.editorMeta
+    ? {
+      ...state.editorMeta,
+      performance: {
+        sampleCount: perfState.inputLatencies.length,
+        p95InputLatencyMs: perfState.p95InputLatencyMs,
+        lastInputLatencyMs: perfState.lastInputLatencyMs,
+        slowFrames: perfState.slowFrames,
+        lastDirtyRect: perfState.lastDirtyRect,
+      },
+    }
+    : null;
   renderSelectionModeButtons(state.selectionMode);
-  renderSummaryCards(elements.summaryCards, state.project, state.editorMeta);
+  renderSummaryCards(elements.summaryCards, state.project, editorMeta);
   renderIssueList(elements.issueList, state.project);
   if (elements.normalizeStats) {
     renderNormalizeStats(elements.normalizeStats, state.project);
   }
-  renderPreflight(elements.preflightContainer, state.editorMeta);
+  renderPreflight(elements.preflightContainer, editorMeta);
   if (elements.selectionInspector) {
-    renderSelectionInspector(elements.selectionInspector, state.editorMeta, state.imageApplyDiagnostic);
+    renderSelectionInspector(elements.selectionInspector, editorMeta, state.imageApplyDiagnostic);
   }
-  renderSectionFilmstrip(elements.sectionList, state.editorMeta);
-  renderSlotList(elements.slotList, state.editorMeta);
+  renderSectionFilmstrip(elements.sectionList, editorMeta);
+  renderSlotList(elements.slotList, editorMeta);
   renderUploadLists(state);
   renderProjectSnapshotList(state);
-  renderLayerTree(elements.layerTree, state.editorMeta, elements.layerFilterInput?.value || '');
+  renderLayerTree(elements.layerTree, editorMeta, elements.layerFilterInput?.value || '');
   renderProjectMeta(elements.projectMeta, state.project, {
     selectionMode: state.selectionMode,
     undoDepth: historyState.undoStack.length,
     redoDepth: historyState.redoStack.length,
     autosaveSavedAt: readAutosavePayload()?.savedAt || '',
-    textEditing: !!state.editorMeta?.textEditing,
-    selectionCount: state.editorMeta?.selectionCount || 0,
-    hiddenCount: state.editorMeta?.hiddenCount || 0,
-    lockedCount: state.editorMeta?.lockedCount || 0,
+    textEditing: !!editorMeta?.textEditing,
+    selectionCount: editorMeta?.selectionCount || 0,
+    hiddenCount: editorMeta?.hiddenCount || 0,
+    lockedCount: editorMeta?.lockedCount || 0,
     exportPresetLabel: currentExportPreset().label,
-    preflightBlockingErrors: state.editorMeta?.preflight?.blockingErrors || 0,
+    preflightBlockingErrors: editorMeta?.preflight?.blockingErrors || 0,
   });
   if (elements.assetTableWrap) {
     renderAssetTable(elements.assetTableWrap, state.project, elements.assetFilterInput?.value || '');
   }
-  syncTextStyleControls(state.editorMeta);
-  syncBatchSummary(state.editorMeta);
-  syncRightPanelBySelection(state.editorMeta);
+  syncTextStyleControls(editorMeta);
+  syncBatchSummary(editorMeta);
+  syncRightPanelBySelection(editorMeta);
   syncGeometryControls();
-  syncCanvasDirectUi(state.editorMeta);
+  syncCanvasDirectUi(editorMeta);
   const errorSuffix = state.lastError ? ` · 최근 오류: ${state.lastError}` : '';
   elements.statusText.textContent = `${state.statusText}${errorSuffix}`;
   if (elements.documentStatusChip) {
     const docStatus = resolveDocumentStatus(state);
     elements.documentStatusChip.dataset.status = docStatus.status;
     elements.documentStatusChip.textContent = docStatus.text;
+    if (elements.topbarSaveStatusBadge) {
+      elements.topbarSaveStatusBadge.dataset.status = docStatus.status;
+      elements.topbarSaveStatusBadge.textContent = docStatus.text;
+    }
   }
+  syncTopbarProjectName(state.project);
   refreshComputedViews(state);
 
   const hasProject = !!state.project;
@@ -7395,6 +8329,26 @@ function applyNumberStep(input, direction) {
   }
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function resolveNudgeStepFromEvent(event) {
+  if (event?.shiftKey) return NUDGE_STEP_RULE.shift;
+  if (event?.altKey) return NUDGE_STEP_RULE.alt;
+  return NUDGE_STEP_RULE.base;
+}
+
+function applyKeyboardNudgeToNumberInput(event, input) {
+  if (!input || input.disabled) return false;
+  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return false;
+  const direction = event.key === 'ArrowUp' ? 1 : -1;
+  const step = resolveNudgeStepFromEvent(event);
+  const current = Number.parseFloat(input.value);
+  const base = Number.isFinite(current) ? current : 0;
+  input.value = String(base + (direction * step));
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  event.preventDefault();
+  return true;
 }
 
 function attachNumberStepper(input) {
@@ -7893,10 +8847,52 @@ function applyTypographyAdvancedLive() {
 }
 
 function applyBatchAction(action) {
-  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  if (!activeEditor) {
+    setStatus('먼저 미리보기를 로드해 주세요.');
+    return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
+  }
   const result = activeEditor.applyBatchLayout(action);
   setStatus(result.message);
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+  return result;
+}
+
+function exportShortcutMapJson() {
+  const payload = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    shortcuts: userShortcutMap,
+  };
+  const content = JSON.stringify(payload, null, 2);
+  downloadTextFile(content, `shortcut-map-${new Date().toISOString().slice(0, 10)}.json`, 'application/json;charset=utf-8');
+  return { ok: true, message: '단축키 매핑 JSON을 저장했습니다.' };
+}
+
+function openShortcutMapImportDialog() {
+  if (!elements.shortcutMapImportInput) return { ok: false, message: '단축키 불러오기 입력창을 찾지 못했습니다.' };
+  elements.shortcutMapImportInput.value = '';
+  elements.shortcutMapImportInput.click();
+  return { ok: true, message: '단축키 JSON 파일 선택 창을 열었습니다.' };
+}
+
+async function importShortcutMapFromFile(file) {
+  if (!file) return;
+  const text = await file.text();
+  const parsed = JSON.parse(text);
+  const rawMap = parsed?.shortcuts;
+  if (!rawMap || typeof rawMap !== 'object') throw new Error('shortcuts 객체가 필요합니다.');
+  const nextMap = {};
+  for (const [combo, commandId] of Object.entries(rawMap)) {
+    const normalizedCombo = normalizeShortcutCombo(combo);
+    if (!normalizedCombo) continue;
+    const known = commandId === 'command-palette-open' || COMMAND_REGISTRY.some((item) => item.id === commandId);
+    if (!known) continue;
+    nextMap[normalizedCombo] = commandId;
+  }
+  userShortcutMap = nextMap;
+  saveJsonStorage(SHORTCUT_MAP_STORAGE_KEY, userShortcutMap);
+  renderShortcutHelpList();
+  setStatus(`단축키 매핑 ${Object.keys(userShortcutMap).length}개를 불러왔습니다.`);
 }
 
 function applyStackCommand(direction = 'vertical') {
@@ -7940,7 +8936,13 @@ function applyCodeToEditor() {
   const html = elements.codeEditorTextarea?.value || '';
   if (!html.trim()) return setStatus('적용할 코드가 비어 있습니다.');
   pendingMountOptions = { snapshot: null, preserveHistory: false };
-  const nextProject = normalizeProject({ html, sourceName: project.sourceName || 'edited.html', sourceType: 'code-apply' });
+  const nextProject = normalizeProject({
+    html,
+    sourceName: project.sourceName || 'edited.html',
+    sourceType: 'code-apply',
+    fileIndex: project.importFileIndex || null,
+    htmlEntryPath: project.htmlEntryPath || project.fileContext?.htmlEntryPath || '',
+  });
   store.setProject(nextProject);
   codeEditorDirty = false;
   setStatus('코드 워크벤치 내용을 다시 편집기에 적용했습니다.');
@@ -7973,9 +8975,12 @@ store.subscribe((state) => {
 
 function safeBoot() {
   try {
+    userShortcutMap = readJsonStorage(SHORTCUT_MAP_STORAGE_KEY, {});
+    commandPaletteRecentIds = readJsonStorage(COMMAND_RECENTS_STORAGE_KEY, []);
     setAppState(APP_STATES.launch);
     populateFixtureSelect();
     populateExportPresetSelect();
+    populateArrangePresetSelect();
     syncExportPresetUi({ forceScale: true });
     refreshLauncherRecentButton();
     const bootEnvironmentReport = evaluateLocalBootEnvironment();
@@ -8072,6 +9077,7 @@ elements.stackHorizontalButton?.addEventListener('click', () => applyStackComman
 elements.stackVerticalButton?.addEventListener('click', () => applyStackCommand('vertical'));
 elements.tidyHorizontalButton?.addEventListener('click', () => applyTidyCommand('x'));
 elements.tidyVerticalButton?.addEventListener('click', () => applyTidyCommand('y'));
+elements.applyArrangePresetButton?.addEventListener('click', applyArrangePresetSelection);
 elements.commandPaletteInput?.addEventListener('input', updateCommandPaletteResults);
 elements.commandPaletteInput?.addEventListener('keydown', (event) => {
   if (event.key === 'ArrowDown') {
@@ -8088,6 +9094,17 @@ elements.commandPaletteInput?.addEventListener('keydown', (event) => {
   }
 });
 elements.commandPaletteRunButton?.addEventListener('click', runActiveCommandPaletteItem);
+elements.commandPaletteShortcutExportButton?.addEventListener('click', () => performCommandAction('shortcut-export'));
+elements.commandPaletteShortcutImportButton?.addEventListener('click', () => performCommandAction('shortcut-import'));
+elements.shortcutMapImportInput?.addEventListener('change', async (event) => {
+  const file = event.target?.files?.[0];
+  if (!file) return;
+  try {
+    await importShortcutMapFromFile(file);
+  } catch (error) {
+    setStatus(`단축키 JSON 불러오기 실패: ${error?.message || error}`);
+  }
+});
 elements.commandPaletteCloseButton?.addEventListener('click', () => toggleCommandPalette(false));
 for (const button of elements.canvasActionButtons) {
   button.addEventListener('click', () => {
@@ -8182,6 +9199,10 @@ for (const [canvasInput, sourceInput] of [
     const result = applyGeometryFromInputs();
     if (result.ok) setStatus(result.message);
   });
+  canvasInput?.addEventListener('keydown', (event) => {
+    if (!applyKeyboardNudgeToNumberInput(event, canvasInput)) return;
+    if (sourceInput) sourceInput.value = canvasInput.value;
+  });
 }
 
 elements.openHtmlButton?.addEventListener('click', () => elements.htmlFileInput?.click());
@@ -8272,6 +9293,9 @@ for (const input of [elements.geometryXInput, elements.geometryYInput, elements.
     const result = applyGeometryFromInputs();
     if (result.ok) setStatus(result.message);
   });
+  input?.addEventListener('keydown', (event) => {
+    applyKeyboardNudgeToNumberInput(event, input);
+  });
 }
 elements.bringForwardButton?.addEventListener('click', () => {
   executeEditorCommand('layer-index-forward');
@@ -8285,10 +9309,10 @@ elements.bringToFrontButton?.addEventListener('click', () => {
 elements.sendToBackButton?.addEventListener('click', () => {
   executeEditorCommand('layer-index-back');
 });
-elements.imageNudgeLeftButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: -2, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
-elements.imageNudgeRightButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 2, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
-elements.imageNudgeUpButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: -2 })?.message || '먼저 미리보기를 로드해 주세요.'));
-elements.imageNudgeDownButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: 2 })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeLeftButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: -NUDGE_STEP_RULE.base, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeRightButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: NUDGE_STEP_RULE.base, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeUpButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: -NUDGE_STEP_RULE.base })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeDownButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: NUDGE_STEP_RULE.base })?.message || '먼저 미리보기를 로드해 주세요.'));
 elements.preflightRefreshButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   activeEditor.refreshDerivedMeta();
@@ -8326,6 +9350,23 @@ elements.snapshotList?.addEventListener('click', (event) => {
   if (action === 'delete') return deleteProjectSnapshotById(snapshotId);
 });
 elements.openDownloadModalButton?.addEventListener('click', () => toggleDownloadModal(true));
+elements.shareProjectButton?.addEventListener('click', () => { shareProjectSummary().catch((error) => setStatus(`공유 중 오류: ${error?.message || error}`)); });
+elements.projectNameDisplay?.addEventListener('click', startProjectNameInlineEdit);
+elements.projectNameInput?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    finishProjectNameInlineEdit({ save: true });
+    return;
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    finishProjectNameInlineEdit({ save: false });
+  }
+});
+elements.projectNameInput?.addEventListener('blur', () => {
+  if (elements.projectNameInput?.hidden) return;
+  finishProjectNameInlineEdit({ save: true });
+});
 elements.closeDownloadModalButton?.addEventListener('click', () => toggleDownloadModal(false));
 elements.downloadChoiceSelect?.addEventListener('change', () => renderShell(store.getState()));
 elements.runDownloadChoiceButton?.addEventListener('click', async () => {
@@ -8558,12 +9599,14 @@ elements.toggleLeftSidebarButton?.addEventListener('click', () => {
   document.body.classList.toggle('layout--left-collapsed');
   document.body.classList.remove('layout--focus-stage');
   syncWorkspaceButtons();
+  persistPanelLayoutState();
   applyPreviewZoom();
 });
 elements.toggleRightSidebarButton?.addEventListener('click', () => {
   document.body.classList.toggle('layout--right-collapsed');
   document.body.classList.remove('layout--focus-stage');
   syncWorkspaceButtons();
+  persistPanelLayoutState();
   applyPreviewZoom();
 });
 elements.focusModeButton?.addEventListener('click', () => {
@@ -8572,8 +9615,20 @@ elements.focusModeButton?.addEventListener('click', () => {
     document.body.classList.add('layout--left-collapsed', 'layout--right-collapsed');
   }
   syncWorkspaceButtons();
+  persistPanelLayoutState();
   applyPreviewZoom();
 });
+elements.leftSidebarWidthInput?.addEventListener('input', () => {
+  applySidebarWidths(elements.leftSidebarWidthInput?.value, elements.rightSidebarWidthInput?.value);
+  persistPanelLayoutState();
+  applyPreviewZoom();
+});
+elements.rightSidebarWidthInput?.addEventListener('input', () => {
+  applySidebarWidths(elements.leftSidebarWidthInput?.value, elements.rightSidebarWidthInput?.value);
+  persistPanelLayoutState();
+  applyPreviewZoom();
+});
+elements.shareReportButton?.addEventListener('click', () => elements.downloadReportButton?.click());
 elements.zoomOutButton?.addEventListener('click', () => nudgeZoom(-0.1));
 elements.zoomInButton?.addEventListener('click', () => nudgeZoom(0.1));
 elements.zoomResetButton?.addEventListener('click', () => setZoom('manual', 1));
@@ -8635,51 +9690,20 @@ window.addEventListener('keydown', (event) => {
   }
   if (!elements.shortcutHelpOverlay?.hidden) return;
 
-  const withModifier = event.ctrlKey || event.metaKey;
-  if (!withModifier && !isTypingInputTarget(event.target)) {
-    const key = String(event.key || '').toLowerCase();
-    if (key === 'v') {
-      event.preventDefault();
-      return performCommandAction('tool-select');
-    }
-    if (key === 't') {
-      event.preventDefault();
-      return performCommandAction('tool-text');
-    }
-    if (key === 'r') {
-      event.preventDefault();
-      return performCommandAction('tool-box');
-    }
-  }
-
-  if (!withModifier || event.altKey) return;
-  const key = String(event.key || '').toLowerCase();
-  if (key === 'k') {
+  const shortcutCommandId = resolveShortcutCommand(event);
+  if (shortcutCommandId === 'command-palette-open') {
     event.preventDefault();
     toggleCommandPalette(true);
     return;
   }
-  if (isTypingInputTarget(event.target)) return;
-  if (key === 'd') {
+  if (isTypingInputTarget(event.target) && shortcutCommandId !== 'save-edited') return;
+  if (shortcutCommandId) {
     event.preventDefault();
-    return performCommandAction('duplicate');
+    return performCommandAction(shortcutCommandId);
   }
-  if (key === 'g') {
-    event.preventDefault();
-    return performCommandAction(event.shiftKey ? 'ungroup' : 'group');
-  }
-  if (key === 'z') {
-    event.preventDefault();
-    return event.shiftKey ? redoHistory() : undoHistory();
-  }
-  if (key === 'y') {
-    event.preventDefault();
-    return redoHistory();
-  }
-  if (key === 's') {
-    event.preventDefault();
-    return performCommandAction('save-edited');
-  }
+
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+  const key = String(event.key || '').toLowerCase();
   if (key === '=') {
     event.preventDefault();
     return nudgeZoom(0.1);
@@ -8696,12 +9720,14 @@ window.addEventListener('keydown', (event) => {
     event.preventDefault();
     document.body.classList.toggle('layout--left-collapsed');
     syncWorkspaceButtons();
+    persistPanelLayoutState();
     return applyPreviewZoom();
   }
   if (key === 'i') {
     event.preventDefault();
     document.body.classList.toggle('layout--right-collapsed');
     syncWorkspaceButtons();
+    persistPanelLayoutState();
     return applyPreviewZoom();
   }
   if (key === 'f') {
@@ -8756,8 +9782,9 @@ bindEvents();
 for (const guideContainer of document.querySelectorAll('[data-left-tab-guide-for]')) {
   renderLeftTabStepGuide(guideContainer, guideContainer.getAttribute('data-left-tab-guide-for') || '');
 }
-setSidebarTab('left-start');
-setSidebarTab('right-inspect');
+applySidebarWidths(340, 420);
+setSidebarTab('left-image', { persist: false });
+setSidebarTab('right-inspect', { persist: false });
 setCodeSource('edited', { preserveDraft: false });
 syncSaveFormatUi();
 restorePanelLayoutState();

@@ -1,4 +1,5 @@
 import { escapeHtml, formatDateTime, formatNumber, truncate } from '../utils.js';
+import { OBJECT_INSPECTOR_SCHEMA } from './object-inspector-schema.js';
 
 const LEFT_TAB_STEP_GUIDES = Object.freeze({
   'left-start': Object.freeze({
@@ -37,6 +38,8 @@ const LEFT_TAB_STEP_GUIDES = Object.freeze({
     ]),
   }),
 });
+const LAYER_ROW_HEIGHT = 86;
+const LAYER_OVERSCAN = 10;
 
 export function renderLeftTabStepGuide(container, tabId) {
   if (!container) return;
@@ -69,7 +72,20 @@ export function renderSummaryCards(container, project, editorMeta = null) {
     ['기존 IMG', project.summary.existingImageCount, `blob URL ${project.fileContext.blobUrlCount}`],
     ['근접 후보', slotSummary.nearMissCount ?? project.summary.nearMissCount ?? 0, '수동 보정 후보'],
     ['편집 수정', editorMeta?.modifiedSlotCount ?? 0, editorMeta?.selectionCount ? `선택 ${editorMeta.selectionCount}개` : '아직 없음'],
+    [
+      '입력 지연 p95(ms)',
+      Number(editorMeta?.performance?.p95InputLatencyMs || 0).toFixed(1),
+      `최근 ${formatNumber(editorMeta?.performance?.sampleCount || 0)}회 · slow(≥50ms) ${formatNumber(editorMeta?.performance?.slowFrames || 0)}회`,
+    ],
   ];
+  const dirtyRect = editorMeta?.performance?.lastDirtyRect;
+  if (dirtyRect) {
+    cards.push([
+      'Dirty-Rect',
+      `${formatNumber(dirtyRect.width)}×${formatNumber(dirtyRect.height)}`,
+      `x:${formatNumber(dirtyRect.x)} y:${formatNumber(dirtyRect.y)} 부분 렌더`,
+    ]);
+  }
   container.innerHTML = cards.map(([label, value, sub]) => `
     <article class="metric-card">
       <div class="metric-card__label">${escapeHtml(label)}</div>
@@ -123,22 +139,97 @@ export function renderSelectionInspector(container, editorMeta, imageDiagnostic 
   }
   const selected = editorMeta.selected;
   const summary = editorMeta.slotSummary || { totalCount: 0, nearMissCount: 0 };
+  const objectInspector = editorMeta?.objectInspector || null;
+  const renderFieldRows = (source, fields, mixedMap = {}) => fields.map((field) => {
+    const mixed = !!mixedMap?.[field.key];
+    const raw = source?.[field.key];
+    const value = mixed ? '혼합' : (raw === '' || raw == null ? '-' : String(raw));
+    return `<div class="inspector-kv"><strong>${escapeHtml(field.label)}</strong><span>${escapeHtml(value)}</span></div>`;
+  }).join('');
+  const commonSectionsHtml = objectInspector
+    ? OBJECT_INSPECTOR_SCHEMA.sections.map((section) => {
+      const source = objectInspector.common?.[section.id] || {};
+      return `
+        <article class="inspector-card">
+          <h4>${escapeHtml(section.title)}</h4>
+          ${renderFieldRows(source, section.fields, source.mixed)}
+        </article>
+      `;
+    }).join('')
+    : '<div class="asset-empty">선택하면 공통 속성을 계산해 표시합니다.</div>';
+  const pluginSectionsHtml = objectInspector
+    ? Object.entries(OBJECT_INSPECTOR_SCHEMA.plugins).map(([pluginKey, schema]) => {
+      const source = objectInspector.plugins?.[pluginKey];
+      if (!source) return '';
+      return `
+        <article class="inspector-card">
+          <h4>${escapeHtml(schema.title)}</h4>
+          ${renderFieldRows(source, schema.fields)}
+        </article>
+      `;
+    }).join('') || '<div class="asset-empty">선택 타입 전용 플러그인이 없습니다.</div>'
+    : '';
   const selectedItemsHtml = editorMeta.selectedItems?.length
     ? `<div class="selected-pill-list">${editorMeta.selectedItems.slice(0, 8).map((item) => `<span class="selected-pill">${escapeHtml(truncate(item.label || item.uid || '-', 24))}</span>`).join('')}</div>`
     : '';
+  const inspectorSchemaByType = {
+    text: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['라벨', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['텍스트 편집', (node) => node.textEditing ? '진행 중' : '아님'],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+    ],
+    image: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['라벨', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['감지 타입', (node) => node.detectedType || '-'],
+      ['점수', (node) => String(node.score ?? '-')],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+    ],
+    slot: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['라벨', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['감지 타입', (node) => node.detectedType || '-'],
+      ['점수', (node) => String(node.score ?? '-')],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+    ],
+    section: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['섹션명', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['선택 개수', () => `${formatNumber(editorMeta.selectionCount || 0)}개`],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+    ],
+    default: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['라벨', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['감지', (node) => node.detectedType || '-'],
+      ['점수', (node) => String(node.score ?? '-')],
+      ['선택 개수', () => `${formatNumber(editorMeta.selectionCount || 0)}개`],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['텍스트 편집', (node) => node.textEditing ? '진행 중' : '아님'],
+    ],
+  };
+  const schemaRows = (selected
+    ? (inspectorSchemaByType[selected.type] || inspectorSchemaByType.default)
+    : []).map(([label, valueResolver]) => `
+      <div class="inspector-kv"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(String(valueResolver(selected)))}</span></div>
+    `).join('');
   const selectionHtml = !selected
     ? '<div class="asset-empty">현재 선택된 요소가 없습니다.</div>'
     : `
       <div class="inspector-card">
-        <div class="inspector-kv"><strong>선택 타입</strong><span>${escapeHtml(selected.type || '-')}</span></div>
-        <div class="inspector-kv"><strong>라벨</strong><span>${escapeHtml(selected.label || '-')}</span></div>
-        <div class="inspector-kv"><strong>UID</strong><span>${escapeHtml(selected.uid || '-')}</span></div>
-        <div class="inspector-kv"><strong>감지</strong><span>${escapeHtml(selected.detectedType || '-')}</span></div>
-        <div class="inspector-kv"><strong>점수</strong><span>${escapeHtml(String(selected.score ?? '-'))}</span></div>
-        <div class="inspector-kv"><strong>선택 개수</strong><span>${formatNumber(editorMeta.selectionCount || 0)}개</span></div>
-        <div class="inspector-kv"><strong>숨김</strong><span>${selected.hidden ? '예' : '아니오'}</span></div>
-        <div class="inspector-kv"><strong>잠금</strong><span>${selected.locked ? '예' : '아니오'}</span></div>
-        <div class="inspector-kv"><strong>텍스트 편집</strong><span>${selected.textEditing ? '진행 중' : '아님'}</span></div>
+        <div class="asset-ref">Inspector schema: <strong>${escapeHtml(selected.type || 'default')}</strong></div>
+        ${schemaRows}
         ${selectedItemsHtml}
         <div class="inspector-reasons">${(selected.reasons || []).length ? selected.reasons.map((item) => `<div>${escapeHtml(item)}</div>`).join('') : '감지 이유가 없습니다.'}</div>
       </div>`;
@@ -198,6 +289,14 @@ export function renderSelectionInspector(container, editorMeta, imageDiagnostic 
         <li>selection mode ${escapeHtml(editorMeta.selectionMode || 'smart')}</li>
       </ul>
     </article>
+    <article class="slot-card">
+      <h3>Object Inspector (Schema 기반)</h3>
+      ${commonSectionsHtml}
+    </article>
+    <article class="slot-card">
+      <h3>Type Plugins</h3>
+      ${pluginSectionsHtml}
+    </article>
     ${diagnosticHtml}
   `;
 }
@@ -255,25 +354,50 @@ export function renderLayerTree(container, editorMeta, filterText = '') {
     container.innerHTML = '<div class="asset-empty">필터에 맞는 레이어가 없습니다.</div>';
     return;
   }
-  container.innerHTML = rows.map((node) => `
-    <div class="layer-item ${(selectedUids.has(node.uid) || node.selectedViaGroup) ? 'is-active' : ''} ${node.hidden ? 'is-hidden' : ''} ${node.locked ? 'is-locked' : ''} ${node.type === 'group' ? 'is-group' : ''}" data-layer-uid="${escapeHtml(node.uid)}" style="--depth:${Math.max(0, Number(node.depth || 0))}" role="button" tabindex="0">
-      <span class="layer-item__indent" aria-hidden="true"></span>
-      <span class="layer-item__body">
-        <strong>${node.type === 'group' ? '🗂️ ' : ''}${escapeHtml(truncate(node.label || node.uid, 40))}</strong>
-        <span class="layer-item__meta">${escapeHtml(node.type)} · ${escapeHtml(node.tagName || '')}${node.childCount ? ` · child ${escapeHtml(String(node.childCount))}` : ''}</span>
-        <span class="layer-item__status">
-          ${node.hidden ? '<span class="status-chip" data-status="hidden">숨김</span>' : ''}
-          ${node.locked ? '<span class="status-chip" data-status="locked">잠금</span>' : ''}
-          ${node.selectedViaGroup ? '<span class="status-chip" data-status="selected">그룹선택</span>' : ''}
-        </span>
-      </span>
-      <span class="layer-item__actions">
-        <button class="layer-item__action ${node.hidden ? 'is-on' : ''}" data-layer-action="hide" data-layer-uid="${escapeHtml(node.uid)}">숨김</button>
-        <button class="layer-item__action ${node.locked ? 'is-on' : ''}" data-layer-action="lock" data-layer-uid="${escapeHtml(node.uid)}">잠금</button>
-        <span class="slot-badge" data-kind="${escapeHtml(node.type)}">${escapeHtml(node.type)}</span>
-      </span>
-    </div>
-  `).join('');
+  const fingerprint = rows.map((node) => `${node.uid}:${node.hidden ? 1 : 0}:${node.locked ? 1 : 0}:${node.selectedViaGroup ? 1 : 0}`).join('|');
+  const needsReset = container.dataset.layerRowsFingerprint !== fingerprint;
+  container.dataset.layerRowsFingerprint = fingerprint;
+  container.__layerRows = rows;
+  container.__layerSelectedUids = selectedUids;
+  if (!container.__layerVirtualRender) {
+    container.__layerVirtualRender = () => {
+      const sourceRows = container.__layerRows || [];
+      if (!sourceRows.length) return;
+      const viewportHeight = Math.max(1, container.clientHeight || 320);
+      const totalHeight = sourceRows.length * LAYER_ROW_HEIGHT;
+      const scrollTop = Math.max(0, Math.min(container.scrollTop, Math.max(0, totalHeight - viewportHeight)));
+      const start = Math.max(0, Math.floor(scrollTop / LAYER_ROW_HEIGHT) - LAYER_OVERSCAN);
+      const visibleCount = Math.ceil(viewportHeight / LAYER_ROW_HEIGHT) + LAYER_OVERSCAN * 2;
+      const end = Math.min(sourceRows.length, start + visibleCount);
+      const offsetY = start * LAYER_ROW_HEIGHT;
+      const selected = container.__layerSelectedUids || new Set();
+      const windowHtml = sourceRows.slice(start, end).map((node) => `
+        <div class="layer-item ${(selected.has(node.uid) || node.selectedViaGroup) ? 'is-active' : ''} ${node.hidden ? 'is-hidden' : ''} ${node.locked ? 'is-locked' : ''} ${node.type === 'group' ? 'is-group' : ''}" data-layer-uid="${escapeHtml(node.uid)}" style="--depth:${Math.max(0, Number(node.depth || 0))}" role="button" tabindex="0">
+          <span class="layer-item__indent" aria-hidden="true"></span>
+          <span class="layer-item__body">
+            <strong>${node.type === 'group' ? '🗂️ ' : ''}${escapeHtml(truncate(node.label || node.uid, 40))}</strong>
+            <span class="layer-item__meta">${escapeHtml(node.type)} · ${escapeHtml(node.tagName || '')}${node.childCount ? ` · child ${escapeHtml(String(node.childCount))}` : ''}</span>
+            <span class="layer-item__status">
+              ${node.hidden ? '<span class="status-chip" data-status="hidden">숨김</span>' : ''}
+              ${node.locked ? '<span class="status-chip" data-status="locked">잠금</span>' : ''}
+              ${node.selectedViaGroup ? '<span class="status-chip" data-status="selected">그룹선택</span>' : ''}
+            </span>
+          </span>
+          <span class="layer-item__actions">
+            <button class="layer-item__action ${node.hidden ? 'is-on' : ''}" data-layer-action="hide" data-layer-uid="${escapeHtml(node.uid)}">숨김</button>
+            <button class="layer-item__action ${node.locked ? 'is-on' : ''}" data-layer-action="lock" data-layer-uid="${escapeHtml(node.uid)}">잠금</button>
+            <span class="slot-badge" data-kind="${escapeHtml(node.type)}">${escapeHtml(node.type)}</span>
+          </span>
+        </div>
+      `).join('');
+      container.innerHTML = `
+        <div class="layer-tree__spacer" style="height:${Math.max(totalHeight, 1)}px"></div>
+        <div class="layer-tree__window" style="transform:translateY(${offsetY}px)">${windowHtml}</div>`;
+    };
+    container.addEventListener('scroll', container.__layerVirtualRender, { passive: true });
+  }
+  if (needsReset) container.scrollTop = 0;
+  container.__layerVirtualRender();
 }
 
 export function renderPreflight(container, editorMeta) {
