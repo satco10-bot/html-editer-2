@@ -18,6 +18,18 @@ export const FRAME_OVERLAY_ID = '__phase5_local_editor_overlay';
 export const AUTOSAVE_KEY = 'detail-local-webapp-autosave-v6';
 export const PROJECT_SNAPSHOT_KEY = 'detail-local-webapp-project-snapshots-v1';
 export const HISTORY_LIMIT = 80;
+
+export const NUDGE_STEP_RULE = Object.freeze({
+  base: 2,
+  shift: 10,
+  alt: 1,
+});
+
+export function resolveNudgeStepByModifier(event, stepRule = NUDGE_STEP_RULE) {
+  if (event?.shiftKey) return stepRule.shift;
+  if (event?.altKey) return stepRule.alt;
+  return stepRule.base;
+}
 export const PROJECT_SNAPSHOT_LIMIT = 30;
 
 export const EXPORT_PRESETS = [
