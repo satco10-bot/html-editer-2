@@ -201,6 +201,10 @@ const elements = {
   restoreAutosaveButton: document.getElementById('restoreAutosaveButton'),
   saveProjectSnapshotButton: document.getElementById('saveProjectSnapshotButton'),
   openDownloadModalButton: document.getElementById('openDownloadModalButton'),
+  shareProjectButton: document.getElementById('shareProjectButton'),
+  projectNameDisplay: document.getElementById('projectNameDisplay'),
+  projectNameInput: document.getElementById('projectNameInput'),
+  topbarSaveStatusBadge: document.getElementById('topbarSaveStatusBadge'),
   downloadModal: document.getElementById('downloadModal'),
   closeDownloadModalButton: document.getElementById('closeDownloadModalButton'),
   downloadChoiceSelect: document.getElementById('downloadChoiceSelect'),
@@ -1873,7 +1877,12 @@ function renderShell(state) {
     const docStatus = resolveDocumentStatus(state);
     elements.documentStatusChip.dataset.status = docStatus.status;
     elements.documentStatusChip.textContent = docStatus.text;
+    if (elements.topbarSaveStatusBadge) {
+      elements.topbarSaveStatusBadge.dataset.status = docStatus.status;
+      elements.topbarSaveStatusBadge.textContent = docStatus.text;
+    }
   }
+  syncTopbarProjectName(state.project);
   refreshComputedViews(state);
 
   const hasProject = !!state.project;
@@ -2804,6 +2813,23 @@ elements.snapshotList?.addEventListener('click', (event) => {
   if (action === 'delete') return deleteProjectSnapshotById(snapshotId);
 });
 elements.openDownloadModalButton?.addEventListener('click', () => toggleDownloadModal(true));
+elements.shareProjectButton?.addEventListener('click', () => { shareProjectSummary().catch((error) => setStatus(`공유 중 오류: ${error?.message || error}`)); });
+elements.projectNameDisplay?.addEventListener('click', startProjectNameInlineEdit);
+elements.projectNameInput?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    finishProjectNameInlineEdit({ save: true });
+    return;
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    finishProjectNameInlineEdit({ save: false });
+  }
+});
+elements.projectNameInput?.addEventListener('blur', () => {
+  if (elements.projectNameInput?.hidden) return;
+  finishProjectNameInlineEdit({ save: true });
+});
 elements.closeDownloadModalButton?.addEventListener('click', () => toggleDownloadModal(false));
 elements.downloadChoiceSelect?.addEventListener('change', () => renderShell(store.getState()));
 elements.runDownloadChoiceButton?.addEventListener('click', async () => {
