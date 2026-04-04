@@ -11,6 +11,11 @@ import { createImportFileIndex, choosePrimaryHtmlEntry } from './core/asset-reso
 import { normalizeProject } from './core/normalize-project.js';
 import { createProjectStore } from './core/project-store.js';
 import { createFrameEditor } from './editor/frame-editor.js';
+import { ensureProEditorModePolicy } from './features/onboarding/editor-mode-policy.js';
+import {
+  BEGINNER_MODE_STORAGE_KEY,
+  createOnboardingController,
+} from './features/onboarding/controller.js';
 import {
   renderAssetTable,
   renderIssueList,
@@ -91,9 +96,6 @@ const APP_STATES = Object.freeze({
   editor: 'editor',
 });
 let currentAppState = APP_STATES.launch;
-const BEGINNER_MODE_STORAGE_KEY = 'detail_editor_beginner_mode_v1';
-const ONBOARDING_COMPLETED_STORAGE_KEY = 'detail_editor_onboarding_completed_v1';
-const ONBOARDING_SAMPLE_CHECKED_STORAGE_KEY = 'detail_editor_onboarding_sample_checked_v1';
 const PANEL_LAYOUT_STORAGE_KEY_PREFIX = 'detail_editor_panel_layout_v2';
 const PANEL_LAYOUT_USER_KEY = 'detail_editor_layout_user_v1';
 const COMMAND_REGISTRY = Object.freeze([
@@ -131,29 +133,7 @@ const COMMAND_REGISTRY = Object.freeze([
   { id: 'shortcut-export', label: '단축키 JSON 내보내기', shortcut: '-', keywords: ['단축키', 'json', '내보내기'], run: () => exportShortcutMapJson() },
   { id: 'shortcut-import', label: '단축키 JSON 불러오기', shortcut: '-', keywords: ['단축키', 'json', '불러오기'], run: () => openShortcutMapImportDialog() },
 ]);
-const BEGINNER_TUTORIAL_STEPS = Object.freeze([
-  {
-    id: 'slot-select',
-    title: '1) 슬롯 선택',
-    body: '먼저 [슬롯 지정] 버튼을 눌러 선택한 요소를 슬롯으로 지정하세요.',
-    targetElementKey: 'manualSlotButton',
-  },
-  {
-    id: 'replace-image',
-    title: '2) 이미지 교체',
-    body: '이제 [이미지 넣기] 버튼을 눌러 이미지를 교체하세요.',
-    targetElementKey: 'replaceImageButton',
-  },
-  {
-    id: 'save-png',
-    title: '3) PNG 저장',
-    body: '마지막으로 상단 [PNG] 버튼을 눌러 저장하면 온보딩이 끝나요.',
-    targetElementKey: 'exportPngButton',
-  },
-]);
-let isBeginnerMode = false;
-let beginnerTutorialStepIndex = 0;
-let onboardingCompleted = false;
+let onboardingController = null;
 let lastFocusedBeforeCommandPalette = null;
 let commandPaletteResults = [];
 let commandPaletteActiveIndex = 0;
@@ -437,32 +417,7 @@ const elements = {
   stackVerticalButton: document.getElementById('stackVerticalButton'),
   tidyHorizontalButton: document.getElementById('tidyHorizontalButton'),
   tidyVerticalButton: document.getElementById('tidyVerticalButton'),
-  beginnerMoreItems: Array.from(document.querySelectorAll('[data-beginner-more-item]')),
-  beginnerModeToggle: document.getElementById('beginnerModeToggle'),
-  beginnerMoreItems: Array.from(document.querySelectorAll('[data-beginner-more-item]')),
-  advancedTopbarPanel: document.getElementById('advancedTopbarPanel'),
-  beginnerTutorialTooltip: document.getElementById('beginnerTutorialTooltip'),
-  beginnerTutorialTitle: document.getElementById('beginnerTutorialTitle'),
-  beginnerTutorialBody: document.getElementById('beginnerTutorialBody'),
-  beginnerTutorialStep: document.getElementById('beginnerTutorialStep'),
-  beginnerTutorialPrevButton: document.getElementById('beginnerTutorialPrevButton'),
-  beginnerTutorialNextButton: document.getElementById('beginnerTutorialNextButton'),
-  beginnerTutorialCloseButton: document.getElementById('beginnerTutorialCloseButton'),
-  onboardingReplayButton: document.getElementById('onboardingReplayButton'),
-  onboardingChecklist: document.getElementById('onboardingChecklist'),
-  onboardingChecklistItem: document.getElementById('onboardingChecklistItem'),
-  onboardingChecklistDoneButton: document.getElementById('onboardingChecklistDoneButton'),
-  beginnerMoreItems: Array.from(document.querySelectorAll('[data-beginner-more-item]')),
 };
-
-const beginnerMoreItemAnchors = new WeakMap();
-
-for (const item of elements.beginnerMoreItems || []) {
-  beginnerMoreItemAnchors.set(item, {
-    parent: item.parentElement,
-    nextSibling: item.nextSibling,
-  });
-}
 
 function readFromLocalStorage(key, fallback = null) {
   try {
@@ -520,110 +475,26 @@ const DEFAULT_SHORTCUT_MAP = Object.freeze({
 });
 
 let userShortcutMap = {};
+let onboardingDomCache = null;
 
-function hasCompletedOnboarding() {
-  return readFromLocalStorage(ONBOARDING_COMPLETED_STORAGE_KEY, '') === '1';
-}
-
-function hasCompletedOnboardingSampleTask() {
-  return readFromLocalStorage(ONBOARDING_SAMPLE_CHECKED_STORAGE_KEY, '') === '1';
-}
-
-function markOnboardingCompleted() {
-  onboardingCompleted = true;
-  writeToLocalStorage(ONBOARDING_COMPLETED_STORAGE_KEY, '1');
-}
-
-function clearOnboardingHighlights() {
-  document.querySelectorAll('.onboarding-highlight').forEach((target) => target.classList.remove('onboarding-highlight'));
-}
-
-function applyOnboardingHighlightForCurrentStep() {
-  clearOnboardingHighlights();
-  if (onboardingCompleted) return;
-  const step = BEGINNER_TUTORIAL_STEPS[beginnerTutorialStepIndex] || null;
-  const target = step?.targetElementKey ? elements[step.targetElementKey] : null;
-  target?.classList.add('onboarding-highlight');
-}
-
-function closeBeginnerTutorial() {
-  if (elements.beginnerTutorialTooltip) elements.beginnerTutorialTooltip.hidden = true;
-  clearOnboardingHighlights();
-}
-
-function renderOnboardingChecklist() {
-  if (!elements.onboardingChecklist) return;
-  const done = hasCompletedOnboardingSampleTask();
-  elements.onboardingChecklist.hidden = !onboardingCompleted;
-  if (elements.onboardingChecklistItem) {
-    elements.onboardingChecklistItem.textContent = done
-      ? '✅ 샘플 작업 1회 실행 완료'
-      : '⬜ 샘플(F05)에서 슬롯 선택 → 이미지 교체 → PNG 저장을 1회 실행해 보세요.';
-  }
-  if (elements.onboardingChecklistDoneButton) {
-    elements.onboardingChecklistDoneButton.disabled = done;
-    elements.onboardingChecklistDoneButton.textContent = done ? '체크 완료' : '완료 체크';
-  }
-}
-
-function renderBeginnerTutorialStep() {
-  const step = BEGINNER_TUTORIAL_STEPS[beginnerTutorialStepIndex] || BEGINNER_TUTORIAL_STEPS[0];
-  if (elements.beginnerTutorialTitle) elements.beginnerTutorialTitle.textContent = step.title;
-  if (elements.beginnerTutorialBody) elements.beginnerTutorialBody.textContent = step.body;
-  if (elements.beginnerTutorialStep) elements.beginnerTutorialStep.textContent = `${beginnerTutorialStepIndex + 1} / ${BEGINNER_TUTORIAL_STEPS.length}`;
-  if (elements.beginnerTutorialPrevButton) elements.beginnerTutorialPrevButton.disabled = beginnerTutorialStepIndex < 1;
-  if (elements.beginnerTutorialNextButton) {
-    const isLast = beginnerTutorialStepIndex >= BEGINNER_TUTORIAL_STEPS.length - 1;
-    elements.beginnerTutorialNextButton.textContent = isLast ? '완료' : '다음';
-  }
-  applyOnboardingHighlightForCurrentStep();
-}
-
-function openBeginnerTutorial({ force = false } = {}) {
-  if (!force && onboardingCompleted) return;
-  beginnerTutorialStepIndex = 0;
-  renderBeginnerTutorialStep();
-  if (elements.beginnerTutorialTooltip) elements.beginnerTutorialTooltip.hidden = false;
-}
-
-function openBeginnerTutorialIfNeeded() {
-  if (onboardingCompleted) return;
-  openBeginnerTutorial();
-}
-
-function completeOnboardingTutorial() {
-  markOnboardingCompleted();
-  closeBeginnerTutorial();
-  renderOnboardingChecklist();
-  setStatus('온보딩을 완료했습니다. 아래 체크리스트로 샘플 작업을 1회 실행해 보세요.');
-}
-
-function advanceOnboardingByAction(actionId) {
-  if (onboardingCompleted || elements.beginnerTutorialTooltip?.hidden) return;
-  const step = BEGINNER_TUTORIAL_STEPS[beginnerTutorialStepIndex] || null;
-  if (!step || step.id !== actionId) return;
-  if (beginnerTutorialStepIndex >= BEGINNER_TUTORIAL_STEPS.length - 1) {
-    completeOnboardingTutorial();
-    return;
-  }
-  beginnerTutorialStepIndex += 1;
-  renderBeginnerTutorialStep();
-}
-
-function applyBeginnerModeUi() {
-  document.body.classList.toggle('beginner-mode', isBeginnerMode);
-  if (elements.beginnerModeToggle) {
-    elements.beginnerModeToggle.textContent = `초보 모드: ${isBeginnerMode ? 'ON' : 'OFF'}`;
-    elements.beginnerModeToggle.setAttribute('aria-pressed', isBeginnerMode ? 'true' : 'false');
-  }
-  if (isBeginnerMode && elements.advancedTopbarPanel) elements.advancedTopbarPanel.open = false;
-}
-
-function setBeginnerMode(next, { silent = false } = {}) {
-  isBeginnerMode = !!next;
-  applyBeginnerModeUi();
-  writeToLocalStorage(BEGINNER_MODE_STORAGE_KEY, isBeginnerMode ? '1' : '0');
-  if (!silent) setStatus(`초보 모드를 ${isBeginnerMode ? '켰습니다' : '껐습니다'}.`);
+function getOnboardingDomElements() {
+  if (onboardingDomCache) return onboardingDomCache;
+  onboardingDomCache = {
+    beginnerModeToggle: document.getElementById('beginnerModeToggle'),
+    advancedTopbarPanel: document.getElementById('advancedTopbarPanel'),
+    beginnerTutorialTooltip: document.getElementById('beginnerTutorialTooltip'),
+    beginnerTutorialTitle: document.getElementById('beginnerTutorialTitle'),
+    beginnerTutorialBody: document.getElementById('beginnerTutorialBody'),
+    beginnerTutorialStep: document.getElementById('beginnerTutorialStep'),
+    beginnerTutorialPrevButton: document.getElementById('beginnerTutorialPrevButton'),
+    beginnerTutorialNextButton: document.getElementById('beginnerTutorialNextButton'),
+    beginnerTutorialCloseButton: document.getElementById('beginnerTutorialCloseButton'),
+    onboardingReplayButton: document.getElementById('onboardingReplayButton'),
+    onboardingChecklist: document.getElementById('onboardingChecklist'),
+    onboardingChecklistItem: document.getElementById('onboardingChecklistItem'),
+    onboardingChecklistDoneButton: document.getElementById('onboardingChecklistDoneButton'),
+  };
+  return onboardingDomCache;
 }
 
 function evaluateWorkflowStepReadiness(step, state) {
@@ -3199,8 +3070,14 @@ function safeBoot() {
 }
 
 safeBoot();
-onboardingCompleted = hasCompletedOnboarding();
-renderOnboardingChecklist();
+onboardingController = createOnboardingController({
+  readStorage: readFromLocalStorage,
+  writeStorage: writeToLocalStorage,
+  status: setStatus,
+  resolveElements: getOnboardingDomElements,
+  resolveActionElements: () => elements,
+});
+onboardingController.renderOnboardingChecklist();
 
 function bindEvents() {
   initNumericSteppers();
@@ -3429,13 +3306,13 @@ elements.loadFixtureButton?.addEventListener('click', () => loadFixture(elements
 elements.applyPasteButton?.addEventListener('click', applyPastedHtml);
 elements.replaceImageButton?.addEventListener('click', () => {
   elements.replaceImageInput?.click();
-  advanceOnboardingByAction('replace-image');
+  onboardingController?.advanceOnboardingByAction('replace-image');
 });
 elements.manualSlotButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const result = activeEditor.markSelectedAsSlot();
   setStatus(result.message);
-  if (result?.ok !== false) advanceOnboardingByAction('slot-select');
+  if (result?.ok !== false) onboardingController?.advanceOnboardingByAction('slot-select');
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 });
 elements.toggleHideButton?.addEventListener('click', () => {
@@ -3587,7 +3464,7 @@ elements.downloadLinkedZipButton?.addEventListener('click', () => { runDownloadB
 for (const button of elements.exportPngButtons) {
   button?.addEventListener('click', () => {
     runDownloadByChoice('export-full-png').catch((error) => setStatus(`PNG 저장 중 오류: ${error?.message || error}`));
-    advanceOnboardingByAction('save-png');
+    onboardingController?.advanceOnboardingByAction('save-png');
   });
 }
 for (const button of elements.exportJpgButtons) {
@@ -3957,32 +3834,18 @@ elements.commandPaletteOverlay?.addEventListener('click', (event) => {
 elements.downloadModal?.addEventListener('click', (event) => {
   if (event.target === elements.downloadModal) toggleDownloadModal(false);
 });
-elements.beginnerModeToggle?.addEventListener('click', () => setBeginnerMode(!isBeginnerMode));
-elements.beginnerTutorialPrevButton?.addEventListener('click', () => {
-  beginnerTutorialStepIndex = Math.max(0, beginnerTutorialStepIndex - 1);
-  renderBeginnerTutorialStep();
-});
-elements.beginnerTutorialNextButton?.addEventListener('click', () => {
-  if (beginnerTutorialStepIndex >= BEGINNER_TUTORIAL_STEPS.length - 1) {
-    completeOnboardingTutorial();
-    return;
-  }
-  beginnerTutorialStepIndex += 1;
-  renderBeginnerTutorialStep();
-});
-elements.beginnerTutorialCloseButton?.addEventListener('click', () => {
-  closeBeginnerTutorial();
+getOnboardingDomElements().beginnerModeToggle?.addEventListener('click', () => onboardingController?.setBeginnerMode(!onboardingController?.isBeginnerMode()));
+getOnboardingDomElements().beginnerTutorialPrevButton?.addEventListener('click', () => onboardingController?.previousTutorialStep());
+getOnboardingDomElements().beginnerTutorialNextButton?.addEventListener('click', () => onboardingController?.nextTutorialStep());
+getOnboardingDomElements().beginnerTutorialCloseButton?.addEventListener('click', () => {
+  onboardingController?.closeBeginnerTutorial();
   setStatus('온보딩을 건너뛰었습니다. 언제든 [온보딩 다시보기] 버튼으로 재시작할 수 있어요.');
 });
-elements.onboardingReplayButton?.addEventListener('click', () => {
-  openBeginnerTutorial({ force: true });
+getOnboardingDomElements().onboardingReplayButton?.addEventListener('click', () => {
+  onboardingController?.openBeginnerTutorial({ force: true });
   setStatus('온보딩을 다시 시작했습니다.');
 });
-elements.onboardingChecklistDoneButton?.addEventListener('click', () => {
-  writeToLocalStorage(ONBOARDING_SAMPLE_CHECKED_STORAGE_KEY, '1');
-  renderOnboardingChecklist();
-  setStatus('샘플 작업 1회 실행 체크리스트를 완료로 기록했습니다.');
-});
+getOnboardingDomElements().onboardingChecklistDoneButton?.addEventListener('click', () => onboardingController?.markChecklistDone());
 elements.viewSnapToggleButton?.addEventListener('click', () => toggleViewFeatureFlag('snap', '스냅'));
 elements.viewGuideToggleButton?.addEventListener('click', () => toggleViewFeatureFlag('guide', '가이드'));
 elements.viewRulerToggleButton?.addEventListener('click', () => toggleViewFeatureFlag('ruler', '눈금자'));
@@ -4003,5 +3866,9 @@ syncAdvancedFormFromState();
 syncViewFeatureButtons();
 syncWorkspaceButtons();
 applyShortcutTooltips();
-setBeginnerMode(readFromLocalStorage(BEGINNER_MODE_STORAGE_KEY, '0') === '1', { silent: true });
-openBeginnerTutorialIfNeeded();
+const bootEditorMode = ensureProEditorModePolicy({ readStorage: readFromLocalStorage, writeStorage: writeToLocalStorage });
+onboardingController?.setBeginnerMode(
+  bootEditorMode === 'beginner' || readFromLocalStorage(BEGINNER_MODE_STORAGE_KEY, '0') === '1',
+  { silent: true },
+);
+onboardingController?.openBeginnerTutorialIfNeeded();
