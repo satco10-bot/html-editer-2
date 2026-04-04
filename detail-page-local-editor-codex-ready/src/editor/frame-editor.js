@@ -19,6 +19,9 @@ import { restoreSerializedAssetRefs } from '../core/serialize-layer.js';
 
 const FRAME_CSS_URL_RE = /url\((['"]?)([^"'()]+)\1\)/gi;
 const UNSUPPORTED_COMMAND_MESSAGE_PREFIX = '지원하지 않는 명령입니다:';
+const TYPOGRAPHY_STYLE_TAG_ID = 'editor-typography-definitions';
+const VARIABLE_FONT_AXES = ['wght', 'wdth', 'opsz', 'slnt'];
+const OPEN_TYPE_FEATURE_KEYS = ['liga', 'kern', 'ss01', 'ss02', 'onum'];
 const ADD_ELEMENT_PRESETS = {
   text: {
     tagName: 'p',
@@ -164,6 +167,34 @@ function setInlineStyle(element, patch) {
     else element.removeAttribute('data-export-style');
   }
   return next;
+}
+
+function parseFontVariationSettings(value = '') {
+  const result = {};
+  const matches = String(value || '').matchAll(/["']([A-Za-z0-9]{4})["']\s*([-\d.]+)/g);
+  for (const match of matches) result[match[1].toLowerCase()] = Number.parseFloat(match[2]);
+  return result;
+}
+
+function serializeFontVariationSettings(map = {}) {
+  const entries = Object.entries(map)
+    .filter(([, value]) => Number.isFinite(Number(value)))
+    .map(([axis, value]) => `"${String(axis).toLowerCase()}" ${Number(value)}`);
+  return entries.length ? entries.join(', ') : '';
+}
+
+function parseFontFeatureSettings(value = '') {
+  const result = {};
+  const matches = String(value || '').matchAll(/["']([A-Za-z0-9]{4})["']\s*(on|off|[01])/gi);
+  for (const match of matches) result[match[1].toLowerCase()] = /^(on|1)$/i.test(match[2]);
+  return result;
+}
+
+function serializeFontFeatureSettings(map = {}) {
+  const entries = Object.entries(map)
+    .filter(([key]) => OPEN_TYPE_FEATURE_KEYS.includes(String(key).toLowerCase()))
+    .map(([key, enabled]) => `"${String(key).toLowerCase()}" ${enabled ? 'on' : 'off'}`);
+  return entries.length ? entries.join(', ') : '';
 }
 
 function encodeData(value) {
@@ -352,6 +383,45 @@ export function createFrameEditor({
   const modifiedSlots = new Set();
   const editorModel = createEditorModel(doc);
   let lastCommittedSnapshot = initialSnapshot?.html ? { ...initialSnapshot } : null;
+  let typographyDefinitions = [];
+
+  function readTypographyDefinitions() {
+    const node = doc.getElementById(TYPOGRAPHY_STYLE_TAG_ID);
+    const raw = node?.dataset?.definitions || '[]';
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function ensureTypographyStyleTag() {
+    let styleTag = doc.getElementById(TYPOGRAPHY_STYLE_TAG_ID);
+    if (!styleTag) {
+      styleTag = doc.createElement('style');
+      styleTag.id = TYPOGRAPHY_STYLE_TAG_ID;
+      styleTag.setAttribute('data-typography-definitions', '1');
+      doc.head.appendChild(styleTag);
+    }
+    return styleTag;
+  }
+
+  function rebuildTypographyDefinitionsCss() {
+    const styleTag = ensureTypographyStyleTag();
+    styleTag.dataset.definitions = JSON.stringify(typographyDefinitions);
+    const css = typographyDefinitions.map((definition) => {
+      const selector = `.typo-style-${definition.id}`;
+      const lines = Object.entries(definition.patch || {})
+        .filter(([, value]) => value != null && value !== '')
+        .map(([key, value]) => `  ${key}: ${value};`);
+      return `${selector} {\n${lines.join('\n')}\n}`;
+    }).join('\n\n');
+    styleTag.textContent = css;
+  }
+
+  typographyDefinitions = readTypographyDefinitions();
+  if (typographyDefinitions.length) rebuildTypographyDefinitionsCss();
 
   function uniqueConnectedElements(items) {
     const seen = new Set();
@@ -748,11 +818,11 @@ export function createFrameEditor({
 
   function getTextStyleState() {
     const targets = getTextTargets();
-    if (!targets.length) return { enabled: false, targetCount: 0 };
+    if (!targets.length) return { enabled: false, targetCount: 0, styleDefinitions: typographyDefinitions };
     const styles = targets.map((element) => win.getComputedStyle(element));
     const pick = (getter) => {
-      const first = getter(styles[0]);
-      return styles.every((style) => getter(style) === first) ? first : '';
+      const first = getter(styles[0], 0);
+      return styles.every((style, index) => getter(style, index) === first) ? first : '';
     };
     const fontSize = pick((style) => formatNumberString(style.fontSize, 2).replace(/\.0+$/, ''));
     const lineHeight = pick((style) => {
@@ -767,6 +837,23 @@ export function createFrameEditor({
       if (!Number.isFinite(fs) || !fs || !Number.isFinite(ls)) return '';
       return formatNumberString(ls / fs, 3);
     });
+    const variableAxes = {};
+    const featureFlags = {};
+    for (const axis of VARIABLE_FONT_AXES) {
+      const picked = pick((style) => parseFontVariationSettings(style.fontVariationSettings || '')[axis]);
+      if (picked != null && picked !== '') variableAxes[axis] = Number(picked);
+    }
+    for (const key of OPEN_TYPE_FEATURE_KEYS) {
+      const picked = pick((style) => parseFontFeatureSettings(style.fontFeatureSettings || '')[key]);
+      if (typeof picked === 'boolean') featureFlags[key] = picked;
+    }
+    const baselineStep = pick((style) => String(style.getPropertyValue('--editor-baseline-step') || '').replace('px', '').trim());
+    const opticalAlign = pick((style) => style.getPropertyValue('--editor-optical-align').trim() || '');
+    const styleClass = pick((style, index) => {
+      const target = targets[index];
+      const matched = Array.from(target.classList).find((name) => name.startsWith('typo-style-'));
+      return matched || '';
+    });
     return {
       enabled: true,
       targetCount: targets.length,
@@ -776,6 +863,12 @@ export function createFrameEditor({
       fontWeight: pick((style) => String(style.fontWeight || '')),
       color: pick((style) => rgbToHex(style.color || '')),
       textAlign: pick((style) => String(style.textAlign || '')),
+      variableAxes,
+      openTypeFeatures: featureFlags,
+      baselineGrid: { enabled: !!baselineStep, step: baselineStep || '' },
+      opticalAlignment: opticalAlign || 'none',
+      styleClass,
+      styleDefinitions: typographyDefinitions,
     };
   }
 
@@ -1933,13 +2026,58 @@ export function createFrameEditor({
       if (clear || Object.prototype.hasOwnProperty.call(patch, 'fontWeight')) stylePatch['font-weight'] = clear ? null : (patch.fontWeight || null);
       if (clear || Object.prototype.hasOwnProperty.call(patch, 'color')) stylePatch.color = clear ? null : (patch.color || null);
       if (clear || Object.prototype.hasOwnProperty.call(patch, 'textAlign')) stylePatch['text-align'] = clear ? null : (patch.textAlign || null);
+      if (clear || Object.prototype.hasOwnProperty.call(patch, 'fontVariationSettings')) stylePatch['font-variation-settings'] = clear ? null : (patch.fontVariationSettings || null);
+      if (clear || Object.prototype.hasOwnProperty.call(patch, 'fontFeatureSettings')) stylePatch['font-feature-settings'] = clear ? null : (patch.fontFeatureSettings || null);
+      if (clear || Object.prototype.hasOwnProperty.call(patch, 'opticalAlignment')) {
+        stylePatch['--editor-optical-align'] = clear ? null : (patch.opticalAlignment || 'none');
+        stylePatch['hanging-punctuation'] = clear || !patch.opticalAlignment || patch.opticalAlignment === 'none' ? null : 'first allow-end';
+      }
+      if (clear || Object.prototype.hasOwnProperty.call(patch, 'baselineGridStep')) {
+        stylePatch['--editor-baseline-step'] = clear ? null : (patch.baselineGridStep ? `${patch.baselineGridStep}px` : null);
+      }
+      if (!clear && patch.baselineGridSnap && patch.baselineGridStep) {
+        const computed = win.getComputedStyle(element);
+        const fontSizePx = Number.parseFloat(computed.fontSize || '0');
+        const step = Number.parseFloat(patch.baselineGridStep);
+        if (Number.isFinite(fontSizePx) && fontSizePx > 0 && Number.isFinite(step) && step > 0) {
+          const ratio = Math.max(1, Math.round(fontSizePx * (Number.parseFloat(patch.lineHeight || computed.lineHeight) / fontSizePx || 1) / step));
+          stylePatch['line-height'] = formatNumberString((step * ratio) / fontSizePx, 3);
+        }
+      }
       setInlineStyle(element, stylePatch);
+      if (Object.prototype.hasOwnProperty.call(patch, 'styleClass')) {
+        for (const className of Array.from(element.classList)) {
+          if (className.startsWith('typo-style-')) element.classList.remove(className);
+        }
+        if (!clear && patch.styleClass) element.classList.add(patch.styleClass);
+      }
       element.dataset.editorModified = '1';
       if (element.dataset.nodeUid) modifiedSlots.add(element.dataset.nodeUid);
     }
     emitState();
     emitMutation(clear ? 'clear-text-style' : 'apply-text-style');
     return { ok: true, message: clear ? `텍스트 ${targets.length}개의 인라인 스타일을 비웠습니다.` : `텍스트 ${targets.length}개에 스타일을 적용했습니다.` };
+  }
+
+  function upsertTypographyDefinition({ id = '', name = '', kind = 'character', patch = {} } = {}) {
+    const cleanName = String(name || '').trim();
+    if (!cleanName) return { ok: false, message: '스타일 이름을 입력해 주세요.' };
+    const styleId = String(id || slugify(cleanName) || nextId('typo')).replace(/[^a-z0-9-_]/gi, '').toLowerCase();
+    const cleanPatch = Object.fromEntries(Object.entries(patch || {}).filter(([, value]) => value != null && value !== ''));
+    const existingIndex = typographyDefinitions.findIndex((item) => item.id === styleId);
+    const next = { id: styleId, name: cleanName, kind: kind === 'paragraph' ? 'paragraph' : 'character', patch: cleanPatch };
+    if (existingIndex >= 0) typographyDefinitions[existingIndex] = next;
+    else typographyDefinitions.push(next);
+    rebuildTypographyDefinitionsCss();
+    emitState();
+    emitMutation('upsert-typography-definition');
+    return { ok: true, message: `스타일 "${cleanName}"을 저장했습니다.`, definition: next };
+  }
+
+  function applyTypographyDefinition(definitionId = '') {
+    const definition = typographyDefinitions.find((item) => item.id === definitionId);
+    if (!definition) return { ok: false, message: '선택한 스타일 정의를 찾을 수 없습니다.' };
+    return applyTextStyle({ styleClass: `typo-style-${definition.id}` });
   }
 
   function inspectSlot(slot, slotRecord) {
@@ -3210,6 +3348,8 @@ export function createFrameEditor({
     toggleLayerLockedByUid,
     toggleTextEdit,
     applyTextStyle,
+    upsertTypographyDefinition,
+    applyTypographyDefinition,
     applyBatchLayout,
     applyStackLayout,
     tidySelection,

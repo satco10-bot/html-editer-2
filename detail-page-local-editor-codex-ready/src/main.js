@@ -268,6 +268,23 @@ const elements = {
   textLetterSpacingInput: document.getElementById('textLetterSpacingInput'),
   textWeightSelect: document.getElementById('textWeightSelect'),
   textColorInput: document.getElementById('textColorInput'),
+  textStyleDefKindSelect: document.getElementById('textStyleDefKindSelect'),
+  textStyleDefNameInput: document.getElementById('textStyleDefNameInput'),
+  textStyleDefSelect: document.getElementById('textStyleDefSelect'),
+  saveTextStyleDefButton: document.getElementById('saveTextStyleDefButton'),
+  applyTextStyleDefButton: document.getElementById('applyTextStyleDefButton'),
+  fontAxisWghtInput: document.getElementById('fontAxisWghtInput'),
+  fontAxisWdthInput: document.getElementById('fontAxisWdthInput'),
+  fontAxisOpszInput: document.getElementById('fontAxisOpszInput'),
+  fontAxisSlntInput: document.getElementById('fontAxisSlntInput'),
+  featureLigaToggle: document.getElementById('featureLigaToggle'),
+  featureKernToggle: document.getElementById('featureKernToggle'),
+  featureSs01Toggle: document.getElementById('featureSs01Toggle'),
+  featureSs02Toggle: document.getElementById('featureSs02Toggle'),
+  featureOnumToggle: document.getElementById('featureOnumToggle'),
+  baselineGridStepInput: document.getElementById('baselineGridStepInput'),
+  opticalAlignSelect: document.getElementById('opticalAlignSelect'),
+  applyTypographyAdvancedButton: document.getElementById('applyTypographyAdvancedButton'),
   applyTextStyleButton: document.getElementById('applyTextStyleButton'),
   clearTextStyleButton: document.getElementById('clearTextStyleButton'),
   batchSelectionSummary: document.getElementById('batchSelectionSummary'),
@@ -1627,6 +1644,29 @@ function syncTextStyleControls(editorMeta) {
   elements.textLetterSpacingInput.value = enabled && style.letterSpacing ? String(style.letterSpacing) : '';
   elements.textWeightSelect.value = enabled && style.fontWeight ? String(style.fontWeight) : '';
   elements.textColorInput.value = enabled && style.color ? style.color : '#333333';
+  if (elements.fontAxisWghtInput) elements.fontAxisWghtInput.value = String(style?.variableAxes?.wght ?? 400);
+  if (elements.fontAxisWdthInput) elements.fontAxisWdthInput.value = String(style?.variableAxes?.wdth ?? 100);
+  if (elements.fontAxisOpszInput) elements.fontAxisOpszInput.value = String(style?.variableAxes?.opsz ?? 16);
+  if (elements.fontAxisSlntInput) elements.fontAxisSlntInput.value = String(style?.variableAxes?.slnt ?? 0);
+  if (elements.featureLigaToggle) elements.featureLigaToggle.checked = !!style?.openTypeFeatures?.liga;
+  if (elements.featureKernToggle) elements.featureKernToggle.checked = !!style?.openTypeFeatures?.kern;
+  if (elements.featureSs01Toggle) elements.featureSs01Toggle.checked = !!style?.openTypeFeatures?.ss01;
+  if (elements.featureSs02Toggle) elements.featureSs02Toggle.checked = !!style?.openTypeFeatures?.ss02;
+  if (elements.featureOnumToggle) elements.featureOnumToggle.checked = !!style?.openTypeFeatures?.onum;
+  if (elements.baselineGridStepInput) elements.baselineGridStepInput.value = style?.baselineGrid?.step || '';
+  if (elements.opticalAlignSelect) elements.opticalAlignSelect.value = style?.opticalAlignment || 'none';
+  if (elements.textStyleDefSelect) {
+    const defs = Array.isArray(style?.styleDefinitions) ? style.styleDefinitions : [];
+    const previous = elements.textStyleDefSelect.value;
+    elements.textStyleDefSelect.innerHTML = '<option value="">선택</option>';
+    for (const definition of defs) {
+      const option = document.createElement('option');
+      option.value = definition.id;
+      option.textContent = `${definition.name} (${definition.kind === 'paragraph' ? '문단' : '문자'})`;
+      elements.textStyleDefSelect.appendChild(option);
+    }
+    elements.textStyleDefSelect.value = defs.some((item) => item.id === previous) ? previous : '';
+  }
 }
 
 function syncBatchSummary(editorMeta) {
@@ -2351,6 +2391,36 @@ function restoreAutosave() {
   setStatus(`자동저장본을 복구했습니다. 저장 시각: ${payload.savedAt || '-'}`);
 }
 
+function buildTypographyAdvancedPatch() {
+  const axisMap = {
+    wght: Number(elements.fontAxisWghtInput?.value || 400),
+    wdth: Number(elements.fontAxisWdthInput?.value || 100),
+    opsz: Number(elements.fontAxisOpszInput?.value || 16),
+    slnt: Number(elements.fontAxisSlntInput?.value || 0),
+  };
+  const fontVariationSettings = Object.entries(axisMap)
+    .filter(([, value]) => Number.isFinite(value))
+    .map(([axis, value]) => `"${axis}" ${value}`)
+    .join(', ');
+  const featureMap = {
+    liga: !!elements.featureLigaToggle?.checked,
+    kern: !!elements.featureKernToggle?.checked,
+    ss01: !!elements.featureSs01Toggle?.checked,
+    ss02: !!elements.featureSs02Toggle?.checked,
+    onum: !!elements.featureOnumToggle?.checked,
+  };
+  const fontFeatureSettings = Object.entries(featureMap)
+    .map(([key, enabled]) => `"${key}" ${enabled ? 'on' : 'off'}`)
+    .join(', ');
+  return {
+    fontVariationSettings,
+    fontFeatureSettings,
+    baselineGridSnap: true,
+    baselineGridStep: elements.baselineGridStepInput?.value?.trim() || '',
+    opticalAlignment: elements.opticalAlignSelect?.value || 'none',
+  };
+}
+
 function applyTextStyleFromControls({ clear = false } = {}) {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const patch = clear ? {
@@ -2360,6 +2430,11 @@ function applyTextStyleFromControls({ clear = false } = {}) {
     fontWeight: '',
     color: '',
     textAlign: '',
+    fontVariationSettings: '',
+    fontFeatureSettings: '',
+    baselineGridStep: '',
+    opticalAlignment: '',
+    styleClass: '',
   } : (() => {
     const next = {};
     const fontSize = elements.textFontSizeInput.value.trim();
@@ -2371,6 +2446,7 @@ function applyTextStyleFromControls({ clear = false } = {}) {
     if (letterSpacing) next.letterSpacing = letterSpacing;
     if (fontWeight) next.fontWeight = fontWeight;
     if (elements.textColorInput.value) next.color = elements.textColorInput.value;
+    Object.assign(next, buildTypographyAdvancedPatch());
     return next;
   })();
   const result = activeEditor.applyTextStyle(patch, { clear });
@@ -2390,6 +2466,13 @@ function applyTextStyleLive(event) {
   if (!Object.keys(patch).length) return;
   const result = activeEditor.applyTextStyle(patch);
   if (result?.ok) setStatus('텍스트 스타일을 실시간 반영했습니다.');
+  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
+}
+
+function applyTypographyAdvancedLive() {
+  if (!activeEditor) return;
+  const result = activeEditor.applyTextStyle(buildTypographyAdvancedPatch());
+  if (result?.ok) setStatus('고급 타이포 설정을 반영했습니다.');
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 }
 
@@ -2614,6 +2697,54 @@ for (const control of [
 ]) {
   const eventName = control?.tagName === 'SELECT' ? 'change' : 'input';
   control?.addEventListener(eventName, applyTextStyleLive);
+}
+elements.saveTextStyleDefButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const patch = {};
+  const fontSize = elements.textFontSizeInput?.value?.trim() || '';
+  const lineHeight = elements.textLineHeightInput?.value?.trim() || '';
+  const letterSpacing = elements.textLetterSpacingInput?.value?.trim() || '';
+  const fontWeight = elements.textWeightSelect?.value || '';
+  const color = elements.textColorInput?.value || '';
+  if (fontSize) patch['font-size'] = `${fontSize}px`;
+  if (lineHeight) patch['line-height'] = lineHeight;
+  if (letterSpacing) patch['letter-spacing'] = `${letterSpacing}em`;
+  if (fontWeight) patch['font-weight'] = fontWeight;
+  if (color) patch.color = color;
+  const advanced = buildTypographyAdvancedPatch();
+  if (advanced.fontVariationSettings) patch['font-variation-settings'] = advanced.fontVariationSettings;
+  if (advanced.fontFeatureSettings) patch['font-feature-settings'] = advanced.fontFeatureSettings;
+  if (advanced.baselineGridStep) patch['--editor-baseline-step'] = `${advanced.baselineGridStep}px`;
+  if (advanced.opticalAlignment) patch['--editor-optical-align'] = advanced.opticalAlignment;
+  const result = activeEditor.upsertTypographyDefinition({
+    id: elements.textStyleDefSelect?.value || '',
+    name: elements.textStyleDefNameInput?.value || '',
+    kind: elements.textStyleDefKindSelect?.value || 'character',
+    patch,
+  });
+  setStatus(result.message);
+});
+elements.applyTextStyleDefButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.applyTypographyDefinition(elements.textStyleDefSelect?.value || '');
+  setStatus(result.message);
+});
+elements.applyTypographyAdvancedButton?.addEventListener('click', applyTypographyAdvancedLive);
+for (const control of [
+  elements.fontAxisWghtInput,
+  elements.fontAxisWdthInput,
+  elements.fontAxisOpszInput,
+  elements.fontAxisSlntInput,
+  elements.featureLigaToggle,
+  elements.featureKernToggle,
+  elements.featureSs01Toggle,
+  elements.featureSs02Toggle,
+  elements.featureOnumToggle,
+  elements.baselineGridStepInput,
+  elements.opticalAlignSelect,
+]) {
+  const eventName = control?.tagName === 'SELECT' || control?.type === 'checkbox' ? 'change' : 'input';
+  control?.addEventListener(eventName, applyTypographyAdvancedLive);
 }
 elements.applyCanvasGeometryButton?.addEventListener('click', () => {
   if (elements.geometryXInput) elements.geometryXInput.value = elements.canvasGeometryXInput?.value || '';

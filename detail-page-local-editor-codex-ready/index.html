@@ -545,6 +545,53 @@
             <button id="clearTextStyleButton" class="button button--ghost">텍스트 스타일 비우기</button>
           </div>
         </div>
+        <details class="style-form" open>
+          <summary><strong>스타일 정의</strong> · 문서 전역 재사용</summary>
+          <div class="style-grid">
+            <label class="field field--mini">
+              <span>유형</span>
+              <select id="textStyleDefKindSelect">
+                <option value="character">문자 스타일</option>
+                <option value="paragraph">문단 스타일</option>
+              </select>
+            </label>
+            <label class="field field--mini">
+              <span>이름</span>
+              <input id="textStyleDefNameInput" type="text" placeholder="예: 본문 기본" />
+            </label>
+            <label class="field field--mini">
+              <span>저장된 스타일</span>
+              <select id="textStyleDefSelect"><option value="">선택</option></select>
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="saveTextStyleDefButton" class="button button--secondary button--small">현재값 저장</button>
+            <button id="applyTextStyleDefButton" class="button button--ghost button--small">선택 스타일 적용</button>
+          </div>
+        </details>
+        <details class="style-form">
+          <summary><strong>Variable Font / OpenType / 정렬</strong></summary>
+          <div class="style-grid">
+            <label class="field field--mini"><span>wght</span><input id="fontAxisWghtInput" type="range" min="100" max="900" step="1" /></label>
+            <label class="field field--mini"><span>wdth</span><input id="fontAxisWdthInput" type="range" min="50" max="200" step="1" /></label>
+            <label class="field field--mini"><span>opsz</span><input id="fontAxisOpszInput" type="range" min="8" max="144" step="1" /></label>
+            <label class="field field--mini"><span>slnt</span><input id="fontAxisSlntInput" type="range" min="-15" max="0" step="1" /></label>
+          </div>
+          <div class="button-row">
+            <label><input id="featureLigaToggle" type="checkbox" /> liga</label>
+            <label><input id="featureKernToggle" type="checkbox" /> kern</label>
+            <label><input id="featureSs01Toggle" type="checkbox" /> ss01</label>
+            <label><input id="featureSs02Toggle" type="checkbox" /> ss02</label>
+            <label><input id="featureOnumToggle" type="checkbox" /> onum</label>
+          </div>
+          <div class="style-grid">
+            <label class="field field--mini"><span>Baseline grid(px)</span><input id="baselineGridStepInput" type="number" min="2" step="1" placeholder="8" /></label>
+            <label class="field field--mini"><span>Optical align</span><select id="opticalAlignSelect"><option value="none">없음</option><option value="punctuation">문장부호 내걸기</option></select></label>
+          </div>
+          <div class="button-row">
+            <button id="applyTypographyAdvancedButton" class="button button--ghost button--small">고급 타이포 적용</button>
+          </div>
+        </details>
       </section>
 
       <section class="panel sidebar-panel" data-sidebar-panel="right-arrange">
