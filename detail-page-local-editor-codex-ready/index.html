@@ -138,30 +138,38 @@
 
   <div id="appShell" class="app-shell" hidden>
     <header class="topbar">
-      <div class="topbar__left">
-        <div class="topbar__brand">
-          <div class="brand__eyebrow">LOCAL DETAIL PAGE EDITOR · UX REBOOT</div>
-          <h1>상세페이지 로컬 웹앱</h1>
-          <div class="topbar__sub">버튼 나열형 인터페이스를 줄이고, 캔버스·코드·속성 패널 중심으로 다시 묶은 리부트 셸입니다.</div>
+      <div class="topbar-core" role="toolbar" aria-label="핵심 작업">
+        <div class="project-name-inline">
+          <button id="projectNameDisplay" class="project-name-inline__display" type="button" aria-label="프로젝트 이름 편집">
+            프로젝트 이름
+          </button>
+          <input id="projectNameInput" class="project-name-inline__input" type="text" maxlength="80" hidden aria-label="프로젝트 이름 입력" />
         </div>
+        <div class="topbar-core__group">
+          <button id="undoButton" class="button button--ghost" type="button">되돌리기</button>
+          <button id="redoButton" class="button button--ghost" type="button">다시하기</button>
+        </div>
+        <div id="topbarSaveStatusBadge" class="topbar-save-badge" data-status="idle" aria-live="polite">문서 없음</div>
+        <button id="shareProjectButton" class="button button--secondary" type="button">공유</button>
+        <button id="openDownloadModalButton" class="button topbar-export-primary" type="button">내보내기</button>
       </div>
 
-      <div class="topbar__center">
-        <label class="workflow-guide-picker" for="workflowGuideSelect">
-          <span>진행 안내</span>
-          <select id="workflowGuideSelect">
-            <option value="load">1) 불러오기</option>
-            <option value="edit">2) 편집</option>
-            <option value="save">3) 저장/출력</option>
-          </select>
-        </label>
-        <p id="workflowGuideLine" class="workflow-guide">HTML 파일이나 폴더를 먼저 불러오세요.</p>
-      </div>
+      <details class="topbar-view-menu">
+        <summary>View · 고급 기능</summary>
+        <div class="topbar-view-menu__items">
+          <label class="workflow-guide-picker" for="workflowGuideSelect">
+            <span>진행 안내</span>
+            <select id="workflowGuideSelect">
+              <option value="load">1) 불러오기</option>
+              <option value="edit">2) 편집</option>
+              <option value="save">3) 저장/출력</option>
+            </select>
+          </label>
+          <p id="workflowGuideLine" class="workflow-guide">HTML 파일이나 폴더를 먼저 불러오세요.</p>
 
-      <div class="topbar__right">
-        <button id="beginnerModeToggle" class="button button--secondary" type="button" aria-pressed="false">초보 모드: OFF</button>
-        <button id="onboardingReplayButton" class="button button--ghost" type="button">온보딩 다시보기</button>
-        <div class="topbar__group">
+          <button id="beginnerModeToggle" class="button button--secondary" type="button" aria-pressed="false">초보 모드: OFF</button>
+          <button id="onboardingReplayButton" class="button button--ghost" type="button">온보딩 다시보기</button>
+
           <span class="topbar__label">열기</span>
           <button id="openHtmlButton" class="button">HTML 열기</button>
           <button id="openFolderButton" class="button button--secondary" data-beginner-more-item="load">폴더 열기</button>
@@ -170,39 +178,20 @@
             <select id="fixtureSelect"></select>
           </label>
           <button id="loadFixtureButton" class="button button--ghost" data-beginner-more-item="load">불러오기</button>
-          <details class="topbar__more" data-beginner-more-group="load">
-            <summary>더보기</summary>
-            <div class="topbar__more-menu" data-beginner-more-target="load"></div>
-          </details>
-        </div>
 
-        <div class="topbar__group">
-          <span class="topbar__label">저장 / 출력</span>
-          <button id="openDownloadModalButton" class="button">저장/출력 열기</button>
-          <button id="downloadEditedButton" class="button button--secondary" data-download-action="save-edited" data-beginner-more-item="save">문서 저장</button>
-          <button id="exportPngButton" class="button button--ghost" data-download-action="export-full-png" data-beginner-more-item="save">PNG</button>
-          <button id="exportJpgButton" class="button button--ghost" data-download-action="export-full-jpg" data-beginner-more-item="save">JPG</button>
-          <details class="topbar__more" data-beginner-more-group="save">
-            <summary>더보기</summary>
-            <div class="topbar__more-menu" data-beginner-more-target="save"></div>
-          </details>
-        </div>
-
-        <div class="topbar__group topbar__group--workspace">
           <span class="topbar__label">작업</span>
-          <button id="undoButton" class="button">되돌리기</button>
-          <button id="redoButton" class="button button--secondary" data-beginner-more-item="workspace">다시하기</button>
           <button id="restoreAutosaveButton" class="button button--ghost" data-beginner-more-item="workspace">자동저장 복구</button>
           <button id="saveProjectSnapshotButton" class="button button--ghost" data-beginner-more-item="workspace">스냅샷 저장</button>
           <button id="toggleLeftSidebarButton" class="button button--ghost" data-beginner-more-item="workspace">왼쪽 패널</button>
           <button id="toggleRightSidebarButton" class="button button--ghost" data-beginner-more-item="workspace">오른쪽 패널</button>
           <button id="focusModeButton" class="button button--ghost" data-beginner-more-item="workspace">캔버스 집중</button>
-          <details class="topbar__more" data-beginner-more-group="workspace">
-            <summary>더보기</summary>
-            <div class="topbar__more-menu" data-beginner-more-target="workspace"></div>
-          </details>
+
+          <span class="topbar__label">저장 / 출력</span>
+          <button id="downloadEditedButton" class="button button--secondary" data-download-action="save-edited" data-beginner-more-item="save">문서 저장</button>
+          <button id="exportPngButton" class="button button--ghost" data-download-action="export-full-png" data-beginner-more-item="save">PNG</button>
+          <button id="exportJpgButton" class="button button--ghost" data-download-action="export-full-jpg" data-beginner-more-item="save">JPG</button>
         </div>
-      </div>
+      </details>
 
       <details id="advancedTopbarPanel" class="topbar-advanced" data-beginner-advanced>
         <summary>고급 펼치기</summary>
@@ -398,13 +387,6 @@
             <button class="segmented__item" data-action="remove-image">이미지 복구/제거</button>
           </div>
           <div class="canvas-controls button-row">
-            <button id="zoomOutButton" class="button button--ghost button--small">-</button>
-            <div id="zoomLabel" class="mini-control mini-control--value">100%</div>
-            <button id="zoomInButton" class="button button--ghost button--small">+</button>
-            <button id="zoomResetButton" class="button button--ghost button--small">100%</button>
-            <button id="zoomFitButton" class="button button--ghost button--small">폭 맞춤</button>
-          </div>
-          <div class="canvas-controls button-row">
             <button id="viewSnapToggleButton" class="button button--ghost button--small">스냅</button>
             <button id="viewGuideToggleButton" class="button button--ghost button--small">가이드</button>
             <button id="viewRulerToggleButton" class="button button--ghost button--small">눈금자</button>
@@ -467,6 +449,14 @@
           </div>
         </div>
       </section>
+
+      <div class="bottom-zoom-bar" role="toolbar" aria-label="캔버스 확대/축소">
+        <button id="zoomOutButton" class="button button--ghost button--small" type="button" aria-label="축소">-</button>
+        <div id="zoomLabel" class="mini-control mini-control--value" aria-live="polite">100%</div>
+        <button id="zoomInButton" class="button button--ghost button--small" type="button" aria-label="확대">+</button>
+        <button id="zoomResetButton" class="button button--ghost button--small" type="button">100%</button>
+        <button id="zoomFitButton" class="button button--ghost button--small" type="button">화면 맞춤</button>
+      </div>
     </main>
 
     <aside id="rightSidebar" class="sidebar sidebar--right">

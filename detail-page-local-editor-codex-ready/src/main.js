@@ -41,6 +41,7 @@ let advancedSettingsDirty = false;
 let lastFocusedBeforeShortcutHelp = null;
 let lastFocusedBeforeDownloadModal = null;
 let importRequestSequence = 0;
+let projectNameEditDraft = '';
 const zoomState = { mode: 'fit', value: 1 };
 const viewFeatureFlags = {
   snap: true,
@@ -194,6 +195,10 @@ const elements = {
   restoreAutosaveButton: document.getElementById('restoreAutosaveButton'),
   saveProjectSnapshotButton: document.getElementById('saveProjectSnapshotButton'),
   openDownloadModalButton: document.getElementById('openDownloadModalButton'),
+  shareProjectButton: document.getElementById('shareProjectButton'),
+  projectNameDisplay: document.getElementById('projectNameDisplay'),
+  projectNameInput: document.getElementById('projectNameInput'),
+  topbarSaveStatusBadge: document.getElementById('topbarSaveStatusBadge'),
   downloadModal: document.getElementById('downloadModal'),
   closeDownloadModalButton: document.getElementById('closeDownloadModalButton'),
   downloadChoiceSelect: document.getElementById('downloadChoiceSelect'),
@@ -571,6 +576,77 @@ function setStatus(text, options = undefined) {
 
 function setImageApplyDiagnostic(diagnostic) {
   store.setImageApplyDiagnostic(diagnostic || null);
+}
+
+function displayProjectName(project) {
+  const raw = String(project?.sourceName || '').trim();
+  return raw || '새 프로젝트';
+}
+
+function syncTopbarProjectName(project) {
+  const name = displayProjectName(project);
+  if (elements.projectNameDisplay) elements.projectNameDisplay.textContent = name;
+  if (elements.projectNameInput && elements.projectNameInput.hidden) {
+    elements.projectNameInput.value = name;
+  }
+}
+
+function startProjectNameInlineEdit() {
+  const state = store.getState();
+  if (!state.project || !elements.projectNameInput || !elements.projectNameDisplay) {
+    setStatus('먼저 프로젝트를 불러와 주세요.');
+    return;
+  }
+  projectNameEditDraft = displayProjectName(state.project);
+  elements.projectNameInput.value = projectNameEditDraft;
+  elements.projectNameInput.hidden = false;
+  elements.projectNameDisplay.hidden = true;
+  elements.projectNameInput.focus();
+  elements.projectNameInput.select();
+}
+
+function finishProjectNameInlineEdit({ save = false } = {}) {
+  if (!elements.projectNameInput || !elements.projectNameDisplay) return;
+  const nextName = String(elements.projectNameInput.value || '').trim();
+  elements.projectNameInput.hidden = true;
+  elements.projectNameDisplay.hidden = false;
+  if (!save) {
+    syncTopbarProjectName(store.getState().project);
+    setStatus('프로젝트 이름 수정을 취소했습니다.');
+    return;
+  }
+  if (!nextName) {
+    elements.projectNameInput.value = projectNameEditDraft || displayProjectName(store.getState().project);
+    syncTopbarProjectName(store.getState().project);
+    setStatus('프로젝트 이름은 비워둘 수 없습니다.');
+    return;
+  }
+  store.updateProject((project) => {
+    project.sourceName = nextName;
+    return project;
+  });
+  projectNameEditDraft = nextName;
+  setStatus(`프로젝트 이름을 "${nextName}"(으)로 저장했습니다.`);
+}
+
+async function shareProjectSummary() {
+  const state = store.getState();
+  if (!state.project) {
+    setStatus('먼저 프로젝트를 불러와 주세요.');
+    return;
+  }
+  const message = `[상세페이지 편집 공유]\n프로젝트: ${displayProjectName(state.project)}\n상태: ${resolveDocumentStatus(state).text}\n안내: 로컬 앱(file://)이라 파일 자체를 함께 전달해 주세요.`;
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: displayProjectName(state.project), text: message });
+      setStatus('공유 창을 열었습니다.');
+      return;
+    }
+    await navigator.clipboard.writeText(message);
+    setStatus('공유 문구를 클립보드에 복사했습니다.');
+  } catch (error) {
+    setStatus(`공유 준비 중 오류: ${error?.message || error}`);
+  }
 }
 
 function buildImageFailureDiagnostic({ files = [], editorMeta = null, statusMessage = '' } = {}) {
@@ -1854,7 +1930,12 @@ function renderShell(state) {
     const docStatus = resolveDocumentStatus(state);
     elements.documentStatusChip.dataset.status = docStatus.status;
     elements.documentStatusChip.textContent = docStatus.text;
+    if (elements.topbarSaveStatusBadge) {
+      elements.topbarSaveStatusBadge.dataset.status = docStatus.status;
+      elements.topbarSaveStatusBadge.textContent = docStatus.text;
+    }
   }
+  syncTopbarProjectName(state.project);
   refreshComputedViews(state);
 
   const hasProject = !!state.project;
@@ -2779,6 +2860,23 @@ elements.snapshotList?.addEventListener('click', (event) => {
   if (action === 'delete') return deleteProjectSnapshotById(snapshotId);
 });
 elements.openDownloadModalButton?.addEventListener('click', () => toggleDownloadModal(true));
+elements.shareProjectButton?.addEventListener('click', () => { shareProjectSummary().catch((error) => setStatus(`공유 중 오류: ${error?.message || error}`)); });
+elements.projectNameDisplay?.addEventListener('click', startProjectNameInlineEdit);
+elements.projectNameInput?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    finishProjectNameInlineEdit({ save: true });
+    return;
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    finishProjectNameInlineEdit({ save: false });
+  }
+});
+elements.projectNameInput?.addEventListener('blur', () => {
+  if (elements.projectNameInput?.hidden) return;
+  finishProjectNameInlineEdit({ save: true });
+});
 elements.closeDownloadModalButton?.addEventListener('click', () => toggleDownloadModal(false));
 elements.downloadChoiceSelect?.addEventListener('change', () => renderShell(store.getState()));
 elements.runDownloadChoiceButton?.addEventListener('click', async () => {
