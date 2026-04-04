@@ -204,7 +204,7 @@ const styleSystemState = {
   brandTokens: {},
 };
 
-const elements = {
+const elements = Object.freeze({
   appLauncher: document.getElementById('appLauncher'),
   appShell: document.getElementById('appShell'),
   appStatusbar: document.getElementById('appStatusbar'),
@@ -437,9 +437,7 @@ const elements = {
   stackVerticalButton: document.getElementById('stackVerticalButton'),
   tidyHorizontalButton: document.getElementById('tidyHorizontalButton'),
   tidyVerticalButton: document.getElementById('tidyVerticalButton'),
-  beginnerMoreItems: Array.from(document.querySelectorAll('[data-beginner-more-item]')),
   beginnerModeToggle: document.getElementById('beginnerModeToggle'),
-  beginnerMoreItems: Array.from(document.querySelectorAll('[data-beginner-more-item]')),
   advancedTopbarPanel: document.getElementById('advancedTopbarPanel'),
   beginnerTutorialTooltip: document.getElementById('beginnerTutorialTooltip'),
   beginnerTutorialTitle: document.getElementById('beginnerTutorialTitle'),
@@ -453,7 +451,44 @@ const elements = {
   onboardingChecklistItem: document.getElementById('onboardingChecklistItem'),
   onboardingChecklistDoneButton: document.getElementById('onboardingChecklistDoneButton'),
   beginnerMoreItems: Array.from(document.querySelectorAll('[data-beginner-more-item]')),
-};
+});
+
+const REQUIRED_ELEMENT_KEYS = Object.freeze([
+  'appLauncher',
+  'appShell',
+  'launcherNewButton',
+  'launcherUploadButton',
+  'openHtmlButton',
+  'replaceImageButton',
+  'manualSlotButton',
+  'previewFrame',
+  'statusText',
+  'beginnerModeToggle',
+]);
+
+const OPTIONAL_ELEMENT_KEYS = Object.freeze(
+  Object.keys(elements).filter((key) => !REQUIRED_ELEMENT_KEYS.includes(key)),
+);
+
+function validateElementsRegistry() {
+  const missingRequiredKeys = REQUIRED_ELEMENT_KEYS.filter((key) => !elements[key]);
+  if (missingRequiredKeys.length) {
+    console.warn(
+      '[init] 필수 UI 요소 누락:',
+      missingRequiredKeys.join(', '),
+      '(index.html id/data-* 연결을 확인해 주세요.)',
+    );
+  }
+
+  if (typeof window !== 'undefined' && window.location?.hostname === 'localhost') {
+    const unknownOptionalKeys = OPTIONAL_ELEMENT_KEYS.filter((key) => !(key in elements));
+    if (unknownOptionalKeys.length) {
+      console.warn('[dev] optional key 정의 확인 필요:', unknownOptionalKeys.join(', '));
+    }
+  }
+}
+
+validateElementsRegistry();
 
 const beginnerMoreItemAnchors = new WeakMap();
 
