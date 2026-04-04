@@ -1,4 +1,6 @@
 :root {
+  --left-sidebar-width: 340px;
+  --right-sidebar-width: 420px;
   /* ===== UI tokens ===== */
   /* color tokens */
   --bg: #f4f6fb;
@@ -948,20 +950,17 @@ body { overflow: hidden; }
 
 .app-shell {
   height: calc(100vh - 58px);
-  grid-template-columns:
-    minmax(var(--left-panel-min), var(--left-panel-width))
-    minmax(var(--canvas-min-width), 1fr)
-    minmax(var(--right-panel-min), var(--right-panel-width));
+  grid-template-columns: var(--left-sidebar-width) minmax(760px, 1fr) var(--right-sidebar-width);
   grid-template-rows: auto 1fr;
   gap: 14px;
   padding: 14px;
 }
 
 body.layout--left-collapsed .app-shell {
-  grid-template-columns: 0 minmax(var(--canvas-min-width), 1fr) minmax(var(--right-panel-min), var(--right-panel-width));
+  grid-template-columns: 0 minmax(760px, 1fr) var(--right-sidebar-width);
 }
 body.layout--right-collapsed .app-shell {
-  grid-template-columns: minmax(var(--left-panel-min), var(--left-panel-width)) minmax(var(--canvas-min-width), 1fr) 0;
+  grid-template-columns: var(--left-sidebar-width) minmax(760px, 1fr) 0;
 }
 body.layout--focus-stage .app-shell {
   grid-template-columns: 0 1fr 0;
@@ -1394,11 +1393,9 @@ body.layout--focus-stage #rightSidebar {
 }
 
 @media (max-width: 1800px) {
-  :root {
-    --left-panel-width: 300px;
-    --right-panel-width: 360px;
-    --canvas-min-width: 680px;
-  }
+  .app-shell { grid-template-columns: var(--left-sidebar-width) minmax(680px, 1fr) var(--right-sidebar-width); }
+  body.layout--left-collapsed .app-shell { grid-template-columns: 0 minmax(680px, 1fr) var(--right-sidebar-width); }
+  body.layout--right-collapsed .app-shell { grid-template-columns: var(--left-sidebar-width) minmax(680px, 1fr) 0; }
 }
 
 @media (max-width: 1340px) {
