@@ -775,10 +775,23 @@ body.beginner-mode [data-beginner-advanced] {
 }
 
 .layer-tree {
-  display: grid;
-  gap: 8px;
+  position: relative;
   max-height: 320px;
   overflow: auto;
+}
+.layer-tree__spacer {
+  width: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.layer-tree__window {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  display: grid;
+  gap: 8px;
+  padding-bottom: 8px;
 }
 .layer-item {
   width: 100%;
