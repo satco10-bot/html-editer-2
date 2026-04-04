@@ -197,6 +197,12 @@ const IMPORT_FAILURE_GUIDES = Object.freeze({
   folderImport: '안내: HTML과 assets 폴더를 같은 루트에서 다시 선택해 주세요.',
   pasteMalformed: '안내: 닫히지 않은 태그(예: </div>)를 확인한 뒤 다시 붙여넣어 주세요.',
 });
+const STYLE_SYSTEM_SCRIPT_ID = 'data-editor-style-system';
+const styleSystemState = {
+  components: [],
+  variables: [],
+  brandTokens: {},
+};
 
 const elements = {
   appLauncher: document.getElementById('appLauncher'),
@@ -345,6 +351,24 @@ const elements = {
   advancedAttributeSection: document.getElementById('advancedAttributeSection'),
   applyAdvancedSettingsButton: document.getElementById('applyAdvancedSettingsButton'),
   advancedSettingsState: document.getElementById('advancedSettingsState'),
+  createComponentButton: document.getElementById('createComponentButton'),
+  instantiateComponentButton: document.getElementById('instantiateComponentButton'),
+  componentListSelect: document.getElementById('componentListSelect'),
+  detachComponentButton: document.getElementById('detachComponentButton'),
+  swapComponentButton: document.getElementById('swapComponentButton'),
+  variantNameInput: document.getElementById('variantNameInput'),
+  variantOptionsInput: document.getElementById('variantOptionsInput'),
+  addVariantButton: document.getElementById('addVariantButton'),
+  variantControls: document.getElementById('variantControls'),
+  variableNameInput: document.getElementById('variableNameInput'),
+  variableTypeSelect: document.getElementById('variableTypeSelect'),
+  variableValueInput: document.getElementById('variableValueInput'),
+  addVariableButton: document.getElementById('addVariableButton'),
+  applyVariableButton: document.getElementById('applyVariableButton'),
+  variableListSelect: document.getElementById('variableListSelect'),
+  brandTokenKeyInput: document.getElementById('brandTokenKeyInput'),
+  brandTokenValueInput: document.getElementById('brandTokenValueInput'),
+  applyBrandTokenButton: document.getElementById('applyBrandTokenButton'),
   bringForwardButton: document.getElementById('bringForwardButton'),
   sendBackwardButton: document.getElementById('sendBackwardButton'),
   bringToFrontButton: document.getElementById('bringToFrontButton'),
@@ -1317,6 +1341,226 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function getPreviewDocument() {
+  return elements.previewFrame?.contentDocument || null;
+}
+
+function selectedUid() {
+  const meta = store.getState().editorMeta;
+  return meta?.selectedItems?.[0]?.uid || meta?.selectedUid || '';
+}
+
+function selectedElementInPreview() {
+  const uid = selectedUid();
+  const doc = getPreviewDocument();
+  return uid && doc ? doc.querySelector(`[data-node-uid="${uid}"]`) : null;
+}
+
+function serializeStyleSystemIntoDoc() {
+  const doc = getPreviewDocument();
+  if (!doc) return;
+  let script = doc.getElementById(STYLE_SYSTEM_SCRIPT_ID);
+  if (!script) {
+    script = doc.createElement('script');
+    script.id = STYLE_SYSTEM_SCRIPT_ID;
+    script.type = 'application/json';
+    (doc.body || doc.documentElement).appendChild(script);
+  }
+  script.textContent = JSON.stringify(styleSystemState);
+}
+
+function renderStyleSystemPanels() {
+  if (elements.componentListSelect) {
+    elements.componentListSelect.innerHTML = styleSystemState.components.length
+      ? styleSystemState.components.map((component) => `<option value="${escapeHtml(component.id)}">${escapeHtml(component.name || component.id)}</option>`).join('')
+      : '<option value="">컴포넌트 없음</option>';
+  }
+  if (elements.variableListSelect) {
+    elements.variableListSelect.innerHTML = styleSystemState.variables
+      .map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(`${item.name} (${item.type}) = ${item.value}`)}</option>`)
+      .join('');
+  }
+  const component = styleSystemState.components.find((item) => item.id === elements.componentListSelect?.value) || styleSystemState.components[0];
+  if (elements.variantControls) {
+    const variantDefs = component?.variantDefs || {};
+    const rows = Object.entries(variantDefs).map(([name, options]) => {
+      const optionHtml = (Array.isArray(options) ? options : []).map((opt) => `<option value="${escapeHtml(opt)}">${escapeHtml(opt)}</option>`).join('');
+      return `<label class="field field--mini"><span>${escapeHtml(name)}</span><select data-variant-key="${escapeHtml(name)}">${optionHtml}</select></label>`;
+    });
+    elements.variantControls.innerHTML = rows.length ? rows.join('') : '<div class="mini-summary">선택 컴포넌트에 variant가 없습니다.</div>';
+  }
+}
+
+function hydrateStyleSystemFromDoc() {
+  styleSystemState.components = [];
+  styleSystemState.variables = [];
+  styleSystemState.brandTokens = {};
+  const script = getPreviewDocument()?.getElementById(STYLE_SYSTEM_SCRIPT_ID);
+  if (script?.textContent) {
+    try {
+      const parsed = JSON.parse(script.textContent);
+      styleSystemState.components = Array.isArray(parsed.components) ? parsed.components : [];
+      styleSystemState.variables = Array.isArray(parsed.variables) ? parsed.variables : [];
+      styleSystemState.brandTokens = parsed?.brandTokens && typeof parsed.brandTokens === 'object' ? parsed.brandTokens : {};
+    } catch (error) {
+      console.warn('[style-system] parse failed', error);
+    }
+  }
+  renderStyleSystemPanels();
+}
+
+function serializeComponentTemplateFromElement(element) {
+  if (!element) return '';
+  const clone = element.cloneNode(true);
+  if (clone.nodeType !== Node.ELEMENT_NODE) return '';
+  clone.removeAttribute('data-node-uid');
+  clone.querySelectorAll?.('[data-node-uid]').forEach((node) => node.removeAttribute('data-node-uid'));
+  return clone.outerHTML;
+}
+
+function upsertComponentFromSelection() {
+  const selected = selectedElementInPreview();
+  if (!selected) return setStatus('먼저 요소 1개를 선택해 주세요.');
+  const id = selected.dataset.componentMasterId || `cmp_${Date.now().toString(36)}`;
+  const existing = styleSystemState.components.find((row) => row.id === id);
+  const item = {
+    id,
+    name: selected.dataset.groupLabel || selected.dataset.slotLabel || selected.tagName.toLowerCase(),
+    templateHtml: serializeComponentTemplateFromElement(selected),
+    variantDefs: existing?.variantDefs || {},
+  };
+  const index = styleSystemState.components.findIndex((row) => row.id === id);
+  if (index >= 0) styleSystemState.components[index] = { ...styleSystemState.components[index], ...item };
+  else styleSystemState.components.unshift(item);
+  selected.dataset.componentMasterId = id;
+  selected.dataset.componentRole = 'master';
+  selected.dataset.editorModified = '1';
+  serializeStyleSystemIntoDoc();
+  renderStyleSystemPanels();
+  setStatus('선택 요소를 컴포넌트로 저장했습니다.');
+}
+
+function instantiateSelectedComponent() {
+  const doc = getPreviewDocument();
+  const componentId = elements.componentListSelect?.value || '';
+  const component = styleSystemState.components.find((item) => item.id === componentId);
+  const anchor = selectedElementInPreview();
+  if (!doc || !component || !anchor?.parentElement) return setStatus('컴포넌트/선택 위치를 먼저 확인해 주세요.');
+  const wrap = doc.createElement('div');
+  wrap.innerHTML = component.templateHtml;
+  const clone = wrap.firstElementChild;
+  if (!clone) return setStatus('컴포넌트 템플릿이 비어 있습니다.');
+  clone.dataset.componentId = component.id;
+  clone.dataset.componentRole = 'instance';
+  clone.dataset.componentInstanceId = `inst_${Date.now().toString(36)}`;
+  anchor.after(clone);
+  serializeStyleSystemIntoDoc();
+  activeEditor?.redetect?.();
+  setStatus('컴포넌트 인스턴스를 추가했습니다.');
+}
+
+function detachSelectedInstance() {
+  const selected = selectedElementInPreview();
+  if (!selected || !selected.dataset.componentId) return setStatus('Detach할 컴포넌트 인스턴스를 선택해 주세요.');
+  selected.removeAttribute('data-component-id');
+  selected.removeAttribute('data-component-role');
+  selected.removeAttribute('data-component-instance-id');
+  selected.dataset.editorModified = '1';
+  serializeStyleSystemIntoDoc();
+  setStatus('Detach 완료: 일반 요소로 전환했습니다.');
+}
+
+function swapSelectedInstanceComponent() {
+  const selected = selectedElementInPreview();
+  const component = styleSystemState.components.find((item) => item.id === (elements.componentListSelect?.value || ''));
+  const doc = getPreviewDocument();
+  if (!selected || !component || !doc) return setStatus('Swap 대상 요소/컴포넌트를 먼저 선택해 주세요.');
+  const wrap = doc.createElement('div');
+  wrap.innerHTML = component.templateHtml;
+  const template = wrap.firstElementChild;
+  if (!template) return setStatus('컴포넌트 템플릿을 읽지 못했습니다.');
+  selected.innerHTML = template.innerHTML;
+  selected.setAttribute('style', template.getAttribute('style') || selected.getAttribute('style') || '');
+  selected.dataset.componentId = component.id;
+  selected.dataset.componentRole = 'instance';
+  selected.dataset.editorModified = '1';
+  serializeStyleSystemIntoDoc();
+  setStatus('Swap 완료: 선택 요소를 컴포넌트 템플릿으로 교체했습니다.');
+}
+
+function addVariantToSelectedComponent() {
+  const component = styleSystemState.components.find((item) => item.id === (elements.componentListSelect?.value || ''));
+  const name = String(elements.variantNameInput?.value || '').trim();
+  const options = String(elements.variantOptionsInput?.value || '').split(',').map((item) => item.trim()).filter(Boolean);
+  if (!component || !name || !options.length) return setStatus('컴포넌트/속성명/옵션(csv)을 입력해 주세요.');
+  component.variantDefs = component.variantDefs || {};
+  component.variantDefs[name] = options;
+  serializeStyleSystemIntoDoc();
+  renderStyleSystemPanels();
+  setStatus(`Variant 추가: ${name}`);
+}
+
+function applyCurrentVariantSelections() {
+  const selected = selectedElementInPreview();
+  if (!selected) return setStatus('먼저 요소를 선택해 주세요.');
+  const controls = Array.from(elements.variantControls?.querySelectorAll('[data-variant-key]') || []);
+  for (const control of controls) {
+    const key = control.getAttribute('data-variant-key') || '';
+    if (key) selected.setAttribute(`data-variant-${key}`, control.value || '');
+  }
+  selected.dataset.editorModified = '1';
+  serializeStyleSystemIntoDoc();
+  setStatus('Variant 값을 적용했습니다.');
+}
+
+function upsertVariable() {
+  const name = String(elements.variableNameInput?.value || '').trim();
+  const type = String(elements.variableTypeSelect?.value || 'text');
+  const value = String(elements.variableValueInput?.value || '').trim();
+  if (!name || !value) return setStatus('변수 이름과 값을 입력해 주세요.');
+  const id = `var_${name.replace(/[^a-z0-9_-]/gi, '_')}`;
+  const row = { id, name, type, value };
+  const index = styleSystemState.variables.findIndex((item) => item.id === id);
+  if (index >= 0) styleSystemState.variables[index] = row;
+  else styleSystemState.variables.push(row);
+  serializeStyleSystemIntoDoc();
+  renderStyleSystemPanels();
+  setStatus(`변수 저장: ${name}`);
+}
+
+function applyVariableToSelection() {
+  const selected = selectedElementInPreview();
+  const variable = styleSystemState.variables.find((item) => item.id === (elements.variableListSelect?.value || ''));
+  if (!selected || !variable) return setStatus('선택 요소와 변수를 먼저 고르세요.');
+  if (variable.type === 'text') selected.textContent = variable.value;
+  if (variable.type === 'color') selected.style.color = variable.value;
+  if (variable.type === 'number') selected.style.fontSize = `${Number(variable.value) || 0}px`;
+  if (variable.type === 'image') {
+    const img = selected.tagName === 'IMG' ? selected : selected.querySelector('img');
+    if (img) img.setAttribute('src', variable.value);
+  }
+  selected.setAttribute(`data-var-${variable.type}`, variable.id);
+  selected.dataset.editorModified = '1';
+  serializeStyleSystemIntoDoc();
+  setStatus(`변수 적용: ${variable.name}`);
+}
+
+function applyBrandTokenGlobal() {
+  const doc = getPreviewDocument();
+  if (!doc) return setStatus('먼저 문서를 불러오세요.');
+  const key = String(elements.brandTokenKeyInput?.value || '').trim();
+  const value = String(elements.brandTokenValueInput?.value || '').trim();
+  if (!key || !value) return setStatus('토큰 키/값을 입력해 주세요.');
+  styleSystemState.brandTokens[key] = value;
+  doc.documentElement.style.setProperty(`--${key}`, value);
+  for (const variable of styleSystemState.variables) {
+    if (variable.type === 'color' && (variable.name === key || variable.name.endsWith(`.${key}`))) variable.value = value;
+  }
+  serializeStyleSystemIntoDoc();
+  renderStyleSystemPanels();
+  setStatus(`Brand token --${key} 전역 반영 완료`);
 }
 
 function renderUploadBucket(container, items, selectedUidSet = new Set(), emptyMessage = '항목이 없습니다.') {
@@ -2401,6 +2645,7 @@ function mountProject(project, { snapshot = null, preserveHistory = false, force
       onShortcut: handleEditorShortcut,
     });
     if (snapshot?.selectionMode) store.setSelectionMode(snapshot.selectionMode);
+    hydrateStyleSystemFromDoc();
     store.setEditorMeta(activeEditor.getMeta());
     applyPreviewZoom();
     if (!preserveHistory) {
@@ -3392,6 +3637,16 @@ elements.applyAdvancedSettingsButton?.addEventListener('click', () => {
   const result = applyAdvancedSettingsFromForm();
   setStatus(result.message);
 });
+elements.createComponentButton?.addEventListener('click', upsertComponentFromSelection);
+elements.instantiateComponentButton?.addEventListener('click', instantiateSelectedComponent);
+elements.detachComponentButton?.addEventListener('click', detachSelectedInstance);
+elements.swapComponentButton?.addEventListener('click', swapSelectedInstanceComponent);
+elements.componentListSelect?.addEventListener('change', renderStyleSystemPanels);
+elements.addVariantButton?.addEventListener('click', addVariantToSelectedComponent);
+elements.variantControls?.addEventListener('change', applyCurrentVariantSelections);
+elements.addVariableButton?.addEventListener('click', upsertVariable);
+elements.applyVariableButton?.addEventListener('click', applyVariableToSelection);
+elements.applyBrandTokenButton?.addEventListener('click', applyBrandTokenGlobal);
 
 elements.htmlFileInput?.addEventListener('change', async (event) => {
   const fileList = event.target?.files;

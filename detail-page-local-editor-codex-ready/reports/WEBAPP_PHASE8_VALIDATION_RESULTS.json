@@ -4,8 +4,8 @@
     "check_count": 167,
     "passed": 166,
     "failed": 1,
-    "bundle_bytes": 358507,
-    "bundle_sha256": "3f4bc818f3621d263eb1ebf287dbc32d086970d394bfb589650af79073e7dd71",
+    "bundle_bytes": 450321,
+    "bundle_sha256": "153caed535fd874645a40862167996197ef51a8936faa1f09db1c1a0038dc013",
     "browser_smoke_status": "unavailable",
     "failure_type": "dependency_missing"
   },
@@ -68,7 +68,7 @@
     {
       "name": "package_is_phase8",
       "ok": true,
-      "detail": "{\"name\": \"detail-page-webapp-phase8-local\", \"private\": true, \"version\": \"0.8.0\", \"scripts\": {\"build:local\": \"python3 scripts/build_local_bundle.py\", \"validate\": \"python3 scripts/validate_phase8.py\"}}"
+      "detail": "{\"name\": \"detail-page-webapp-phase8-local\", \"private\": true, \"version\": \"0.8.0\", \"scripts\": {\"build:local\": \"python3 scripts/build_local_bundle.py\", \"validate\": \"python3 scripts/validate_phase8.py\", \"test:workflow\": \"python3 scripts/test_workflow_html_image_png.py\"}}"
     },
     {
       "name": "readme_mentions_phase8",

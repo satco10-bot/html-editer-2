@@ -496,7 +496,8 @@
       <div class="sidebar-tabs">
         <button class="sidebar-tab is-active" data-sidebar-tab="right-inspect">검수</button>
         <button class="sidebar-tab" data-sidebar-tab="right-text">텍스트</button>
-        <button class="sidebar-tab" data-sidebar-tab="right-arrange">배치</button>
+        <button class="sidebar-tab" data-sidebar-tab="right-arrange">정렬/간격</button>
+        <button class="sidebar-tab" data-sidebar-tab="right-system">스타일 시스템</button>
         <button class="sidebar-tab" data-sidebar-tab="right-layers">레이어</button>
       </div>
       <div id="selectionEmptyState" class="selection-empty-state" hidden>
@@ -749,6 +750,86 @@
           <input id="assetFilterInput" class="asset-filter" type="search" placeholder="자산 검색" />
         </div>
         <div id="assetTableWrap"></div>
+      </section>
+      <section class="panel sidebar-panel" data-sidebar-panel="right-system">
+        <div class="panel__header">
+          <h2>문서 스타일 자산</h2>
+        </div>
+        <details class="style-form" open>
+          <summary><strong>1) 컴포넌트</strong> · 생성/인스턴스/Detach/Swap</summary>
+          <div class="button-row">
+            <button id="createComponentButton" class="button button--secondary button--small">선택 → 컴포넌트</button>
+            <button id="instantiateComponentButton" class="button button--ghost button--small">인스턴스 생성</button>
+          </div>
+          <label class="field">
+            <span>컴포넌트 목록</span>
+            <select id="componentListSelect"></select>
+          </label>
+          <div class="button-row">
+            <button id="detachComponentButton" class="button button--ghost button--small">Detach</button>
+            <button id="swapComponentButton" class="button button--ghost button--small">Swap</button>
+          </div>
+        </details>
+        <details class="style-form">
+          <summary><strong>2) Variants</strong> · 속성 정의/적용</summary>
+          <div class="control-row control-row--split">
+            <label class="field field--mini">
+              <span>속성명</span>
+              <input id="variantNameInput" type="text" placeholder="size" />
+            </label>
+            <label class="field field--mini">
+              <span>옵션(csv)</span>
+              <input id="variantOptionsInput" type="text" placeholder="sm, md, lg" />
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="addVariantButton" class="button button--secondary button--small">속성 추가</button>
+          </div>
+          <div id="variantControls" class="style-system-list"></div>
+        </details>
+        <details class="style-form">
+          <summary><strong>3) Variables</strong> · 텍스트/컬러/숫자/이미지</summary>
+          <div class="control-row control-row--split">
+            <label class="field field--mini">
+              <span>이름</span>
+              <input id="variableNameInput" type="text" placeholder="title.main" />
+            </label>
+            <label class="field field--mini">
+              <span>타입</span>
+              <select id="variableTypeSelect">
+                <option value="text">text</option>
+                <option value="color">color</option>
+                <option value="number">number</option>
+                <option value="image">image</option>
+              </select>
+            </label>
+          </div>
+          <label class="field">
+            <span>값</span>
+            <input id="variableValueInput" type="text" placeholder="예: #222222 / 16 / https://..." />
+          </label>
+          <div class="button-row">
+            <button id="addVariableButton" class="button button--secondary button--small">변수 저장</button>
+            <button id="applyVariableButton" class="button button--ghost button--small">선택 요소에 적용</button>
+          </div>
+          <select id="variableListSelect" size="6"></select>
+        </details>
+        <details class="style-form">
+          <summary><strong>4) Brand token</strong> · 전역 일괄 반영</summary>
+          <div class="control-row control-row--split">
+            <label class="field field--mini">
+              <span>토큰 키</span>
+              <input id="brandTokenKeyInput" type="text" placeholder="brand-primary" />
+            </label>
+            <label class="field field--mini">
+              <span>토큰 값</span>
+              <input id="brandTokenValueInput" type="text" placeholder="#ff5500" />
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="applyBrandTokenButton" class="button button--secondary button--small">전역 적용</button>
+          </div>
+        </details>
       </section>
 
     </aside>

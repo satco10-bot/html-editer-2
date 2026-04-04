@@ -18,12 +18,12 @@
 | `undoButton` | Y | Y | Y | ✅ 일치 |
 | `redoButton` | Y | Y | Y | ✅ 일치 |
 | `restoreAutosaveButton` | Y | Y | Y | ✅ 일치 |
-| `downloadEditedButton` | Y | Y | Y | ✅ 일치 |
+| `downloadEditedButton` | Y | Y | N | ⚠️ 부분 일치 |
 | `downloadNormalizedButton` | Y | Y | Y | ✅ 일치 |
 | `downloadLinkedZipButton` | Y | Y | Y | ✅ 일치 |
 | `exportPresetSelect` | Y | Y | Y | ✅ 일치 |
 | `exportPngButton` | Y | Y | Y | ✅ 일치 |
-| `exportJpgButton` | Y | Y | Y | ✅ 일치 |
+| `exportJpgButton` | Y | Y | N | ⚠️ 부분 일치 |
 | `exportSectionsZipButton` | Y | Y | Y | ✅ 일치 |
 | `exportSelectionPngButton` | Y | Y | Y | ✅ 일치 |
 | `exportPresetPackageButton` | Y | Y | Y | ✅ 일치 |

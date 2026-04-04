@@ -1281,6 +1281,15 @@ body.layout--focus-stage #rightSidebar {
   border-style: dashed;
   color: #64748b;
 }
+.style-system-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+#variableListSelect {
+  width: 100%;
+  min-height: 140px;
+}
 
 .statusbar {
   position: fixed;
