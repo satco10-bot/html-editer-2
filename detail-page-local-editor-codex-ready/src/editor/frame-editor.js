@@ -3041,6 +3041,7 @@ export function createFrameEditor({
     });
     if (!nextState) return false;
     nextState.startRect = nextState.target.getBoundingClientRect();
+    nextState.lastRect = nextState.startRect;
     resizeState = nextState;
     return true;
   }
@@ -3076,8 +3077,12 @@ export function createFrameEditor({
     });
     applyModelNodesToDom(doc, editorModel, [uid]);
     writeTransformState(target, tx, ty);
+    const currentRect = target.getBoundingClientRect();
     if (target.getAttribute(LAYOUT_ENGINE_ATTR) === '1') runLayoutEngine(target);
-    else applyConstraintsForContainerResize(target, resizeState.startRect, target.getBoundingClientRect());
+    else {
+      applyConstraintsForContainerResize(target, resizeState.lastRect || resizeState.startRect, currentRect);
+      resizeState.lastRect = currentRect;
+    }
     target.dataset.editorModified = '1';
     if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
     updateResizeOverlay();
