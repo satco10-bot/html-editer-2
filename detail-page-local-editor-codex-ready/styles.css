@@ -1388,7 +1388,7 @@ body.layout--focus-stage #rightSidebar {
   }
 }
 
-@media (max-width: 1024px) {
+@media (max-width: 1340px) {
   .app-shell {
     height: auto;
     min-height: calc(100vh - 58px);
