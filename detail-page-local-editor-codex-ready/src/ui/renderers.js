@@ -37,6 +37,8 @@ const LEFT_TAB_STEP_GUIDES = Object.freeze({
     ]),
   }),
 });
+const LAYER_ROW_HEIGHT = 86;
+const LAYER_OVERSCAN = 10;
 
 export function renderLeftTabStepGuide(container, tabId) {
   if (!container) return;
@@ -69,7 +71,20 @@ export function renderSummaryCards(container, project, editorMeta = null) {
     ['기존 IMG', project.summary.existingImageCount, `blob URL ${project.fileContext.blobUrlCount}`],
     ['근접 후보', slotSummary.nearMissCount ?? project.summary.nearMissCount ?? 0, '수동 보정 후보'],
     ['편집 수정', editorMeta?.modifiedSlotCount ?? 0, editorMeta?.selectionCount ? `선택 ${editorMeta.selectionCount}개` : '아직 없음'],
+    [
+      '입력 지연 p95(ms)',
+      Number(editorMeta?.performance?.p95InputLatencyMs || 0).toFixed(1),
+      `최근 ${formatNumber(editorMeta?.performance?.sampleCount || 0)}회 · slow(≥50ms) ${formatNumber(editorMeta?.performance?.slowFrames || 0)}회`,
+    ],
   ];
+  const dirtyRect = editorMeta?.performance?.lastDirtyRect;
+  if (dirtyRect) {
+    cards.push([
+      'Dirty-Rect',
+      `${formatNumber(dirtyRect.width)}×${formatNumber(dirtyRect.height)}`,
+      `x:${formatNumber(dirtyRect.x)} y:${formatNumber(dirtyRect.y)} 부분 렌더`,
+    ]);
+  }
   container.innerHTML = cards.map(([label, value, sub]) => `
     <article class="metric-card">
       <div class="metric-card__label">${escapeHtml(label)}</div>
@@ -255,25 +270,50 @@ export function renderLayerTree(container, editorMeta, filterText = '') {
     container.innerHTML = '<div class="asset-empty">필터에 맞는 레이어가 없습니다.</div>';
     return;
   }
-  container.innerHTML = rows.map((node) => `
-    <div class="layer-item ${(selectedUids.has(node.uid) || node.selectedViaGroup) ? 'is-active' : ''} ${node.hidden ? 'is-hidden' : ''} ${node.locked ? 'is-locked' : ''} ${node.type === 'group' ? 'is-group' : ''}" data-layer-uid="${escapeHtml(node.uid)}" style="--depth:${Math.max(0, Number(node.depth || 0))}" role="button" tabindex="0">
-      <span class="layer-item__indent" aria-hidden="true"></span>
-      <span class="layer-item__body">
-        <strong>${node.type === 'group' ? '🗂️ ' : ''}${escapeHtml(truncate(node.label || node.uid, 40))}</strong>
-        <span class="layer-item__meta">${escapeHtml(node.type)} · ${escapeHtml(node.tagName || '')}${node.childCount ? ` · child ${escapeHtml(String(node.childCount))}` : ''}</span>
-        <span class="layer-item__status">
-          ${node.hidden ? '<span class="status-chip" data-status="hidden">숨김</span>' : ''}
-          ${node.locked ? '<span class="status-chip" data-status="locked">잠금</span>' : ''}
-          ${node.selectedViaGroup ? '<span class="status-chip" data-status="selected">그룹선택</span>' : ''}
-        </span>
-      </span>
-      <span class="layer-item__actions">
-        <button class="layer-item__action ${node.hidden ? 'is-on' : ''}" data-layer-action="hide" data-layer-uid="${escapeHtml(node.uid)}">숨김</button>
-        <button class="layer-item__action ${node.locked ? 'is-on' : ''}" data-layer-action="lock" data-layer-uid="${escapeHtml(node.uid)}">잠금</button>
-        <span class="slot-badge" data-kind="${escapeHtml(node.type)}">${escapeHtml(node.type)}</span>
-      </span>
-    </div>
-  `).join('');
+  const fingerprint = rows.map((node) => `${node.uid}:${node.hidden ? 1 : 0}:${node.locked ? 1 : 0}:${node.selectedViaGroup ? 1 : 0}`).join('|');
+  const needsReset = container.dataset.layerRowsFingerprint !== fingerprint;
+  container.dataset.layerRowsFingerprint = fingerprint;
+  container.__layerRows = rows;
+  container.__layerSelectedUids = selectedUids;
+  if (!container.__layerVirtualRender) {
+    container.__layerVirtualRender = () => {
+      const sourceRows = container.__layerRows || [];
+      if (!sourceRows.length) return;
+      const viewportHeight = Math.max(1, container.clientHeight || 320);
+      const totalHeight = sourceRows.length * LAYER_ROW_HEIGHT;
+      const scrollTop = Math.max(0, Math.min(container.scrollTop, Math.max(0, totalHeight - viewportHeight)));
+      const start = Math.max(0, Math.floor(scrollTop / LAYER_ROW_HEIGHT) - LAYER_OVERSCAN);
+      const visibleCount = Math.ceil(viewportHeight / LAYER_ROW_HEIGHT) + LAYER_OVERSCAN * 2;
+      const end = Math.min(sourceRows.length, start + visibleCount);
+      const offsetY = start * LAYER_ROW_HEIGHT;
+      const selected = container.__layerSelectedUids || new Set();
+      const windowHtml = sourceRows.slice(start, end).map((node) => `
+        <div class="layer-item ${(selected.has(node.uid) || node.selectedViaGroup) ? 'is-active' : ''} ${node.hidden ? 'is-hidden' : ''} ${node.locked ? 'is-locked' : ''} ${node.type === 'group' ? 'is-group' : ''}" data-layer-uid="${escapeHtml(node.uid)}" style="--depth:${Math.max(0, Number(node.depth || 0))}" role="button" tabindex="0">
+          <span class="layer-item__indent" aria-hidden="true"></span>
+          <span class="layer-item__body">
+            <strong>${node.type === 'group' ? '🗂️ ' : ''}${escapeHtml(truncate(node.label || node.uid, 40))}</strong>
+            <span class="layer-item__meta">${escapeHtml(node.type)} · ${escapeHtml(node.tagName || '')}${node.childCount ? ` · child ${escapeHtml(String(node.childCount))}` : ''}</span>
+            <span class="layer-item__status">
+              ${node.hidden ? '<span class="status-chip" data-status="hidden">숨김</span>' : ''}
+              ${node.locked ? '<span class="status-chip" data-status="locked">잠금</span>' : ''}
+              ${node.selectedViaGroup ? '<span class="status-chip" data-status="selected">그룹선택</span>' : ''}
+            </span>
+          </span>
+          <span class="layer-item__actions">
+            <button class="layer-item__action ${node.hidden ? 'is-on' : ''}" data-layer-action="hide" data-layer-uid="${escapeHtml(node.uid)}">숨김</button>
+            <button class="layer-item__action ${node.locked ? 'is-on' : ''}" data-layer-action="lock" data-layer-uid="${escapeHtml(node.uid)}">잠금</button>
+            <span class="slot-badge" data-kind="${escapeHtml(node.type)}">${escapeHtml(node.type)}</span>
+          </span>
+        </div>
+      `).join('');
+      container.innerHTML = `
+        <div class="layer-tree__spacer" style="height:${Math.max(totalHeight, 1)}px"></div>
+        <div class="layer-tree__window" style="transform:translateY(${offsetY}px)">${windowHtml}</div>`;
+    };
+    container.addEventListener('scroll', container.__layerVirtualRender, { passive: true });
+  }
+  if (needsReset) container.scrollTop = 0;
+  container.__layerVirtualRender();
 }
 
 export function renderPreflight(container, editorMeta) {

@@ -1904,6 +1904,7 @@ function createFrameEditor({
   const modifiedSlots = new Set();
   const editorModel = createEditorModel(doc);
   let lastCommittedSnapshot = initialSnapshot?.html ? { ...initialSnapshot } : null;
+  let lastInputTs = 0;
 
   function uniqueConnectedElements(items) {
     const seen = new Set();
@@ -2378,7 +2379,42 @@ function createFrameEditor({
     const before = lastCommittedSnapshot || captureSnapshot('before-command');
     const after = captureSnapshot(label);
     lastCommittedSnapshot = after;
-    onMutation({ type: 'command', id: nextId('cmd'), label, before, after, modelVersion: editorModel.version, at: new Date().toISOString() });
+    const nowPerf = win.performance?.now?.() || Date.now();
+    const inputLatencyMs = lastInputTs > 0 ? Math.max(0, nowPerf - lastInputTs) : null;
+    onMutation({
+      type: 'command',
+      id: nextId('cmd'),
+      label,
+      before,
+      after,
+      modelVersion: editorModel.version,
+      at: new Date().toISOString(),
+      inputLatencyMs: Number.isFinite(inputLatencyMs) ? Number(inputLatencyMs.toFixed(2)) : null,
+      dirtyRect: collectSelectionDirtyRect(),
+    });
+  }
+
+  function collectSelectionDirtyRect() {
+    if (!selectedElements.length) return null;
+    const records = selectedElements
+      .filter((element) => element?.isConnected)
+      .map((element) => element.getBoundingClientRect())
+      .filter((rect) => rect.width > 0 && rect.height > 0);
+    if (!records.length) return null;
+    const left = Math.min(...records.map((rect) => rect.left));
+    const top = Math.min(...records.map((rect) => rect.top));
+    const right = Math.max(...records.map((rect) => rect.right));
+    const bottom = Math.max(...records.map((rect) => rect.bottom));
+    return {
+      x: Math.max(0, Math.round(left)),
+      y: Math.max(0, Math.round(top)),
+      width: Math.max(1, Math.round(right - left)),
+      height: Math.max(1, Math.round(bottom - top)),
+    };
+  }
+
+  function markInputTimestamp() {
+    lastInputTs = win.performance?.now?.() || Date.now();
   }
 
   function unsupportedCommandResult(command) {
@@ -4787,7 +4823,10 @@ function createFrameEditor({
   doc.addEventListener('click', handleDocClick, true);
   doc.addEventListener('dblclick', handleDocDoubleClick, true);
   doc.addEventListener('keydown', handleKeydown, true);
+  doc.addEventListener('beforeinput', markInputTimestamp, true);
+  doc.addEventListener('input', markInputTimestamp, true);
   doc.addEventListener('pointerdown', handlePointerDown, true);
+  doc.addEventListener('pointerdown', markInputTimestamp, true);
   doc.addEventListener('pointermove', handlePointerMove, true);
   doc.addEventListener('pointerup', finishPointerDrag, true);
   doc.addEventListener('pointercancel', finishPointerDrag, true);
@@ -4911,7 +4950,10 @@ function createFrameEditor({
       doc.removeEventListener('click', handleDocClick, true);
       doc.removeEventListener('dblclick', handleDocDoubleClick, true);
       doc.removeEventListener('keydown', handleKeydown, true);
+      doc.removeEventListener('beforeinput', markInputTimestamp, true);
+      doc.removeEventListener('input', markInputTimestamp, true);
       doc.removeEventListener('pointerdown', handlePointerDown, true);
+      doc.removeEventListener('pointerdown', markInputTimestamp, true);
       doc.removeEventListener('pointermove', handlePointerMove, true);
       doc.removeEventListener('pointerup', finishPointerDrag, true);
       doc.removeEventListener('pointercancel', finishPointerDrag, true);
@@ -4966,6 +5008,8 @@ const LEFT_TAB_STEP_GUIDES = Object.freeze({
     ]),
   }),
 });
+const LAYER_ROW_HEIGHT = 86;
+const LAYER_OVERSCAN = 10;
 function renderLeftTabStepGuide(container, tabId) {
   if (!container) return;
   const guide = LEFT_TAB_STEP_GUIDES[String(tabId || '')];
@@ -4996,7 +5040,20 @@ function renderSummaryCards(container, project, editorMeta = null) {
     ['기존 IMG', project.summary.existingImageCount, `blob URL ${project.fileContext.blobUrlCount}`],
     ['근접 후보', slotSummary.nearMissCount ?? project.summary.nearMissCount ?? 0, '수동 보정 후보'],
     ['편집 수정', editorMeta?.modifiedSlotCount ?? 0, editorMeta?.selectionCount ? `선택 ${editorMeta.selectionCount}개` : '아직 없음'],
+    [
+      '입력 지연 p95(ms)',
+      Number(editorMeta?.performance?.p95InputLatencyMs || 0).toFixed(1),
+      `최근 ${formatNumber(editorMeta?.performance?.sampleCount || 0)}회 · slow(≥50ms) ${formatNumber(editorMeta?.performance?.slowFrames || 0)}회`,
+    ],
   ];
+  const dirtyRect = editorMeta?.performance?.lastDirtyRect;
+  if (dirtyRect) {
+    cards.push([
+      'Dirty-Rect',
+      `${formatNumber(dirtyRect.width)}×${formatNumber(dirtyRect.height)}`,
+      `x:${formatNumber(dirtyRect.x)} y:${formatNumber(dirtyRect.y)} 부분 렌더`,
+    ]);
+  }
   container.innerHTML = cards.map(([label, value, sub]) => `
     <article class="metric-card">
       <div class="metric-card__label">${escapeHtml(label)}</div>
@@ -5176,25 +5233,50 @@ function renderLayerTree(container, editorMeta, filterText = '') {
     container.innerHTML = '<div class="asset-empty">필터에 맞는 레이어가 없습니다.</div>';
     return;
   }
-  container.innerHTML = rows.map((node) => `
-    <div class="layer-item ${(selectedUids.has(node.uid) || node.selectedViaGroup) ? 'is-active' : ''} ${node.hidden ? 'is-hidden' : ''} ${node.locked ? 'is-locked' : ''} ${node.type === 'group' ? 'is-group' : ''}" data-layer-uid="${escapeHtml(node.uid)}" style="--depth:${Math.max(0, Number(node.depth || 0))}" role="button" tabindex="0">
-      <span class="layer-item__indent" aria-hidden="true"></span>
-      <span class="layer-item__body">
-        <strong>${node.type === 'group' ? '🗂️ ' : ''}${escapeHtml(truncate(node.label || node.uid, 40))}</strong>
-        <span class="layer-item__meta">${escapeHtml(node.type)} · ${escapeHtml(node.tagName || '')}${node.childCount ? ` · child ${escapeHtml(String(node.childCount))}` : ''}</span>
-        <span class="layer-item__status">
-          ${node.hidden ? '<span class="status-chip" data-status="hidden">숨김</span>' : ''}
-          ${node.locked ? '<span class="status-chip" data-status="locked">잠금</span>' : ''}
-          ${node.selectedViaGroup ? '<span class="status-chip" data-status="selected">그룹선택</span>' : ''}
-        </span>
-      </span>
-      <span class="layer-item__actions">
-        <button class="layer-item__action ${node.hidden ? 'is-on' : ''}" data-layer-action="hide" data-layer-uid="${escapeHtml(node.uid)}">숨김</button>
-        <button class="layer-item__action ${node.locked ? 'is-on' : ''}" data-layer-action="lock" data-layer-uid="${escapeHtml(node.uid)}">잠금</button>
-        <span class="slot-badge" data-kind="${escapeHtml(node.type)}">${escapeHtml(node.type)}</span>
-      </span>
-    </div>
-  `).join('');
+  const fingerprint = rows.map((node) => `${node.uid}:${node.hidden ? 1 : 0}:${node.locked ? 1 : 0}:${node.selectedViaGroup ? 1 : 0}`).join('|');
+  const needsReset = container.dataset.layerRowsFingerprint !== fingerprint;
+  container.dataset.layerRowsFingerprint = fingerprint;
+  container.__layerRows = rows;
+  container.__layerSelectedUids = selectedUids;
+  if (!container.__layerVirtualRender) {
+    container.__layerVirtualRender = () => {
+      const sourceRows = container.__layerRows || [];
+      if (!sourceRows.length) return;
+      const viewportHeight = Math.max(1, container.clientHeight || 320);
+      const totalHeight = sourceRows.length * LAYER_ROW_HEIGHT;
+      const scrollTop = Math.max(0, Math.min(container.scrollTop, Math.max(0, totalHeight - viewportHeight)));
+      const start = Math.max(0, Math.floor(scrollTop / LAYER_ROW_HEIGHT) - LAYER_OVERSCAN);
+      const visibleCount = Math.ceil(viewportHeight / LAYER_ROW_HEIGHT) + LAYER_OVERSCAN * 2;
+      const end = Math.min(sourceRows.length, start + visibleCount);
+      const offsetY = start * LAYER_ROW_HEIGHT;
+      const selected = container.__layerSelectedUids || new Set();
+      const windowHtml = sourceRows.slice(start, end).map((node) => `
+        <div class="layer-item ${(selected.has(node.uid) || node.selectedViaGroup) ? 'is-active' : ''} ${node.hidden ? 'is-hidden' : ''} ${node.locked ? 'is-locked' : ''} ${node.type === 'group' ? 'is-group' : ''}" data-layer-uid="${escapeHtml(node.uid)}" style="--depth:${Math.max(0, Number(node.depth || 0))}" role="button" tabindex="0">
+          <span class="layer-item__indent" aria-hidden="true"></span>
+          <span class="layer-item__body">
+            <strong>${node.type === 'group' ? '🗂️ ' : ''}${escapeHtml(truncate(node.label || node.uid, 40))}</strong>
+            <span class="layer-item__meta">${escapeHtml(node.type)} · ${escapeHtml(node.tagName || '')}${node.childCount ? ` · child ${escapeHtml(String(node.childCount))}` : ''}</span>
+            <span class="layer-item__status">
+              ${node.hidden ? '<span class="status-chip" data-status="hidden">숨김</span>' : ''}
+              ${node.locked ? '<span class="status-chip" data-status="locked">잠금</span>' : ''}
+              ${node.selectedViaGroup ? '<span class="status-chip" data-status="selected">그룹선택</span>' : ''}
+            </span>
+          </span>
+          <span class="layer-item__actions">
+            <button class="layer-item__action ${node.hidden ? 'is-on' : ''}" data-layer-action="hide" data-layer-uid="${escapeHtml(node.uid)}">숨김</button>
+            <button class="layer-item__action ${node.locked ? 'is-on' : ''}" data-layer-action="lock" data-layer-uid="${escapeHtml(node.uid)}">잠금</button>
+            <span class="slot-badge" data-kind="${escapeHtml(node.type)}">${escapeHtml(node.type)}</span>
+          </span>
+        </div>
+      `).join('');
+      container.innerHTML = `
+        <div class="layer-tree__spacer" style="height:${Math.max(totalHeight, 1)}px"></div>
+        <div class="layer-tree__window" style="transform:translateY(${offsetY}px)">${windowHtml}</div>`;
+    };
+    container.addEventListener('scroll', container.__layerVirtualRender, { passive: true });
+  }
+  if (needsReset) container.scrollTop = 0;
+  container.__layerVirtualRender();
 }
 function renderPreflight(container, editorMeta) {
   if (!container) return;
@@ -5442,6 +5524,14 @@ const historyState = {
   baseSnapshot: null,
   undoStack: [],
   redoStack: [],
+};
+const perfState = {
+  inputLatencies: [],
+  sampleLimit: 240,
+  p95InputLatencyMs: 0,
+  lastInputLatencyMs: 0,
+  slowFrames: 0,
+  lastDirtyRect: null,
 };
 const HISTORY_MERGE_WINDOW_MS = 700;
 const LIVE_HISTORY_LABELS = new Set(['geometry-patch', 'apply-text-style', 'clear-text-style']);
@@ -6795,11 +6885,64 @@ function resetHistory(baseSnapshot = null) {
   historyState.baseSnapshot = baseSnapshot?.html ? baseSnapshot : null;
   historyState.undoStack = [];
   historyState.redoStack = [];
+  perfState.inputLatencies = [];
+  perfState.p95InputLatencyMs = 0;
+  perfState.lastInputLatencyMs = 0;
+  perfState.slowFrames = 0;
+  perfState.lastDirtyRect = null;
   refreshHistoryButtons();
 }
 
 function latestHistorySnapshot() {
-  return historyState.undoStack.at(-1)?.after || historyState.baseSnapshot;
+  const latest = historyState.undoStack.at(-1);
+  if (!latest) return historyState.baseSnapshot;
+  return resolveHistoryEntrySnapshot(latest, 'after');
+}
+
+function createHtmlPatch(fromHtml = '', toHtml = '') {
+  if (fromHtml === toHtml) return { start: 0, deleteCount: 0, insert: '' };
+  let start = 0;
+  const fromLen = fromHtml.length;
+  const toLen = toHtml.length;
+  while (start < fromLen && start < toLen && fromHtml[start] === toHtml[start]) start += 1;
+  let fromEnd = fromLen - 1;
+  let toEnd = toLen - 1;
+  while (fromEnd >= start && toEnd >= start && fromHtml[fromEnd] === toHtml[toEnd]) {
+    fromEnd -= 1;
+    toEnd -= 1;
+  }
+  return {
+    start,
+    deleteCount: Math.max(0, fromEnd - start + 1),
+    insert: toHtml.slice(start, toEnd + 1),
+  };
+}
+
+function applyHtmlPatch(baseHtml = '', patch = null) {
+  if (!patch) return baseHtml;
+  const start = Math.max(0, Number(patch.start) || 0);
+  const deleteCount = Math.max(0, Number(patch.deleteCount) || 0);
+  const insert = String(patch.insert || '');
+  return `${baseHtml.slice(0, start)}${insert}${baseHtml.slice(start + deleteCount)}`;
+}
+
+function toPatchSnapshot(snapshot, patch) {
+  if (!snapshot?.html) return null;
+  return { ...snapshot, htmlPatch: patch, html: undefined };
+}
+
+function resolvePatchSnapshot(patchedSnapshot, baseHtml = '') {
+  if (!patchedSnapshot) return null;
+  if (patchedSnapshot.html) return patchedSnapshot;
+  return { ...patchedSnapshot, html: applyHtmlPatch(baseHtml, patchedSnapshot.htmlPatch) };
+}
+
+function resolveHistoryEntrySnapshot(entry, key) {
+  if (!entry) return null;
+  const baseHtml = historyState.baseSnapshot?.html || '';
+  if (key === 'before') return resolvePatchSnapshot(entry.before, baseHtml);
+  if (key === 'after') return resolvePatchSnapshot(entry.after, baseHtml);
+  return null;
 }
 
 function shouldMergeHistoryCommand(previous, next) {
@@ -6814,23 +6957,32 @@ function shouldMergeHistoryCommand(previous, next) {
 
 function recordHistoryCommand(command, { clearRedo = true } = {}) {
   if (!command?.after?.html || !command?.before?.html) return;
+  const beforePatch = createHtmlPatch(historyState.baseSnapshot?.html || '', command.before.html);
+  const afterPatch = createHtmlPatch(historyState.baseSnapshot?.html || '', command.after.html);
+  const compactCommand = {
+    ...command,
+    before: toPatchSnapshot(command.before, beforePatch),
+    after: toPatchSnapshot(command.after, afterPatch),
+  };
   const last = historyState.undoStack.at(-1);
-  if (shouldMergeHistoryCommand(last, command)) {
-    last.after = command.after;
-    last.at = command.at;
-    persistAutosave(command.after);
+  if (shouldMergeHistoryCommand(last, compactCommand)) {
+    last.after = compactCommand.after;
+    last.at = compactCommand.at;
+    persistAutosave(resolvePatchSnapshot(compactCommand.after, historyState.baseSnapshot?.html || ''));
     refreshHistoryButtons();
     return;
   }
-  if (last?.after?.html === command.after.html) {
-    persistAutosave(command.after);
+  const lastAfter = resolveHistoryEntrySnapshot(last, 'after');
+  if (lastAfter?.html === command.after.html) {
+    persistAutosave(resolvePatchSnapshot(compactCommand.after, historyState.baseSnapshot?.html || ''));
     refreshHistoryButtons();
     return;
   }
-  historyState.undoStack.push(command);
+  historyState.undoStack.push(compactCommand);
   if (historyState.undoStack.length > HISTORY_LIMIT) historyState.undoStack.shift();
   if (clearRedo) historyState.redoStack = [];
-  persistAutosave(command.after);
+  persistAutosave(resolvePatchSnapshot(compactCommand.after, historyState.baseSnapshot?.html || ''));
+  updateLatencyDashboard(compactCommand);
   refreshHistoryButtons();
 }
 
@@ -6849,7 +7001,7 @@ function undoHistory() {
   const current = historyState.undoStack.pop();
   historyState.redoStack.push(current);
   refreshHistoryButtons();
-  restoreHistorySnapshot(current.before, '이전 작업으로 되돌렸습니다.');
+  restoreHistorySnapshot(resolveHistoryEntrySnapshot(current, 'before'), '이전 작업으로 되돌렸습니다.');
 }
 
 function redoHistory() {
@@ -6860,7 +7012,25 @@ function redoHistory() {
   const next = historyState.redoStack.pop();
   historyState.undoStack.push(next);
   refreshHistoryButtons();
-  restoreHistorySnapshot(next.after, '되돌린 작업을 다시 적용했습니다.');
+  restoreHistorySnapshot(resolveHistoryEntrySnapshot(next, 'after'), '되돌린 작업을 다시 적용했습니다.');
+}
+
+function percentile(values, ratio = 0.95) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * ratio) - 1));
+  return sorted[index];
+}
+
+function updateLatencyDashboard(command) {
+  const latency = Number(command?.inputLatencyMs);
+  if (!Number.isFinite(latency) || latency < 0) return;
+  perfState.inputLatencies.push(latency);
+  if (perfState.inputLatencies.length > perfState.sampleLimit) perfState.inputLatencies.shift();
+  perfState.lastInputLatencyMs = latency;
+  perfState.p95InputLatencyMs = Number(percentile(perfState.inputLatencies, 0.95).toFixed(2));
+  perfState.slowFrames = perfState.inputLatencies.filter((item) => item >= 50).length;
+  perfState.lastDirtyRect = command?.dirtyRect || null;
 }
 
 function buildReportPayload(project, report) {
@@ -7137,41 +7307,53 @@ function applyGeometryFromInputs() {
 }
 
 function renderShell(state) {
+  const editorMeta = state.editorMeta
+    ? {
+      ...state.editorMeta,
+      performance: {
+        sampleCount: perfState.inputLatencies.length,
+        p95InputLatencyMs: perfState.p95InputLatencyMs,
+        lastInputLatencyMs: perfState.lastInputLatencyMs,
+        slowFrames: perfState.slowFrames,
+        lastDirtyRect: perfState.lastDirtyRect,
+      },
+    }
+    : null;
   renderSelectionModeButtons(state.selectionMode);
-  renderSummaryCards(elements.summaryCards, state.project, state.editorMeta);
+  renderSummaryCards(elements.summaryCards, state.project, editorMeta);
   renderIssueList(elements.issueList, state.project);
   if (elements.normalizeStats) {
     renderNormalizeStats(elements.normalizeStats, state.project);
   }
-  renderPreflight(elements.preflightContainer, state.editorMeta);
+  renderPreflight(elements.preflightContainer, editorMeta);
   if (elements.selectionInspector) {
-    renderSelectionInspector(elements.selectionInspector, state.editorMeta, state.imageApplyDiagnostic);
+    renderSelectionInspector(elements.selectionInspector, editorMeta, state.imageApplyDiagnostic);
   }
-  renderSectionFilmstrip(elements.sectionList, state.editorMeta);
-  renderSlotList(elements.slotList, state.editorMeta);
+  renderSectionFilmstrip(elements.sectionList, editorMeta);
+  renderSlotList(elements.slotList, editorMeta);
   renderUploadLists(state);
   renderProjectSnapshotList(state);
-  renderLayerTree(elements.layerTree, state.editorMeta, elements.layerFilterInput?.value || '');
+  renderLayerTree(elements.layerTree, editorMeta, elements.layerFilterInput?.value || '');
   renderProjectMeta(elements.projectMeta, state.project, {
     selectionMode: state.selectionMode,
     undoDepth: historyState.undoStack.length,
     redoDepth: historyState.redoStack.length,
     autosaveSavedAt: readAutosavePayload()?.savedAt || '',
-    textEditing: !!state.editorMeta?.textEditing,
-    selectionCount: state.editorMeta?.selectionCount || 0,
-    hiddenCount: state.editorMeta?.hiddenCount || 0,
-    lockedCount: state.editorMeta?.lockedCount || 0,
+    textEditing: !!editorMeta?.textEditing,
+    selectionCount: editorMeta?.selectionCount || 0,
+    hiddenCount: editorMeta?.hiddenCount || 0,
+    lockedCount: editorMeta?.lockedCount || 0,
     exportPresetLabel: currentExportPreset().label,
-    preflightBlockingErrors: state.editorMeta?.preflight?.blockingErrors || 0,
+    preflightBlockingErrors: editorMeta?.preflight?.blockingErrors || 0,
   });
   if (elements.assetTableWrap) {
     renderAssetTable(elements.assetTableWrap, state.project, elements.assetFilterInput?.value || '');
   }
-  syncTextStyleControls(state.editorMeta);
-  syncBatchSummary(state.editorMeta);
-  syncRightPanelBySelection(state.editorMeta);
+  syncTextStyleControls(editorMeta);
+  syncBatchSummary(editorMeta);
+  syncRightPanelBySelection(editorMeta);
   syncGeometryControls();
-  syncCanvasDirectUi(state.editorMeta);
+  syncCanvasDirectUi(editorMeta);
   const errorSuffix = state.lastError ? ` · 최근 오류: ${state.lastError}` : '';
   elements.statusText.textContent = `${state.statusText}${errorSuffix}`;
   if (elements.documentStatusChip) {

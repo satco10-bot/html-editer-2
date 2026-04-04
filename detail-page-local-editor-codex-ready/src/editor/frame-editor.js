@@ -353,6 +353,7 @@ export function createFrameEditor({
   const modifiedSlots = new Set();
   const editorModel = createEditorModel(doc);
   let lastCommittedSnapshot = initialSnapshot?.html ? { ...initialSnapshot } : null;
+  let lastInputTs = 0;
 
   function uniqueConnectedElements(items) {
     const seen = new Set();
@@ -827,7 +828,42 @@ export function createFrameEditor({
     const before = lastCommittedSnapshot || captureSnapshot('before-command');
     const after = captureSnapshot(label);
     lastCommittedSnapshot = after;
-    onMutation({ type: 'command', id: nextId('cmd'), label, before, after, modelVersion: editorModel.version, at: new Date().toISOString() });
+    const nowPerf = win.performance?.now?.() || Date.now();
+    const inputLatencyMs = lastInputTs > 0 ? Math.max(0, nowPerf - lastInputTs) : null;
+    onMutation({
+      type: 'command',
+      id: nextId('cmd'),
+      label,
+      before,
+      after,
+      modelVersion: editorModel.version,
+      at: new Date().toISOString(),
+      inputLatencyMs: Number.isFinite(inputLatencyMs) ? Number(inputLatencyMs.toFixed(2)) : null,
+      dirtyRect: collectSelectionDirtyRect(),
+    });
+  }
+
+  function collectSelectionDirtyRect() {
+    if (!selectedElements.length) return null;
+    const records = selectedElements
+      .filter((element) => element?.isConnected)
+      .map((element) => element.getBoundingClientRect())
+      .filter((rect) => rect.width > 0 && rect.height > 0);
+    if (!records.length) return null;
+    const left = Math.min(...records.map((rect) => rect.left));
+    const top = Math.min(...records.map((rect) => rect.top));
+    const right = Math.max(...records.map((rect) => rect.right));
+    const bottom = Math.max(...records.map((rect) => rect.bottom));
+    return {
+      x: Math.max(0, Math.round(left)),
+      y: Math.max(0, Math.round(top)),
+      width: Math.max(1, Math.round(right - left)),
+      height: Math.max(1, Math.round(bottom - top)),
+    };
+  }
+
+  function markInputTimestamp() {
+    lastInputTs = win.performance?.now?.() || Date.now();
   }
 
   function unsupportedCommandResult(command) {
@@ -3236,7 +3272,10 @@ export function createFrameEditor({
   doc.addEventListener('click', handleDocClick, true);
   doc.addEventListener('dblclick', handleDocDoubleClick, true);
   doc.addEventListener('keydown', handleKeydown, true);
+  doc.addEventListener('beforeinput', markInputTimestamp, true);
+  doc.addEventListener('input', markInputTimestamp, true);
   doc.addEventListener('pointerdown', handlePointerDown, true);
+  doc.addEventListener('pointerdown', markInputTimestamp, true);
   doc.addEventListener('pointermove', handlePointerMove, true);
   doc.addEventListener('pointerup', finishPointerDrag, true);
   doc.addEventListener('pointercancel', finishPointerDrag, true);
@@ -3360,7 +3399,10 @@ export function createFrameEditor({
       doc.removeEventListener('click', handleDocClick, true);
       doc.removeEventListener('dblclick', handleDocDoubleClick, true);
       doc.removeEventListener('keydown', handleKeydown, true);
+      doc.removeEventListener('beforeinput', markInputTimestamp, true);
+      doc.removeEventListener('input', markInputTimestamp, true);
       doc.removeEventListener('pointerdown', handlePointerDown, true);
+      doc.removeEventListener('pointerdown', markInputTimestamp, true);
       doc.removeEventListener('pointermove', handlePointerMove, true);
       doc.removeEventListener('pointerup', finishPointerDrag, true);
       doc.removeEventListener('pointercancel', finishPointerDrag, true);
