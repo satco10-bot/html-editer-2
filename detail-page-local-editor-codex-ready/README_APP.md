@@ -70,6 +70,9 @@ python3 scripts/validate_phase6.py
 python3 scripts/run_phase8_regression_pipeline.py
 ```
 
+추가 회귀 확인(수동):
+- 앱을 새로 열고 `?` 키(또는 명령 팔레트 버튼)로 명령 팔레트를 열었을 때, 부팅 에러 없이 화면이 그대로 렌더되는지 확인합니다.
+
 ## 폴더 구조
 
 - `index.html` : 로컬 진입점

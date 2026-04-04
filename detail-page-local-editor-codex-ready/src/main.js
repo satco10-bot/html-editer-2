@@ -96,6 +96,17 @@ const ONBOARDING_COMPLETED_STORAGE_KEY = 'detail_editor_onboarding_completed_v1'
 const ONBOARDING_SAMPLE_CHECKED_STORAGE_KEY = 'detail_editor_onboarding_sample_checked_v1';
 const PANEL_LAYOUT_STORAGE_KEY_PREFIX = 'detail_editor_panel_layout_v2';
 const PANEL_LAYOUT_USER_KEY = 'detail_editor_layout_user_v1';
+const ARRANGE_PRESETS = Object.freeze([
+  { id: 'align-left', label: '왼쪽 정렬', keywords: ['정렬', '왼쪽'], run: () => applyBatchAction('align-left') },
+  { id: 'align-center', label: '가운데 정렬', keywords: ['정렬', '가운데'], run: () => applyBatchAction('align-center') },
+  { id: 'align-right', label: '오른쪽 정렬', keywords: ['정렬', '오른쪽'], run: () => applyBatchAction('align-right') },
+  { id: 'align-top', label: '위쪽 정렬', keywords: ['정렬', '위쪽'], run: () => applyBatchAction('align-top') },
+  { id: 'align-middle', label: '세로 중앙 정렬', keywords: ['정렬', '세로 중앙'], run: () => applyBatchAction('align-middle') },
+  { id: 'align-bottom', label: '아래쪽 정렬', keywords: ['정렬', '아래쪽'], run: () => applyBatchAction('align-bottom') },
+  { id: 'distribute-horizontal', label: '가로 균등 분배', keywords: ['분배', '간격', '가로'], run: () => applyBatchAction('distribute-horizontal') },
+  { id: 'distribute-vertical', label: '세로 균등 분배', keywords: ['분배', '간격', '세로'], run: () => applyBatchAction('distribute-vertical') },
+  { id: 'reset-transform', label: '배치 초기화', keywords: ['리셋', '배치'], run: () => applyBatchAction('reset-transform') },
+]);
 const COMMAND_REGISTRY = Object.freeze([
   { id: 'tool-select', label: '선택 도구', shortcut: 'V', keywords: ['선택', '화살표', 'v'], run: () => { setSelectionMode('smart'); return { ok: true, message: '선택 도구(V)로 전환했습니다.' }; } },
   { id: 'tool-text', label: '텍스트 도구', shortcut: 'T', keywords: ['텍스트', '글자', 't'], run: () => { setSelectionMode('text'); return { ok: true, message: '텍스트 도구(T)로 전환했습니다.' }; } },
@@ -117,15 +128,6 @@ const COMMAND_REGISTRY = Object.freeze([
   { id: 'stack-vertical', label: '세로 스택 정렬', shortcut: '-', keywords: ['세로', 'stack', '정렬'], run: () => applyStackCommand('vertical') },
   { id: 'tidy-horizontal', label: '가로 간격 맞춤', shortcut: '-', keywords: ['가로 간격', 'tidy', '균등'], run: () => applyTidyCommand('x') },
   { id: 'tidy-vertical', label: '세로 간격 맞춤', shortcut: '-', keywords: ['세로 간격', 'tidy', '균등'], run: () => applyTidyCommand('y') },
-  { id: 'align-left', label: '왼쪽 정렬', shortcut: '-', keywords: ['정렬', '왼쪽'], run: () => applyBatchAction('align-left') },
-  { id: 'align-center', label: '가운데 정렬', shortcut: '-', keywords: ['정렬', '가운데'], run: () => applyBatchAction('align-center') },
-  { id: 'align-right', label: '오른쪽 정렬', shortcut: '-', keywords: ['정렬', '오른쪽'], run: () => applyBatchAction('align-right') },
-  { id: 'align-top', label: '위쪽 정렬', shortcut: '-', keywords: ['정렬', '위쪽'], run: () => applyBatchAction('align-top') },
-  { id: 'align-middle', label: '세로 중앙 정렬', shortcut: '-', keywords: ['정렬', '세로 중앙'], run: () => applyBatchAction('align-middle') },
-  { id: 'align-bottom', label: '아래쪽 정렬', shortcut: '-', keywords: ['정렬', '아래쪽'], run: () => applyBatchAction('align-bottom') },
-  { id: 'distribute-horizontal', label: '가로 균등 분배', shortcut: '-', keywords: ['분배', '간격', '가로'], run: () => applyBatchAction('distribute-horizontal') },
-  { id: 'distribute-vertical', label: '세로 균등 분배', shortcut: '-', keywords: ['분배', '간격', '세로'], run: () => applyBatchAction('distribute-vertical') },
-  { id: 'reset-transform', label: '배치 초기화', shortcut: '-', keywords: ['리셋', '배치'], run: () => applyBatchAction('reset-transform') },
   ...ARRANGE_PRESETS.map((preset) => ({ id: `arrange-${preset.id}`, label: `배치 프리셋 · ${preset.label}`, shortcut: '-', keywords: [...preset.keywords, 'preset'], run: preset.run })),
   { id: 'toggle-shortcut-help', label: '단축키 치트시트 열기/닫기', shortcut: '?', keywords: ['도움말', '단축키', '치트시트'], run: () => ({ ok: true, message: toggleShortcutHelp() ? '단축키 치트시트를 열었습니다.' : '단축키 치트시트를 닫았습니다.' }) },
   { id: 'shortcut-export', label: '단축키 JSON 내보내기', shortcut: '-', keywords: ['단축키', 'json', '내보내기'], run: () => exportShortcutMapJson() },
@@ -1039,11 +1041,15 @@ function populateExportPresetSelect() {
   elements.exportPresetSelect.value = currentExportPresetId;
 }
 
-function populateArrangePresetSelect() {
-  if (!elements.arrangePresetSelect) return;
-  elements.arrangePresetSelect.innerHTML = ARRANGE_PRESETS
+function buildArrangePresetSelectOptions() {
+  return ARRANGE_PRESETS
     .map((preset) => `<option value="${preset.id}">${preset.label}</option>`)
     .join('');
+}
+
+function populateArrangePresetSelect() {
+  if (!elements.arrangePresetSelect) return;
+  elements.arrangePresetSelect.innerHTML = buildArrangePresetSelectOptions();
 }
 
 function currentExportPreset() {
@@ -3056,6 +3062,16 @@ function applyBatchAction(action) {
   setStatus(result.message);
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
   return result;
+}
+
+function applyArrangePresetSelection() {
+  const presetId = elements.arrangePresetSelect?.value || '';
+  const preset = ARRANGE_PRESETS.find((item) => item.id === presetId);
+  if (!preset) {
+    setStatus('적용할 배치 프리셋을 먼저 선택해 주세요.');
+    return { ok: false, message: '적용할 배치 프리셋을 먼저 선택해 주세요.' };
+  }
+  return preset.run();
 }
 
 function exportShortcutMapJson() {
