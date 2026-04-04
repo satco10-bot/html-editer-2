@@ -124,7 +124,8 @@ function shallowDescendantMedia(element) {
     const { node, depth } = queue.shift();
     if (depth > 2) continue;
     for (const child of Array.from(node.children || [])) {
-      if (child.tagName === 'IMG' || child.tagName === 'PICTURE') return { kind: 'img', element: child.tagName === 'IMG' ? child : child.querySelector('img') };
+      if (child.tagName === 'IMG') return { kind: 'img', element: child };
+      if (child.tagName === 'PICTURE') return { kind: 'picture', element: child };
       const style = (child.getAttribute('style') || '').toLowerCase();
       if (style.includes('background-image')) return { kind: 'background', element: child };
       queue.push({ node: child, depth: depth + 1 });
@@ -1085,7 +1086,7 @@ export function createFrameEditor({
 
   function findSlotMediaTarget(slot) {
     const shallow = shallowDescendantMedia(slot);
-    if (shallow?.kind === 'img' && shallow.element) return shallow;
+    if ((shallow?.kind === 'img' || shallow?.kind === 'picture') && shallow.element) return shallow;
     if (slot.dataset.slotMode === 'background') return { kind: 'background', element: slot };
     if (hasBackgroundImage(slot) && !isSimpleSlotContainer(slot)) return { kind: 'background', element: slot };
     if (shallow?.kind === 'background' && shallow.element && !isSimpleSlotContainer(slot)) return shallow;
@@ -1095,6 +1096,17 @@ export function createFrameEditor({
   function clearSimplePlaceholder(slot) {
     if (!isSimpleSlotContainer(slot)) return;
     slot.innerHTML = '';
+  }
+
+  function applyDataUrlToSourceSrcset(source, dataUrl) {
+    if (!source) return;
+    const candidates = parseSrcsetCandidates(source.getAttribute('srcset') || '');
+    const rewritten = candidates.length
+      ? candidates.map((candidate) => ({ ...candidate, url: dataUrl }))
+      : [{ url: dataUrl, descriptor: '' }];
+    const nextSrcset = serializeSrcsetCandidates(rewritten);
+    source.setAttribute('srcset', nextSrcset);
+    source.dataset.exportSrcset = nextSrcset;
   }
 
   async function applyFileToSlot(slot, file, { emit = true } = {}) {
@@ -1116,19 +1128,25 @@ export function createFrameEditor({
       styleTarget.dataset.exportStyle = nextStyle;
       slot.dataset.editorModified = '1';
     } else {
-      let img = target.element;
+      let img = target.kind === 'picture'
+        ? target.element?.querySelector('img')
+        : target.element;
       if (!img || !img.isConnected || img === slot) {
         clearSimplePlaceholder(slot);
         img = doc.createElement('img');
         img.className = '__phase5_runtime_image';
-        slot.appendChild(img);
+        if (target.kind === 'picture' && target.element?.isConnected) target.element.appendChild(img);
+        else slot.appendChild(img);
       }
       img.classList.add('__phase5_runtime_image');
       img.setAttribute('src', dataUrl);
       img.dataset.exportSrc = dataUrl;
       img.dataset.editorImageModified = '1';
-      img.removeAttribute('srcset');
-      img.removeAttribute('sizes');
+      if (target.kind === 'picture') {
+        for (const source of Array.from(target.element.querySelectorAll('source[srcset]'))) {
+          applyDataUrlToSourceSrcset(source, dataUrl);
+        }
+      }
       setInlineStyle(img, {
         width: '100%',
         height: '100%',
@@ -1375,12 +1393,15 @@ export function createFrameEditor({
     if (editingTextElement) finishTextEdit({ commit: true, emit: false });
     if (imageCropRuntime?.slot === slot) return { ok: true, message: '이미 이미지 크롭 편집 중입니다. Enter=적용, Esc=취소.' };
     if (imageCropRuntime) finishImageCropMode({ apply: true, emit: false });
+    const initialZoom = Number.parseFloat(slot.dataset.editorCropZoom || '1');
+    const initialOffsetX = Number.parseFloat(slot.dataset.editorCropOffsetX || '0');
+    const initialOffsetY = Number.parseFloat(slot.dataset.editorCropOffsetY || '0');
     imageCropRuntime = {
       slot,
       img,
-      zoom: 1,
-      offsetX: 0,
-      offsetY: 0,
+      zoom: Number.isFinite(initialZoom) ? initialZoom : 1,
+      offsetX: Number.isFinite(initialOffsetX) ? initialOffsetX : 0,
+      offsetY: Number.isFinite(initialOffsetY) ? initialOffsetY : 0,
       initialStyle: img.getAttribute('style') || '',
       initialExportStyle: img.dataset.exportStyle || '',
     };
@@ -1408,11 +1429,49 @@ export function createFrameEditor({
   function parseTranslateFromTransform(transformText) {
     const value = String(transformText || '').trim();
     if (!value || value === 'none') return { base: '', tx: 0, ty: 0 };
-    const match = value.match(/translate\(\s*([-+]?\d*\.?\d+)px\s*,\s*([-+]?\d*\.?\d+)px\s*\)\s*$/i);
-    if (!match) return { base: value, tx: 0, ty: 0 };
-    const tx = Number.parseFloat(match[1]) || 0;
-    const ty = Number.parseFloat(match[2]) || 0;
-    const base = value.slice(0, match.index).trim();
+    const translateRe = /(translate(?:3d|x|y)?\(([^)]+)\))/ig;
+    let tx = 0;
+    let ty = 0;
+    let consumed = false;
+    const base = value.replace(translateRe, (full, _fnName, rawArgs) => {
+      const args = String(rawArgs || '').split(',').map((item) => item.trim());
+      const parsePx = (token) => {
+        const match = String(token || '').match(/^([-+]?\d*\.?\d+)(px)?$/i);
+        if (!match) return null;
+        return Number.parseFloat(match[1]);
+      };
+      if (/^translatex\(/i.test(full)) {
+        const px = parsePx(args[0]);
+        if (px == null) return full;
+        tx += px;
+        consumed = true;
+        return '';
+      }
+      if (/^translatey\(/i.test(full)) {
+        const py = parsePx(args[0]);
+        if (py == null) return full;
+        ty += py;
+        consumed = true;
+        return '';
+      }
+      if (/^translate3d\(/i.test(full)) {
+        const px = parsePx(args[0]);
+        const py = parsePx(args[1]);
+        if (px == null || py == null) return full;
+        tx += px;
+        ty += py;
+        consumed = true;
+        return '';
+      }
+      const px = parsePx(args[0]);
+      const py = parsePx(args[1] ?? '0');
+      if (px == null || py == null) return full;
+      tx += px;
+      ty += py;
+      consumed = true;
+      return '';
+    }).replace(/\s{2,}/g, ' ').trim();
+    if (!consumed) return { base: value, tx: 0, ty: 0 };
     return { base, tx, ty };
   }
 
@@ -1519,15 +1578,6 @@ export function createFrameEditor({
     emitState();
     emitMutation('geometry-patch');
     return { ok: true, message: `선택 요소 ${changed}개에 XYWH를 적용했습니다.` };
-  }
-
-  function nudgeSelectedElements(dx = 0, dy = 0) {
-    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
-    if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
-    for (const element of targets) shiftElementBy(element, dx, dy);
-    emitState();
-    emitMutation('nudge');
-    return { ok: true, message: `선택 요소 ${targets.length}개를 (${dx}, ${dy})만큼 이동했습니다.` };
   }
 
   function duplicateSelected() {
@@ -2216,18 +2266,47 @@ export function createFrameEditor({
   function collectLinkedPathWarnings(exportDoc) {
     const warnings = [];
     const unresolvedTokenRe = /%EB%AF%B8%ED%95%B4%EA%B2%B0|미해결/i;
+    const seen = new Set();
+    const pushWarning = ({ ref = '', uid = '', code = 'BROKEN_LINKED_PATH' } = {}) => {
+      const kind = classifyAssetPath(ref);
+      if (!['relative', 'uploaded'].includes(kind)) return;
+      const key = `${code}::${uid}::${ref}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      warnings.push({ code, kind, uid, ref });
+    };
+
     for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
       const src = img.getAttribute('src') || '';
-      const kind = classifyAssetPath(src);
-      if (!['relative', 'uploaded'].includes(kind)) continue;
       const unresolved = img.dataset.normalizedUnresolvedImage === '1' || unresolvedTokenRe.test(src);
-      if (!unresolved) continue;
-      warnings.push({
-        code: 'BROKEN_LINKED_PATH',
-        kind,
-        uid: img.dataset.nodeUid || '',
-        ref: src,
-      });
+      if (unresolved) pushWarning({ ref: src, uid: img.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_IMG' });
+    }
+
+    for (const source of Array.from(exportDoc.querySelectorAll('source[srcset]'))) {
+      for (const item of parseSrcsetCandidates(source.getAttribute('srcset') || '')) {
+        if (!unresolvedTokenRe.test(item.url || '')) continue;
+        pushWarning({ ref: item.url, uid: source.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_SOURCE' });
+      }
+    }
+
+    for (const element of Array.from(exportDoc.querySelectorAll('[style]'))) {
+      const styleValue = element.getAttribute('style') || '';
+      if (!styleValue.includes('url(')) continue;
+      for (const match of Array.from(styleValue.matchAll(FRAME_CSS_URL_RE))) {
+        const ref = String(match[2] || '');
+        if (!unresolvedTokenRe.test(ref)) continue;
+        pushWarning({ ref, uid: element.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_STYLE' });
+      }
+    }
+
+    for (const styleBlock of Array.from(exportDoc.querySelectorAll('style'))) {
+      const css = styleBlock.textContent || '';
+      if (!css.includes('url(')) continue;
+      for (const match of Array.from(css.matchAll(FRAME_CSS_URL_RE))) {
+        const ref = String(match[2] || '');
+        if (!unresolvedTokenRe.test(ref)) continue;
+        pushWarning({ ref, uid: styleBlock.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_STYLE_BLOCK' });
+      }
     }
     return warnings;
   }

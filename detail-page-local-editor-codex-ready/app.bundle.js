@@ -604,8 +604,10 @@ function createAssetResolver(fileIndex, htmlEntryRelativePath = '') {
   const blobUrlCache = new Map();
   const htmlDirPath = normalizeRelativePath(htmlEntryRelativePath.split('/').slice(0, -1).join('/'));
 
-  function getBlobUrl(file) {
-    const cacheKey = `${file.name}__${file.size}__${file.lastModified}`;
+  function getBlobUrl(entry) {
+    const file = entry?.file;
+    if (!file) return '';
+    const cacheKey = `${entry.relativePath || file.webkitRelativePath || file.name}__${file.name}__${file.size}__${file.lastModified}`;
     if (!blobUrlCache.has(cacheKey)) blobUrlCache.set(cacheKey, URL.createObjectURL(file));
     return blobUrlCache.get(cacheKey);
   }
@@ -630,7 +632,7 @@ function createAssetResolver(fileIndex, htmlEntryRelativePath = '') {
       if (hit) {
         return {
           status: 'resolved',
-          previewUrl: getBlobUrl(hit.file),
+          previewUrl: getBlobUrl(hit),
           scheme: refInfo.scheme,
           matchedPath: candidate,
           method: 'relative-path',
@@ -641,11 +643,22 @@ function createAssetResolver(fileIndex, htmlEntryRelativePath = '') {
 
     const name = basename(stripQueryHash(originalRef)).toLowerCase();
     if (name && fileIndex?.byBasename?.has(name)) {
-      const [first] = fileIndex.byBasename.get(name);
+      const candidates = fileIndex.byBasename.get(name);
+      if (candidates.length > 1) {
+        return {
+          status: 'unresolved',
+          previewUrl: '',
+          scheme: refInfo.scheme,
+          matchedPath: '',
+          method: 'basename-ambiguous',
+          likelyImage: true,
+        };
+      }
+      const [first] = candidates;
       if (first?.file) {
         return {
           status: 'resolved',
-          previewUrl: getBlobUrl(first.file),
+          previewUrl: getBlobUrl(first),
           scheme: refInfo.scheme,
           matchedPath: first.relativePath,
           method: 'basename-fallback',
@@ -1296,6 +1309,8 @@ function normalizeProject({
     assets,
     slotDetection,
     remoteStylesheets,
+    importFileIndex: fileIndex || null,
+    htmlEntryPath,
     releaseResources: () => resolver.release(),
     fileContext: {
       mode: fileIndex?.mode || sourceType,
@@ -1534,7 +1549,6 @@ function restoreSerializedAssetRefs(exportDoc, { keepEditedAssets = true } = {})
     if (img.dataset.originalSrcset && !img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.originalSrcset);
     else if (!img.dataset.originalSrcset && !img.dataset.exportSrcset) img.removeAttribute('srcset');
     if (keepEditedAssets && img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.exportSrcset);
-    img.removeAttribute('sizes');
   }
 
   for (const source of Array.from(exportDoc.querySelectorAll('source'))) {
@@ -1663,7 +1677,8 @@ function shallowDescendantMedia(element) {
     const { node, depth } = queue.shift();
     if (depth > 2) continue;
     for (const child of Array.from(node.children || [])) {
-      if (child.tagName === 'IMG' || child.tagName === 'PICTURE') return { kind: 'img', element: child.tagName === 'IMG' ? child : child.querySelector('img') };
+      if (child.tagName === 'IMG') return { kind: 'img', element: child };
+      if (child.tagName === 'PICTURE') return { kind: 'picture', element: child };
       const style = (child.getAttribute('style') || '').toLowerCase();
       if (style.includes('background-image')) return { kind: 'background', element: child };
       queue.push({ node: child, depth: depth + 1 });
@@ -2622,7 +2637,7 @@ function createFrameEditor({
 
   function findSlotMediaTarget(slot) {
     const shallow = shallowDescendantMedia(slot);
-    if (shallow?.kind === 'img' && shallow.element) return shallow;
+    if ((shallow?.kind === 'img' || shallow?.kind === 'picture') && shallow.element) return shallow;
     if (slot.dataset.slotMode === 'background') return { kind: 'background', element: slot };
     if (hasBackgroundImage(slot) && !isSimpleSlotContainer(slot)) return { kind: 'background', element: slot };
     if (shallow?.kind === 'background' && shallow.element && !isSimpleSlotContainer(slot)) return shallow;
@@ -2632,6 +2647,17 @@ function createFrameEditor({
   function clearSimplePlaceholder(slot) {
     if (!isSimpleSlotContainer(slot)) return;
     slot.innerHTML = '';
+  }
+
+  function applyDataUrlToSourceSrcset(source, dataUrl) {
+    if (!source) return;
+    const candidates = parseSrcsetCandidates(source.getAttribute('srcset') || '');
+    const rewritten = candidates.length
+      ? candidates.map((candidate) => ({ ...candidate, url: dataUrl }))
+      : [{ url: dataUrl, descriptor: '' }];
+    const nextSrcset = serializeSrcsetCandidates(rewritten);
+    source.setAttribute('srcset', nextSrcset);
+    source.dataset.exportSrcset = nextSrcset;
   }
 
   async function applyFileToSlot(slot, file, { emit = true } = {}) {
@@ -2653,19 +2679,25 @@ function createFrameEditor({
       styleTarget.dataset.exportStyle = nextStyle;
       slot.dataset.editorModified = '1';
     } else {
-      let img = target.element;
+      let img = target.kind === 'picture'
+        ? target.element?.querySelector('img')
+        : target.element;
       if (!img || !img.isConnected || img === slot) {
         clearSimplePlaceholder(slot);
         img = doc.createElement('img');
         img.className = '__phase5_runtime_image';
-        slot.appendChild(img);
+        if (target.kind === 'picture' && target.element?.isConnected) target.element.appendChild(img);
+        else slot.appendChild(img);
       }
       img.classList.add('__phase5_runtime_image');
       img.setAttribute('src', dataUrl);
       img.dataset.exportSrc = dataUrl;
       img.dataset.editorImageModified = '1';
-      img.removeAttribute('srcset');
-      img.removeAttribute('sizes');
+      if (target.kind === 'picture') {
+        for (const source of Array.from(target.element.querySelectorAll('source[srcset]'))) {
+          applyDataUrlToSourceSrcset(source, dataUrl);
+        }
+      }
       setInlineStyle(img, {
         width: '100%',
         height: '100%',
@@ -2912,12 +2944,15 @@ function createFrameEditor({
     if (editingTextElement) finishTextEdit({ commit: true, emit: false });
     if (imageCropRuntime?.slot === slot) return { ok: true, message: '이미 이미지 크롭 편집 중입니다. Enter=적용, Esc=취소.' };
     if (imageCropRuntime) finishImageCropMode({ apply: true, emit: false });
+    const initialZoom = Number.parseFloat(slot.dataset.editorCropZoom || '1');
+    const initialOffsetX = Number.parseFloat(slot.dataset.editorCropOffsetX || '0');
+    const initialOffsetY = Number.parseFloat(slot.dataset.editorCropOffsetY || '0');
     imageCropRuntime = {
       slot,
       img,
-      zoom: 1,
-      offsetX: 0,
-      offsetY: 0,
+      zoom: Number.isFinite(initialZoom) ? initialZoom : 1,
+      offsetX: Number.isFinite(initialOffsetX) ? initialOffsetX : 0,
+      offsetY: Number.isFinite(initialOffsetY) ? initialOffsetY : 0,
       initialStyle: img.getAttribute('style') || '',
       initialExportStyle: img.dataset.exportStyle || '',
     };
@@ -2945,11 +2980,49 @@ function createFrameEditor({
   function parseTranslateFromTransform(transformText) {
     const value = String(transformText || '').trim();
     if (!value || value === 'none') return { base: '', tx: 0, ty: 0 };
-    const match = value.match(/translate\(\s*([-+]?\d*\.?\d+)px\s*,\s*([-+]?\d*\.?\d+)px\s*\)\s*$/i);
-    if (!match) return { base: value, tx: 0, ty: 0 };
-    const tx = Number.parseFloat(match[1]) || 0;
-    const ty = Number.parseFloat(match[2]) || 0;
-    const base = value.slice(0, match.index).trim();
+    const translateRe = /(translate(?:3d|x|y)?\(([^)]+)\))/ig;
+    let tx = 0;
+    let ty = 0;
+    let consumed = false;
+    const base = value.replace(translateRe, (full, _fnName, rawArgs) => {
+      const args = String(rawArgs || '').split(',').map((item) => item.trim());
+      const parsePx = (token) => {
+        const match = String(token || '').match(/^([-+]?\d*\.?\d+)(px)?$/i);
+        if (!match) return null;
+        return Number.parseFloat(match[1]);
+      };
+      if (/^translatex\(/i.test(full)) {
+        const px = parsePx(args[0]);
+        if (px == null) return full;
+        tx += px;
+        consumed = true;
+        return '';
+      }
+      if (/^translatey\(/i.test(full)) {
+        const py = parsePx(args[0]);
+        if (py == null) return full;
+        ty += py;
+        consumed = true;
+        return '';
+      }
+      if (/^translate3d\(/i.test(full)) {
+        const px = parsePx(args[0]);
+        const py = parsePx(args[1]);
+        if (px == null || py == null) return full;
+        tx += px;
+        ty += py;
+        consumed = true;
+        return '';
+      }
+      const px = parsePx(args[0]);
+      const py = parsePx(args[1] ?? '0');
+      if (px == null || py == null) return full;
+      tx += px;
+      ty += py;
+      consumed = true;
+      return '';
+    }).replace(/\s{2,}/g, ' ').trim();
+    if (!consumed) return { base: value, tx: 0, ty: 0 };
     return { base, tx, ty };
   }
 
@@ -3056,15 +3129,6 @@ function createFrameEditor({
     emitState();
     emitMutation('geometry-patch');
     return { ok: true, message: `선택 요소 ${changed}개에 XYWH를 적용했습니다.` };
-  }
-
-  function nudgeSelectedElements(dx = 0, dy = 0) {
-    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
-    if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
-    for (const element of targets) shiftElementBy(element, dx, dy);
-    emitState();
-    emitMutation('nudge');
-    return { ok: true, message: `선택 요소 ${targets.length}개를 (${dx}, ${dy})만큼 이동했습니다.` };
   }
 
   function duplicateSelected() {
@@ -3753,18 +3817,47 @@ function createFrameEditor({
   function collectLinkedPathWarnings(exportDoc) {
     const warnings = [];
     const unresolvedTokenRe = /%EB%AF%B8%ED%95%B4%EA%B2%B0|미해결/i;
+    const seen = new Set();
+    const pushWarning = ({ ref = '', uid = '', code = 'BROKEN_LINKED_PATH' } = {}) => {
+      const kind = classifyAssetPath(ref);
+      if (!['relative', 'uploaded'].includes(kind)) return;
+      const key = `${code}::${uid}::${ref}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      warnings.push({ code, kind, uid, ref });
+    };
+
     for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
       const src = img.getAttribute('src') || '';
-      const kind = classifyAssetPath(src);
-      if (!['relative', 'uploaded'].includes(kind)) continue;
       const unresolved = img.dataset.normalizedUnresolvedImage === '1' || unresolvedTokenRe.test(src);
-      if (!unresolved) continue;
-      warnings.push({
-        code: 'BROKEN_LINKED_PATH',
-        kind,
-        uid: img.dataset.nodeUid || '',
-        ref: src,
-      });
+      if (unresolved) pushWarning({ ref: src, uid: img.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_IMG' });
+    }
+
+    for (const source of Array.from(exportDoc.querySelectorAll('source[srcset]'))) {
+      for (const item of parseSrcsetCandidates(source.getAttribute('srcset') || '')) {
+        if (!unresolvedTokenRe.test(item.url || '')) continue;
+        pushWarning({ ref: item.url, uid: source.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_SOURCE' });
+      }
+    }
+
+    for (const element of Array.from(exportDoc.querySelectorAll('[style]'))) {
+      const styleValue = element.getAttribute('style') || '';
+      if (!styleValue.includes('url(')) continue;
+      for (const match of Array.from(styleValue.matchAll(FRAME_CSS_URL_RE))) {
+        const ref = String(match[2] || '');
+        if (!unresolvedTokenRe.test(ref)) continue;
+        pushWarning({ ref, uid: element.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_STYLE' });
+      }
+    }
+
+    for (const styleBlock of Array.from(exportDoc.querySelectorAll('style'))) {
+      const css = styleBlock.textContent || '';
+      if (!css.includes('url(')) continue;
+      for (const match of Array.from(css.matchAll(FRAME_CSS_URL_RE))) {
+        const ref = String(match[2] || '');
+        if (!unresolvedTokenRe.test(ref)) continue;
+        pushWarning({ ref, uid: styleBlock.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_STYLE_BLOCK' });
+      }
     }
     return warnings;
   }
@@ -5254,7 +5347,8 @@ let advancedSettingsDirty = false;
 let lastFocusedBeforeShortcutHelp = null;
 let lastFocusedBeforeDownloadModal = null;
 let importRequestSequence = 0;
-let projectNameEditDraft = '';
+let autosaveWriteSequence = 0;
+let lastStorageWriteFailureAt = 0;
 const zoomState = { mode: 'fit', value: 1 };
 const viewFeatureFlags = {
   snap: true,
@@ -5791,103 +5885,6 @@ function setImageApplyDiagnostic(diagnostic) {
   store.setImageApplyDiagnostic(diagnostic || null);
 }
 
-function displayProjectName(project) {
-  const raw = String(project?.sourceName || '').trim();
-  return raw || '새 프로젝트';
-}
-
-function syncTopbarProjectName(project) {
-  const name = displayProjectName(project);
-  if (elements.projectNameDisplay) elements.projectNameDisplay.textContent = name;
-  if (elements.projectNameInput && elements.projectNameInput.hidden) {
-    elements.projectNameInput.value = name;
-  }
-}
-
-function startProjectNameInlineEdit() {
-  const state = store.getState();
-  if (!state.project || !elements.projectNameInput || !elements.projectNameDisplay) {
-    setStatus('먼저 프로젝트를 불러와 주세요.');
-    return;
-  }
-  projectNameEditDraft = displayProjectName(state.project);
-  elements.projectNameInput.value = projectNameEditDraft;
-  elements.projectNameInput.hidden = false;
-  elements.projectNameDisplay.hidden = true;
-  elements.projectNameInput.focus();
-  elements.projectNameInput.select();
-}
-
-function finishProjectNameInlineEdit({ save = false } = {}) {
-  if (!elements.projectNameInput || !elements.projectNameDisplay) return;
-  const nextName = String(elements.projectNameInput.value || '').trim();
-  elements.projectNameInput.hidden = true;
-  elements.projectNameDisplay.hidden = false;
-  if (!save) {
-    syncTopbarProjectName(store.getState().project);
-    setStatus('프로젝트 이름 수정을 취소했습니다.');
-    return;
-  }
-  if (!nextName) {
-    elements.projectNameInput.value = projectNameEditDraft || displayProjectName(store.getState().project);
-    syncTopbarProjectName(store.getState().project);
-    setStatus('프로젝트 이름은 비워둘 수 없습니다.');
-    return;
-  }
-  store.updateProject((project) => {
-    project.sourceName = nextName;
-    return project;
-  });
-  projectNameEditDraft = nextName;
-  setStatus(`프로젝트 이름을 "${nextName}"(으)로 저장했습니다.`);
-}
-
-async function shareProjectSummary() {
-  const state = store.getState();
-  if (!state.project) {
-    setStatus('먼저 프로젝트를 불러와 주세요.');
-    return;
-  }
-  const message = `[상세페이지 편집 공유]\n프로젝트: ${displayProjectName(state.project)}\n상태: ${resolveDocumentStatus(state).text}\n안내: 로컬 앱(file://)이라 파일 자체를 함께 전달해 주세요.`;
-  try {
-    if (navigator.share) {
-      await navigator.share({ title: displayProjectName(state.project), text: message });
-      setStatus('공유 창을 열었습니다.');
-      return;
-    }
-    await navigator.clipboard.writeText(message);
-    setStatus('공유 문구를 클립보드에 복사했습니다.');
-  } catch (error) {
-    setStatus(`공유 준비 중 오류: ${error?.message || error}`);
-  }
-}
-
-function buildImageFailureDiagnostic({ files = [], editorMeta = null, statusMessage = '' } = {}) {
-  const firstFile = files[0] || null;
-  const fileName = firstFile?.name || '';
-  const selected = editorMeta?.selected || null;
-  const selectedSlotLabel = selected?.label || selected?.uid || '';
-  const extension = fileName.includes('.') ? fileName.slice(fileName.lastIndexOf('.')).toLowerCase() : '';
-  const unsupportedFormat = !!extension && !SUPPORTED_IMAGE_EXTENSIONS.includes(extension);
-  const filenameMismatch = !!fileName && !!selectedSlotLabel && !fileName.toLowerCase().includes(String(selectedSlotLabel).toLowerCase());
-  const slotUnselected = !selected || selected.type !== 'slot';
-
-  return {
-    status: 'failed',
-    message: statusMessage || '이미지 적용 실패 원인을 확인해 주세요.',
-    reasons: {
-      slotUnselected,
-      filenameMismatch,
-      unsupportedFormat,
-    },
-    details: {
-      slotUnselected: slotUnselected ? '슬롯을 먼저 선택한 뒤 이미지를 넣어 주세요.' : '',
-      filenameMismatch: filenameMismatch ? `선택 슬롯(${selectedSlotLabel})과 파일명(${fileName})이 다릅니다.` : '',
-      unsupportedFormat: unsupportedFormat ? `지원하지 않는 확장자입니다: ${extension}` : '',
-    },
-  };
-}
-
 function setAppState(nextState) {
   const normalized = nextState === APP_STATES.editor ? APP_STATES.editor : APP_STATES.launch;
   currentAppState = normalized;
@@ -5901,7 +5898,7 @@ function refreshLauncherRecentButton() {
   if (!elements.launcherRecentButton) return;
   const payload = readAutosavePayload();
   const hasSnapshot = !!payload?.snapshot?.html;
-  elements.launcherRecentButton.disabled = false;
+  elements.launcherRecentButton.disabled = !hasSnapshot;
   elements.launcherRecentButton.dataset.available = hasSnapshot ? 'true' : 'false';
 }
 
@@ -5921,17 +5918,23 @@ function setStatusWithError(prefix, error, { logTag = 'APP_ERROR' } = {}) {
 
 function buildImageFailureDiagnostic({ files = [], editorMeta = null, statusMessage = '' } = {}) {
   const firstFile = files[0] || null;
+  const fileName = firstFile?.name || '';
+  const extension = fileName.includes('.') ? fileName.slice(fileName.lastIndexOf('.')).toLowerCase() : '';
   const selected = editorMeta?.selected || null;
+  const selectedSlotLabel = selected?.label || selected?.uid || '';
   const selectedSlotLike = !!selected && (selected.type === 'slot' || selected.detectedType === 'slot');
+  const mimeUnsupported = !!firstFile && !String(firstFile.type || '').startsWith('image/');
+  const extensionUnsupported = !!extension && !SUPPORTED_IMAGE_EXTENSIONS.includes(extension);
+  const filenameMismatch = !!fileName && !!selectedSlotLabel && !fileName.toLowerCase().includes(String(selectedSlotLabel).toLowerCase());
   const reasons = {
     slotUnselected: !selectedSlotLike,
-    filenameMismatch: false,
-    unsupportedFormat: !!firstFile && !String(firstFile.type || '').startsWith('image/'),
+    filenameMismatch,
+    unsupportedFormat: mimeUnsupported || extensionUnsupported,
   };
   const details = {
     slotUnselected: selectedSlotLike ? '선택된 슬롯이 있습니다.' : '이미지를 적용할 슬롯을 먼저 선택해 주세요.',
-    filenameMismatch: '필요하면 파일명에 슬롯 이름 일부를 포함해 자동 매칭 정확도를 높이세요.',
-    unsupportedFormat: reasons.unsupportedFormat ? `현재 파일 형식: ${firstFile.type || 'unknown'}` : '이미지 파일 형식입니다.',
+    filenameMismatch: filenameMismatch ? `선택 슬롯(${selectedSlotLabel})과 파일명(${fileName})이 다를 수 있습니다.` : '파일명과 슬롯명이 크게 어긋나지 않습니다.',
+    unsupportedFormat: reasons.unsupportedFormat ? `현재 파일 형식: ${firstFile.type || 'unknown'}, 확장자: ${extension || '없음'}` : '이미지 파일 형식입니다.',
   };
   return {
     status: 'failed',
@@ -6628,19 +6631,42 @@ function readAutosavePayload() {
   }
 }
 
-function persistAutosave(snapshot) {
+function notifyStorageWriteFailure(context, error) {
+  const now = Date.now();
+  if (now - lastStorageWriteFailureAt < 2000) return;
+  lastStorageWriteFailureAt = now;
+  const detail = extractErrorMessage(error) || '브라우저 저장소 용량 초과 또는 접근 제한';
+  store.setLastError(detail);
+  setStatus(`${context} 저장에 실패했습니다. 용량을 비우고 다시 시도해 주세요.`, { preserveLastError: true });
+  console.error('[LOCAL_STORAGE_WRITE_ERROR]', context, error);
+}
+
+async function persistAutosave(snapshot) {
   const project = store.getState().project;
   if (!project || !snapshot) return;
+  const writeId = ++autosaveWriteSequence;
+  let portableHtml = snapshot.html || '';
+  if (activeEditor?.getCurrentPortableHtml) {
+    try {
+      portableHtml = await activeEditor.getCurrentPortableHtml();
+    } catch {}
+  }
+  if (writeId !== autosaveWriteSequence) return;
   const payload = {
     savedAt: new Date().toISOString(),
     sourceName: project.sourceName,
     sourceType: project.sourceType,
     fixtureId: project.fixtureId || '',
-    snapshot,
+    snapshot: {
+      ...snapshot,
+      html: portableHtml,
+    },
   };
   try {
     localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(payload));
-  } catch {}
+  } catch (error) {
+    notifyStorageWriteFailure('자동저장', error);
+  }
 }
 
 function resolveSnapshotProjectKey(project) {
@@ -6663,7 +6689,11 @@ function readProjectSnapshotPayload() {
 function writeProjectSnapshotPayload(payload) {
   try {
     localStorage.setItem(PROJECT_SNAPSHOT_KEY, JSON.stringify(payload));
-  } catch {}
+    return true;
+  } catch (error) {
+    notifyStorageWriteFailure('스냅샷', error);
+    return false;
+  }
 }
 
 function buildSnapshotThumbnail(snapshotHtml = '') {
@@ -6686,7 +6716,7 @@ function getSnapshotEntriesForProject(project) {
   return readProjectSnapshotPayload().entries.filter((entry) => entry.projectKey === key);
 }
 
-function createProjectSnapshot({
+async function createProjectSnapshot({
   title = '',
   note = '',
   auto = false,
@@ -6702,8 +6732,13 @@ function createProjectSnapshot({
     setStatus('스냅샷 저장에 실패했습니다. 다시 시도해 주세요.');
     return null;
   }
+  let portableHtml = snapshot.html;
+  try {
+    portableHtml = await activeEditor.getCurrentPortableHtml();
+  } catch {}
+  const portableSnapshot = { ...snapshot, html: portableHtml };
   const now = new Date();
-  const thumbnail = buildSnapshotThumbnail(snapshot.html);
+  const thumbnail = buildSnapshotThumbnail(portableSnapshot.html);
   const entry = {
     id: `snap_${Math.random().toString(36).slice(2, 10)}`,
     projectKey: resolveSnapshotProjectKey(project),
@@ -6713,23 +6748,23 @@ function createProjectSnapshot({
     note: (note || '').trim(),
     auto: !!auto,
     thumbnail,
-    snapshot,
+    snapshot: portableSnapshot,
   };
   const payload = readProjectSnapshotPayload();
   payload.entries = [entry, ...payload.entries].slice(0, PROJECT_SNAPSHOT_LIMIT);
-  writeProjectSnapshotPayload(payload);
+  if (!writeProjectSnapshotPayload(payload)) return null;
   renderProjectSnapshotList(store.getState());
   setStatus(statusMessage);
   return entry;
 }
 
-function restoreProjectSnapshotById(snapshotId) {
+async function restoreProjectSnapshotById(snapshotId) {
   const state = store.getState();
   const project = state.project;
   if (!project) return setStatus('먼저 프로젝트를 불러와 주세요.');
   const entry = getSnapshotEntriesForProject(project).find((item) => item.id === snapshotId);
   if (!entry?.snapshot?.html) return setStatus('복원할 스냅샷을 찾지 못했습니다.');
-  createProjectSnapshot({
+  await createProjectSnapshot({
     auto: true,
     title: `복원 전 자동백업 (${entry.title || '스냅샷'})`,
     statusMessage: '복원 전 자동백업을 저장했습니다.',
@@ -7735,7 +7770,13 @@ function applyCodeToEditor() {
   const html = elements.codeEditorTextarea?.value || '';
   if (!html.trim()) return setStatus('적용할 코드가 비어 있습니다.');
   pendingMountOptions = { snapshot: null, preserveHistory: false };
-  const nextProject = normalizeProject({ html, sourceName: project.sourceName || 'edited.html', sourceType: 'code-apply' });
+  const nextProject = normalizeProject({
+    html,
+    sourceName: project.sourceName || 'edited.html',
+    sourceType: 'code-apply',
+    fileIndex: project.importFileIndex || null,
+    htmlEntryPath: project.htmlEntryPath || project.fileContext?.htmlEntryPath || '',
+  });
   store.setProject(nextProject);
   codeEditorDirty = false;
   setStatus('코드 워크벤치 내용을 다시 편집기에 적용했습니다.');
