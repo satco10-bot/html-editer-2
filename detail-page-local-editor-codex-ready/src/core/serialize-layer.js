@@ -9,7 +9,6 @@ export function restoreSerializedAssetRefs(exportDoc, { keepEditedAssets = true 
     if (img.dataset.originalSrcset && !img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.originalSrcset);
     else if (!img.dataset.originalSrcset && !img.dataset.exportSrcset) img.removeAttribute('srcset');
     if (keepEditedAssets && img.dataset.exportSrcset) img.setAttribute('srcset', img.dataset.exportSrcset);
-    img.removeAttribute('sizes');
   }
 
   for (const source of Array.from(exportDoc.querySelectorAll('source'))) {
