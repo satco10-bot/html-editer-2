@@ -1,4 +1,5 @@
 import { escapeHtml, formatDateTime, formatNumber, truncate } from '../utils.js';
+import { OBJECT_INSPECTOR_SCHEMA } from './object-inspector-schema.js';
 
 const LEFT_TAB_STEP_GUIDES = Object.freeze({
   'left-start': Object.freeze({
@@ -123,6 +124,36 @@ export function renderSelectionInspector(container, editorMeta, imageDiagnostic 
   }
   const selected = editorMeta.selected;
   const summary = editorMeta.slotSummary || { totalCount: 0, nearMissCount: 0 };
+  const objectInspector = editorMeta?.objectInspector || null;
+  const renderFieldRows = (source, fields, mixedMap = {}) => fields.map((field) => {
+    const mixed = !!mixedMap?.[field.key];
+    const raw = source?.[field.key];
+    const value = mixed ? '혼합' : (raw === '' || raw == null ? '-' : String(raw));
+    return `<div class="inspector-kv"><strong>${escapeHtml(field.label)}</strong><span>${escapeHtml(value)}</span></div>`;
+  }).join('');
+  const commonSectionsHtml = objectInspector
+    ? OBJECT_INSPECTOR_SCHEMA.sections.map((section) => {
+      const source = objectInspector.common?.[section.id] || {};
+      return `
+        <article class="inspector-card">
+          <h4>${escapeHtml(section.title)}</h4>
+          ${renderFieldRows(source, section.fields, source.mixed)}
+        </article>
+      `;
+    }).join('')
+    : '<div class="asset-empty">선택하면 공통 속성을 계산해 표시합니다.</div>';
+  const pluginSectionsHtml = objectInspector
+    ? Object.entries(OBJECT_INSPECTOR_SCHEMA.plugins).map(([pluginKey, schema]) => {
+      const source = objectInspector.plugins?.[pluginKey];
+      if (!source) return '';
+      return `
+        <article class="inspector-card">
+          <h4>${escapeHtml(schema.title)}</h4>
+          ${renderFieldRows(source, schema.fields)}
+        </article>
+      `;
+    }).join('') || '<div class="asset-empty">선택 타입 전용 플러그인이 없습니다.</div>'
+    : '';
   const selectedItemsHtml = editorMeta.selectedItems?.length
     ? `<div class="selected-pill-list">${editorMeta.selectedItems.slice(0, 8).map((item) => `<span class="selected-pill">${escapeHtml(truncate(item.label || item.uid || '-', 24))}</span>`).join('')}</div>`
     : '';
@@ -197,6 +228,14 @@ export function renderSelectionInspector(container, editorMeta, imageDiagnostic 
         <li>hidden ${formatNumber(editorMeta.hiddenCount || 0)}개 · locked ${formatNumber(editorMeta.lockedCount || 0)}개</li>
         <li>selection mode ${escapeHtml(editorMeta.selectionMode || 'smart')}</li>
       </ul>
+    </article>
+    <article class="slot-card">
+      <h3>Object Inspector (Schema 기반)</h3>
+      ${commonSectionsHtml}
+    </article>
+    <article class="slot-card">
+      <h3>Type Plugins</h3>
+      ${pluginSectionsHtml}
     </article>
     ${diagnosticHtml}
   `;
