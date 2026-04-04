@@ -1572,11 +1572,9 @@ function restoreSerializedAssetRefs(exportDoc, { keepEditedAssets = true } = {})
 
 const FRAME_CSS_URL_RE = /url\((['"]?)([^"'()]+)\1\)/gi;
 const UNSUPPORTED_COMMAND_MESSAGE_PREFIX = '지원하지 않는 명령입니다:';
-const FRAME_NUDGE_STEP_RULE = Object.freeze({
-  base: 2,
-  shift: 10,
-  alt: 1,
-});
+const TYPOGRAPHY_STYLE_TAG_ID = 'editor-typography-definitions';
+const VARIABLE_FONT_AXES = ['wght', 'wdth', 'opsz', 'slnt'];
+const OPEN_TYPE_FEATURE_KEYS = ['liga', 'kern', 'ss01', 'ss02', 'onum'];
 const ADD_ELEMENT_PRESETS = {
   text: {
     tagName: 'p',
@@ -1729,6 +1727,34 @@ function setInlineStyle(element, patch) {
     else element.removeAttribute('data-export-style');
   }
   return next;
+}
+
+function parseFontVariationSettings(value = '') {
+  const result = {};
+  const matches = String(value || '').matchAll(/["']([A-Za-z0-9]{4})["']\s*([-\d.]+)/g);
+  for (const match of matches) result[match[1].toLowerCase()] = Number.parseFloat(match[2]);
+  return result;
+}
+
+function serializeFontVariationSettings(map = {}) {
+  const entries = Object.entries(map)
+    .filter(([, value]) => Number.isFinite(Number(value)))
+    .map(([axis, value]) => `"${String(axis).toLowerCase()}" ${Number(value)}`);
+  return entries.length ? entries.join(', ') : '';
+}
+
+function parseFontFeatureSettings(value = '') {
+  const result = {};
+  const matches = String(value || '').matchAll(/["']([A-Za-z0-9]{4})["']\s*(on|off|[01])/gi);
+  for (const match of matches) result[match[1].toLowerCase()] = /^(on|1)$/i.test(match[2]);
+  return result;
+}
+
+function serializeFontFeatureSettings(map = {}) {
+  const entries = Object.entries(map)
+    .filter(([key]) => OPEN_TYPE_FEATURE_KEYS.includes(String(key).toLowerCase()))
+    .map(([key, enabled]) => `"${String(key).toLowerCase()}" ${enabled ? 'on' : 'off'}`);
+  return entries.length ? entries.join(', ') : '';
 }
 
 function encodeData(value) {
@@ -1935,7 +1961,45 @@ function createFrameEditor({
   const modifiedSlots = new Set();
   const editorModel = createEditorModel(doc);
   let lastCommittedSnapshot = initialSnapshot?.html ? { ...initialSnapshot } : null;
-  let lastInputTs = 0;
+  let typographyDefinitions = [];
+
+  function readTypographyDefinitions() {
+    const node = doc.getElementById(TYPOGRAPHY_STYLE_TAG_ID);
+    const raw = node?.dataset?.definitions || '[]';
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function ensureTypographyStyleTag() {
+    let styleTag = doc.getElementById(TYPOGRAPHY_STYLE_TAG_ID);
+    if (!styleTag) {
+      styleTag = doc.createElement('style');
+      styleTag.id = TYPOGRAPHY_STYLE_TAG_ID;
+      styleTag.setAttribute('data-typography-definitions', '1');
+      doc.head.appendChild(styleTag);
+    }
+    return styleTag;
+  }
+
+  function rebuildTypographyDefinitionsCss() {
+    const styleTag = ensureTypographyStyleTag();
+    styleTag.dataset.definitions = JSON.stringify(typographyDefinitions);
+    const css = typographyDefinitions.map((definition) => {
+      const selector = `.typo-style-${definition.id}`;
+      const lines = Object.entries(definition.patch || {})
+        .filter(([, value]) => value != null && value !== '')
+        .map(([key, value]) => `  ${key}: ${value};`);
+      return `${selector} {\n${lines.join('\n')}\n}`;
+    }).join('\n\n');
+    styleTag.textContent = css;
+  }
+
+  typographyDefinitions = readTypographyDefinitions();
+  if (typographyDefinitions.length) rebuildTypographyDefinitionsCss();
 
   function uniqueConnectedElements(items) {
     const seen = new Set();
@@ -2332,11 +2396,11 @@ function createFrameEditor({
 
   function getTextStyleState() {
     const targets = getTextTargets();
-    if (!targets.length) return { enabled: false, targetCount: 0 };
+    if (!targets.length) return { enabled: false, targetCount: 0, styleDefinitions: typographyDefinitions };
     const styles = targets.map((element) => win.getComputedStyle(element));
     const pick = (getter) => {
-      const first = getter(styles[0]);
-      return styles.every((style) => getter(style) === first) ? first : '';
+      const first = getter(styles[0], 0);
+      return styles.every((style, index) => getter(style, index) === first) ? first : '';
     };
     const fontSize = pick((style) => formatNumberString(style.fontSize, 2).replace(/\.0+$/, ''));
     const lineHeight = pick((style) => {
@@ -2351,6 +2415,23 @@ function createFrameEditor({
       if (!Number.isFinite(fs) || !fs || !Number.isFinite(ls)) return '';
       return formatNumberString(ls / fs, 3);
     });
+    const variableAxes = {};
+    const featureFlags = {};
+    for (const axis of VARIABLE_FONT_AXES) {
+      const picked = pick((style) => parseFontVariationSettings(style.fontVariationSettings || '')[axis]);
+      if (picked != null && picked !== '') variableAxes[axis] = Number(picked);
+    }
+    for (const key of OPEN_TYPE_FEATURE_KEYS) {
+      const picked = pick((style) => parseFontFeatureSettings(style.fontFeatureSettings || '')[key]);
+      if (typeof picked === 'boolean') featureFlags[key] = picked;
+    }
+    const baselineStep = pick((style) => String(style.getPropertyValue('--editor-baseline-step') || '').replace('px', '').trim());
+    const opticalAlign = pick((style) => style.getPropertyValue('--editor-optical-align').trim() || '');
+    const styleClass = pick((style, index) => {
+      const target = targets[index];
+      const matched = Array.from(target.classList).find((name) => name.startsWith('typo-style-'));
+      return matched || '';
+    });
     return {
       enabled: true,
       targetCount: targets.length,
@@ -2360,6 +2441,12 @@ function createFrameEditor({
       fontWeight: pick((style) => String(style.fontWeight || '')),
       color: pick((style) => rgbToHex(style.color || '')),
       textAlign: pick((style) => String(style.textAlign || '')),
+      variableAxes,
+      openTypeFeatures: featureFlags,
+      baselineGrid: { enabled: !!baselineStep, step: baselineStep || '' },
+      opticalAlignment: opticalAlign || 'none',
+      styleClass,
+      styleDefinitions: typographyDefinitions,
     };
   }
 
@@ -3881,13 +3968,121 @@ function createFrameEditor({
       if (clear || Object.prototype.hasOwnProperty.call(patch, 'fontWeight')) stylePatch['font-weight'] = clear ? null : (patch.fontWeight || null);
       if (clear || Object.prototype.hasOwnProperty.call(patch, 'color')) stylePatch.color = clear ? null : (patch.color || null);
       if (clear || Object.prototype.hasOwnProperty.call(patch, 'textAlign')) stylePatch['text-align'] = clear ? null : (patch.textAlign || null);
+      if (clear || Object.prototype.hasOwnProperty.call(patch, 'fontVariationSettings')) stylePatch['font-variation-settings'] = clear ? null : (patch.fontVariationSettings || null);
+      if (clear || Object.prototype.hasOwnProperty.call(patch, 'fontFeatureSettings')) stylePatch['font-feature-settings'] = clear ? null : (patch.fontFeatureSettings || null);
+      if (clear || Object.prototype.hasOwnProperty.call(patch, 'opticalAlignment')) {
+        stylePatch['--editor-optical-align'] = clear ? null : (patch.opticalAlignment || 'none');
+        stylePatch['hanging-punctuation'] = clear || !patch.opticalAlignment || patch.opticalAlignment === 'none' ? null : 'first allow-end';
+      }
+      if (clear || Object.prototype.hasOwnProperty.call(patch, 'baselineGridStep')) {
+        stylePatch['--editor-baseline-step'] = clear ? null : (patch.baselineGridStep ? `${patch.baselineGridStep}px` : null);
+      }
+      if (!clear && patch.baselineGridSnap && patch.baselineGridStep) {
+        const computed = win.getComputedStyle(element);
+        const fontSizePx = Number.parseFloat(computed.fontSize || '0');
+        const step = Number.parseFloat(patch.baselineGridStep);
+        if (Number.isFinite(fontSizePx) && fontSizePx > 0 && Number.isFinite(step) && step > 0) {
+          const ratio = Math.max(1, Math.round(fontSizePx * (Number.parseFloat(patch.lineHeight || computed.lineHeight) / fontSizePx || 1) / step));
+          stylePatch['line-height'] = formatNumberString((step * ratio) / fontSizePx, 3);
+        }
+      }
       setInlineStyle(element, stylePatch);
+      if (Object.prototype.hasOwnProperty.call(patch, 'styleClass')) {
+        for (const className of Array.from(element.classList)) {
+          if (className.startsWith('typo-style-')) element.classList.remove(className);
+        }
+        if (!clear && patch.styleClass) element.classList.add(patch.styleClass);
+      }
       element.dataset.editorModified = '1';
       if (element.dataset.nodeUid) modifiedSlots.add(element.dataset.nodeUid);
     }
     emitState();
     emitMutation(clear ? 'clear-text-style' : 'apply-text-style');
     return { ok: true, message: clear ? `텍스트 ${targets.length}개의 인라인 스타일을 비웠습니다.` : `텍스트 ${targets.length}개에 스타일을 적용했습니다.` };
+  }
+
+  function normalizeTypographyDefinitionId(value) {
+    const normalized = String(value || '')
+      .normalize('NFKC')
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/[^\p{L}\p{N}_-]+/gu, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .toLowerCase();
+    return normalized;
+  }
+
+  function createTypographyDefinitionId({ id = '', name = '' } = {}) {
+    const normalizedId = normalizeTypographyDefinitionId(id);
+    if (normalizedId) return normalizedId;
+    const baseId = normalizeTypographyDefinitionId(slugify(name) || name) || nextId('typo');
+    let styleId = baseId;
+    let suffix = 2;
+    while (typographyDefinitions.some((item) => item.id === styleId)) {
+      styleId = `${baseId}-${suffix}`;
+      suffix += 1;
+    }
+    return styleId;
+  }
+
+  function toTextStylePatchFromDefinitionPatch(patch = {}) {
+    const normalized = {};
+    const source = patch || {};
+    if (Object.prototype.hasOwnProperty.call(source, 'font-size')) {
+      const fontSize = Number.parseFloat(source['font-size']);
+      if (Number.isFinite(fontSize) && fontSize > 0) normalized.fontSize = fontSize;
+    }
+    if (Object.prototype.hasOwnProperty.call(source, 'line-height')) {
+      const lineHeight = Number.parseFloat(source['line-height']);
+      if (Number.isFinite(lineHeight) && lineHeight > 0) normalized.lineHeight = lineHeight;
+    }
+    if (Object.prototype.hasOwnProperty.call(source, 'letter-spacing')) {
+      const letterSpacing = String(source['letter-spacing'] || '').trim();
+      const emMatch = letterSpacing.match(/^(-?[\d.]+)em$/i);
+      if (emMatch) {
+        const letterSpacingValue = Number.parseFloat(emMatch[1]);
+        if (Number.isFinite(letterSpacingValue)) normalized.letterSpacing = letterSpacingValue;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(source, 'font-weight')) normalized.fontWeight = source['font-weight'];
+    if (Object.prototype.hasOwnProperty.call(source, 'color')) normalized.color = source.color;
+    if (Object.prototype.hasOwnProperty.call(source, 'text-align')) normalized.textAlign = source['text-align'];
+    if (Object.prototype.hasOwnProperty.call(source, 'font-variation-settings')) normalized.fontVariationSettings = source['font-variation-settings'];
+    if (Object.prototype.hasOwnProperty.call(source, 'font-feature-settings')) normalized.fontFeatureSettings = source['font-feature-settings'];
+    if (Object.prototype.hasOwnProperty.call(source, '--editor-optical-align')) normalized.opticalAlignment = source['--editor-optical-align'];
+    if (Object.prototype.hasOwnProperty.call(source, '--editor-baseline-step')) {
+      const baselineStep = String(source['--editor-baseline-step'] || '').trim();
+      const pxMatch = baselineStep.match(/^([\d.]+)px$/i);
+      if (pxMatch) {
+        const baselineStepValue = Number.parseFloat(pxMatch[1]);
+        if (Number.isFinite(baselineStepValue) && baselineStepValue > 0) normalized.baselineGridStep = baselineStepValue;
+      }
+    }
+    return normalized;
+  }
+
+  function upsertTypographyDefinition({ id = '', name = '', kind = 'character', patch = {} } = {}) {
+    const cleanName = String(name || '').trim();
+    if (!cleanName) return { ok: false, message: '스타일 이름을 입력해 주세요.' };
+    const existingById = id ? typographyDefinitions.find((item) => item.id === normalizeTypographyDefinitionId(id)) : null;
+    const styleId = existingById?.id || createTypographyDefinitionId({ id, name: cleanName });
+    const cleanPatch = Object.fromEntries(Object.entries(patch || {}).filter(([, value]) => value != null && value !== ''));
+    const existingIndex = typographyDefinitions.findIndex((item) => item.id === styleId);
+    const next = { id: styleId, name: cleanName, kind: kind === 'paragraph' ? 'paragraph' : 'character', patch: cleanPatch };
+    if (existingIndex >= 0) typographyDefinitions[existingIndex] = next;
+    else typographyDefinitions.push(next);
+    rebuildTypographyDefinitionsCss();
+    emitState();
+    emitMutation('upsert-typography-definition');
+    return { ok: true, message: `스타일 "${cleanName}"을 저장했습니다.`, definition: next };
+  }
+
+  function applyTypographyDefinition(definitionId = '') {
+    const definition = typographyDefinitions.find((item) => item.id === definitionId);
+    if (!definition) return { ok: false, message: '선택한 스타일 정의를 찾을 수 없습니다.' };
+    const stylePatch = toTextStylePatchFromDefinitionPatch(definition.patch);
+    return applyTextStyle({ ...stylePatch, styleClass: `typo-style-${definition.id}` });
   }
 
   function inspectSlot(slot, slotRecord) {
@@ -5195,6 +5390,8 @@ function createFrameEditor({
     toggleLayerLockedByUid,
     toggleTextEdit,
     applyTextStyle,
+    upsertTypographyDefinition,
+    applyTypographyDefinition,
     applyBatchLayout,
     applyStackLayout,
     configureSelectedLayoutContainer,
@@ -6159,6 +6356,23 @@ const elements = {
   textLetterSpacingInput: document.getElementById('textLetterSpacingInput'),
   textWeightSelect: document.getElementById('textWeightSelect'),
   textColorInput: document.getElementById('textColorInput'),
+  textStyleDefKindSelect: document.getElementById('textStyleDefKindSelect'),
+  textStyleDefNameInput: document.getElementById('textStyleDefNameInput'),
+  textStyleDefSelect: document.getElementById('textStyleDefSelect'),
+  saveTextStyleDefButton: document.getElementById('saveTextStyleDefButton'),
+  applyTextStyleDefButton: document.getElementById('applyTextStyleDefButton'),
+  fontAxisWghtInput: document.getElementById('fontAxisWghtInput'),
+  fontAxisWdthInput: document.getElementById('fontAxisWdthInput'),
+  fontAxisOpszInput: document.getElementById('fontAxisOpszInput'),
+  fontAxisSlntInput: document.getElementById('fontAxisSlntInput'),
+  featureLigaToggle: document.getElementById('featureLigaToggle'),
+  featureKernToggle: document.getElementById('featureKernToggle'),
+  featureSs01Toggle: document.getElementById('featureSs01Toggle'),
+  featureSs02Toggle: document.getElementById('featureSs02Toggle'),
+  featureOnumToggle: document.getElementById('featureOnumToggle'),
+  baselineGridStepInput: document.getElementById('baselineGridStepInput'),
+  opticalAlignSelect: document.getElementById('opticalAlignSelect'),
+  applyTypographyAdvancedButton: document.getElementById('applyTypographyAdvancedButton'),
   applyTextStyleButton: document.getElementById('applyTextStyleButton'),
   clearTextStyleButton: document.getElementById('clearTextStyleButton'),
   batchSelectionSummary: document.getElementById('batchSelectionSummary'),
@@ -7763,6 +7977,29 @@ function syncTextStyleControls(editorMeta) {
   elements.textLetterSpacingInput.value = enabled && style.letterSpacing ? String(style.letterSpacing) : '';
   elements.textWeightSelect.value = enabled && style.fontWeight ? String(style.fontWeight) : '';
   elements.textColorInput.value = enabled && style.color ? style.color : '#333333';
+  if (elements.fontAxisWghtInput) elements.fontAxisWghtInput.value = String(style?.variableAxes?.wght ?? 400);
+  if (elements.fontAxisWdthInput) elements.fontAxisWdthInput.value = String(style?.variableAxes?.wdth ?? 100);
+  if (elements.fontAxisOpszInput) elements.fontAxisOpszInput.value = String(style?.variableAxes?.opsz ?? 16);
+  if (elements.fontAxisSlntInput) elements.fontAxisSlntInput.value = String(style?.variableAxes?.slnt ?? 0);
+  if (elements.featureLigaToggle) elements.featureLigaToggle.checked = !!style?.openTypeFeatures?.liga;
+  if (elements.featureKernToggle) elements.featureKernToggle.checked = !!style?.openTypeFeatures?.kern;
+  if (elements.featureSs01Toggle) elements.featureSs01Toggle.checked = !!style?.openTypeFeatures?.ss01;
+  if (elements.featureSs02Toggle) elements.featureSs02Toggle.checked = !!style?.openTypeFeatures?.ss02;
+  if (elements.featureOnumToggle) elements.featureOnumToggle.checked = !!style?.openTypeFeatures?.onum;
+  if (elements.baselineGridStepInput) elements.baselineGridStepInput.value = style?.baselineGrid?.step || '';
+  if (elements.opticalAlignSelect) elements.opticalAlignSelect.value = style?.opticalAlignment || 'none';
+  if (elements.textStyleDefSelect) {
+    const defs = Array.isArray(style?.styleDefinitions) ? style.styleDefinitions : [];
+    const previous = elements.textStyleDefSelect.value;
+    elements.textStyleDefSelect.innerHTML = '<option value="">선택</option>';
+    for (const definition of defs) {
+      const option = document.createElement('option');
+      option.value = definition.id;
+      option.textContent = `${definition.name} (${definition.kind === 'paragraph' ? '문단' : '문자'})`;
+      elements.textStyleDefSelect.appendChild(option);
+    }
+    elements.textStyleDefSelect.value = defs.some((item) => item.id === previous) ? previous : '';
+  }
 }
 
 function syncBatchSummary(editorMeta) {
@@ -8524,6 +8761,36 @@ function restoreAutosave() {
   setStatus(`자동저장본을 복구했습니다. 저장 시각: ${payload.savedAt || '-'}`);
 }
 
+function buildTypographyAdvancedPatch() {
+  const axisMap = {
+    wght: Number(elements.fontAxisWghtInput?.value || 400),
+    wdth: Number(elements.fontAxisWdthInput?.value || 100),
+    opsz: Number(elements.fontAxisOpszInput?.value || 16),
+    slnt: Number(elements.fontAxisSlntInput?.value || 0),
+  };
+  const fontVariationSettings = Object.entries(axisMap)
+    .filter(([, value]) => Number.isFinite(value))
+    .map(([axis, value]) => `"${axis}" ${value}`)
+    .join(', ');
+  const featureMap = {
+    liga: !!elements.featureLigaToggle?.checked,
+    kern: !!elements.featureKernToggle?.checked,
+    ss01: !!elements.featureSs01Toggle?.checked,
+    ss02: !!elements.featureSs02Toggle?.checked,
+    onum: !!elements.featureOnumToggle?.checked,
+  };
+  const fontFeatureSettings = Object.entries(featureMap)
+    .map(([key, enabled]) => `"${key}" ${enabled ? 'on' : 'off'}`)
+    .join(', ');
+  return {
+    fontVariationSettings,
+    fontFeatureSettings,
+    baselineGridSnap: true,
+    baselineGridStep: elements.baselineGridStepInput?.value?.trim() || '',
+    opticalAlignment: elements.opticalAlignSelect?.value || 'none',
+  };
+}
+
 function applyTextStyleFromControls({ clear = false } = {}) {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   const patch = clear ? {
@@ -8533,6 +8800,11 @@ function applyTextStyleFromControls({ clear = false } = {}) {
     fontWeight: '',
     color: '',
     textAlign: '',
+    fontVariationSettings: '',
+    fontFeatureSettings: '',
+    baselineGridStep: '',
+    opticalAlignment: '',
+    styleClass: '',
   } : (() => {
     const next = {};
     const fontSize = elements.textFontSizeInput.value.trim();
@@ -8544,6 +8816,7 @@ function applyTextStyleFromControls({ clear = false } = {}) {
     if (letterSpacing) next.letterSpacing = letterSpacing;
     if (fontWeight) next.fontWeight = fontWeight;
     if (elements.textColorInput.value) next.color = elements.textColorInput.value;
+    Object.assign(next, buildTypographyAdvancedPatch());
     return next;
   })();
   const result = activeEditor.applyTextStyle(patch, { clear });
@@ -8566,39 +8839,11 @@ function applyTextStyleLive(event) {
   if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 }
 
-function runArrangePreset(presetId) {
-  if (!activeEditor) return { ok: false, message: '먼저 미리보기를 로드해 주세요.' };
-  if (presetId === 'align-left-tidy-x') {
-    const aligned = activeEditor.applyBatchLayout('align-left');
-    if (!aligned?.ok) return aligned;
-    return activeEditor.tidySelection({ axis: 'x' });
-  }
-  if (presetId === 'align-top-tidy-y') {
-    const aligned = activeEditor.applyBatchLayout('align-top');
-    if (!aligned?.ok) return aligned;
-    return activeEditor.tidySelection({ axis: 'y' });
-  }
-  if (presetId === 'stack-card-gap-16') {
-    if (elements.stackGapInput) elements.stackGapInput.value = '16';
-    if (elements.stackAlignSelect) elements.stackAlignSelect.value = 'start';
-    if (elements.stackDirectionSelect) elements.stackDirectionSelect.value = 'vertical';
-    return activeEditor.applyStackLayout({ direction: 'vertical', gap: 16, align: 'start' });
-  }
-  if (presetId === 'stack-banner-gap-32') {
-    if (elements.stackGapInput) elements.stackGapInput.value = '32';
-    if (elements.stackAlignSelect) elements.stackAlignSelect.value = 'center';
-    if (elements.stackDirectionSelect) elements.stackDirectionSelect.value = 'horizontal';
-    return activeEditor.applyStackLayout({ direction: 'horizontal', gap: 32, align: 'center' });
-  }
-  return { ok: false, message: '알 수 없는 배치 프리셋입니다.' };
-}
-
-function applyArrangePresetSelection() {
-  const presetId = elements.arrangePresetSelect?.value || '';
-  if (!presetId) return setStatus('배치 프리셋을 먼저 선택해 주세요.');
-  const result = runArrangePreset(presetId);
-  setStatus(result.message);
-  if (result?.ok && (store.getState().currentView === 'edited' || store.getState().currentView === 'report')) refreshComputedViews(store.getState());
+function applyTypographyAdvancedLive() {
+  if (!activeEditor) return;
+  const result = activeEditor.applyTextStyle(buildTypographyAdvancedPatch());
+  if (result?.ok) setStatus('고급 타이포 설정을 반영했습니다.');
+  if (store.getState().currentView === 'edited' || store.getState().currentView === 'report') refreshComputedViews(store.getState());
 }
 
 function applyBatchAction(action) {
@@ -8885,6 +9130,54 @@ for (const control of [
 ]) {
   const eventName = control?.tagName === 'SELECT' ? 'change' : 'input';
   control?.addEventListener(eventName, applyTextStyleLive);
+}
+elements.saveTextStyleDefButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const patch = {};
+  const fontSize = elements.textFontSizeInput?.value?.trim() || '';
+  const lineHeight = elements.textLineHeightInput?.value?.trim() || '';
+  const letterSpacing = elements.textLetterSpacingInput?.value?.trim() || '';
+  const fontWeight = elements.textWeightSelect?.value || '';
+  const color = elements.textColorInput?.value || '';
+  if (fontSize) patch['font-size'] = `${fontSize}px`;
+  if (lineHeight) patch['line-height'] = lineHeight;
+  if (letterSpacing) patch['letter-spacing'] = `${letterSpacing}em`;
+  if (fontWeight) patch['font-weight'] = fontWeight;
+  if (color) patch.color = color;
+  const advanced = buildTypographyAdvancedPatch();
+  if (advanced.fontVariationSettings) patch['font-variation-settings'] = advanced.fontVariationSettings;
+  if (advanced.fontFeatureSettings) patch['font-feature-settings'] = advanced.fontFeatureSettings;
+  if (advanced.baselineGridStep) patch['--editor-baseline-step'] = `${advanced.baselineGridStep}px`;
+  if (advanced.opticalAlignment) patch['--editor-optical-align'] = advanced.opticalAlignment;
+  const result = activeEditor.upsertTypographyDefinition({
+    id: elements.textStyleDefSelect?.value || '',
+    name: elements.textStyleDefNameInput?.value || '',
+    kind: elements.textStyleDefKindSelect?.value || 'character',
+    patch,
+  });
+  setStatus(result.message);
+});
+elements.applyTextStyleDefButton?.addEventListener('click', () => {
+  if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
+  const result = activeEditor.applyTypographyDefinition(elements.textStyleDefSelect?.value || '');
+  setStatus(result.message);
+});
+elements.applyTypographyAdvancedButton?.addEventListener('click', applyTypographyAdvancedLive);
+for (const control of [
+  elements.fontAxisWghtInput,
+  elements.fontAxisWdthInput,
+  elements.fontAxisOpszInput,
+  elements.fontAxisSlntInput,
+  elements.featureLigaToggle,
+  elements.featureKernToggle,
+  elements.featureSs01Toggle,
+  elements.featureSs02Toggle,
+  elements.featureOnumToggle,
+  elements.baselineGridStepInput,
+  elements.opticalAlignSelect,
+]) {
+  const eventName = control?.tagName === 'SELECT' || control?.type === 'checkbox' ? 'change' : 'input';
+  control?.addEventListener(eventName, applyTypographyAdvancedLive);
 }
 elements.applyCanvasGeometryButton?.addEventListener('click', () => {
   if (elements.geometryXInput) elements.geometryXInput.value = elements.canvasGeometryXInput?.value || '';
