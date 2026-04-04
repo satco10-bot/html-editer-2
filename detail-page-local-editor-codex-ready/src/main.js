@@ -1217,15 +1217,25 @@ function hydrateStyleSystemFromDoc() {
   renderStyleSystemPanels();
 }
 
+function serializeComponentTemplateFromElement(element) {
+  if (!element) return '';
+  const clone = element.cloneNode(true);
+  if (clone.nodeType !== Node.ELEMENT_NODE) return '';
+  clone.removeAttribute('data-node-uid');
+  clone.querySelectorAll?.('[data-node-uid]').forEach((node) => node.removeAttribute('data-node-uid'));
+  return clone.outerHTML;
+}
+
 function upsertComponentFromSelection() {
   const selected = selectedElementInPreview();
   if (!selected) return setStatus('먼저 요소 1개를 선택해 주세요.');
   const id = selected.dataset.componentMasterId || `cmp_${Date.now().toString(36)}`;
+  const existing = styleSystemState.components.find((row) => row.id === id);
   const item = {
     id,
     name: selected.dataset.groupLabel || selected.dataset.slotLabel || selected.tagName.toLowerCase(),
-    templateHtml: selected.outerHTML,
-    variantDefs: {},
+    templateHtml: serializeComponentTemplateFromElement(selected),
+    variantDefs: existing?.variantDefs || {},
   };
   const index = styleSystemState.components.findIndex((row) => row.id === id);
   if (index >= 0) styleSystemState.components[index] = { ...styleSystemState.components[index], ...item };
