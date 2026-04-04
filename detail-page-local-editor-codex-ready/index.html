@@ -608,6 +608,13 @@
         <div class="panel-divider"></div>
         <div class="style-form">
           <label class="field">
+            <span>배치 프리셋</span>
+            <select id="arrangePresetSelect"></select>
+          </label>
+          <div class="button-row">
+            <button id="applyArrangePresetButton" class="button button--secondary button--small" type="button">프리셋 적용</button>
+          </div>
+          <label class="field">
             <span>스택 방향</span>
             <select id="stackDirectionSelect">
               <option value="vertical">세로</option>
@@ -806,12 +813,16 @@
         <span>명령 검색</span>
         <input id="commandPaletteInput" type="search" placeholder="예: 복제, 삭제, PNG, 섹션 추가" autocomplete="off" />
       </label>
+      <p id="commandPaletteRecentHint" class="hint" hidden>최근 실행한 명령이 위쪽에 먼저 표시됩니다.</p>
       <ul id="commandPaletteList" class="command-palette__list" role="listbox" aria-label="명령 결과"></ul>
       <div class="button-row">
         <button id="commandPaletteRunButton" class="button button--secondary button--small" type="button">선택 명령 실행</button>
+        <button id="commandPaletteShortcutExportButton" class="button button--ghost button--small" type="button">단축키 JSON 내보내기</button>
+        <button id="commandPaletteShortcutImportButton" class="button button--ghost button--small" type="button">단축키 JSON 불러오기</button>
       </div>
     </section>
   </div>
+  <input id="shortcutMapImportInput" type="file" accept="application/json,.json" hidden />
   <div id="beginnerTutorialTooltip" class="beginner-tutorial" role="dialog" aria-live="polite" hidden>
     <strong id="beginnerTutorialTitle">초보 모드 안내</strong>
     <p id="beginnerTutorialBody"></p>
