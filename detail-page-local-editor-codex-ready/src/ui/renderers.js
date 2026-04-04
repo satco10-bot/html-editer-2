@@ -126,19 +126,64 @@ export function renderSelectionInspector(container, editorMeta, imageDiagnostic 
   const selectedItemsHtml = editorMeta.selectedItems?.length
     ? `<div class="selected-pill-list">${editorMeta.selectedItems.slice(0, 8).map((item) => `<span class="selected-pill">${escapeHtml(truncate(item.label || item.uid || '-', 24))}</span>`).join('')}</div>`
     : '';
+  const inspectorSchemaByType = {
+    text: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['라벨', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['텍스트 편집', (node) => node.textEditing ? '진행 중' : '아님'],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+    ],
+    image: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['라벨', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['감지 타입', (node) => node.detectedType || '-'],
+      ['점수', (node) => String(node.score ?? '-')],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+    ],
+    slot: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['라벨', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['감지 타입', (node) => node.detectedType || '-'],
+      ['점수', (node) => String(node.score ?? '-')],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+    ],
+    section: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['섹션명', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['선택 개수', () => `${formatNumber(editorMeta.selectionCount || 0)}개`],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+    ],
+    default: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['라벨', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['감지', (node) => node.detectedType || '-'],
+      ['점수', (node) => String(node.score ?? '-')],
+      ['선택 개수', () => `${formatNumber(editorMeta.selectionCount || 0)}개`],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['텍스트 편집', (node) => node.textEditing ? '진행 중' : '아님'],
+    ],
+  };
+  const schemaRows = (selected
+    ? (inspectorSchemaByType[selected.type] || inspectorSchemaByType.default)
+    : []).map(([label, valueResolver]) => `
+      <div class="inspector-kv"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(String(valueResolver(selected)))}</span></div>
+    `).join('');
   const selectionHtml = !selected
     ? '<div class="asset-empty">현재 선택된 요소가 없습니다.</div>'
     : `
       <div class="inspector-card">
-        <div class="inspector-kv"><strong>선택 타입</strong><span>${escapeHtml(selected.type || '-')}</span></div>
-        <div class="inspector-kv"><strong>라벨</strong><span>${escapeHtml(selected.label || '-')}</span></div>
-        <div class="inspector-kv"><strong>UID</strong><span>${escapeHtml(selected.uid || '-')}</span></div>
-        <div class="inspector-kv"><strong>감지</strong><span>${escapeHtml(selected.detectedType || '-')}</span></div>
-        <div class="inspector-kv"><strong>점수</strong><span>${escapeHtml(String(selected.score ?? '-'))}</span></div>
-        <div class="inspector-kv"><strong>선택 개수</strong><span>${formatNumber(editorMeta.selectionCount || 0)}개</span></div>
-        <div class="inspector-kv"><strong>숨김</strong><span>${selected.hidden ? '예' : '아니오'}</span></div>
-        <div class="inspector-kv"><strong>잠금</strong><span>${selected.locked ? '예' : '아니오'}</span></div>
-        <div class="inspector-kv"><strong>텍스트 편집</strong><span>${selected.textEditing ? '진행 중' : '아님'}</span></div>
+        <div class="asset-ref">Inspector schema: <strong>${escapeHtml(selected.type || 'default')}</strong></div>
+        ${schemaRows}
         ${selectedItemsHtml}
         <div class="inspector-reasons">${(selected.reasons || []).length ? selected.reasons.map((item) => `<div>${escapeHtml(item)}</div>`).join('') : '감지 이유가 없습니다.'}</div>
       </div>`;

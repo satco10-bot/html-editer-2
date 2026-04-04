@@ -4957,19 +4957,64 @@ function renderSelectionInspector(container, editorMeta, imageDiagnostic = null)
   const selectedItemsHtml = editorMeta.selectedItems?.length
     ? `<div class="selected-pill-list">${editorMeta.selectedItems.slice(0, 8).map((item) => `<span class="selected-pill">${escapeHtml(truncate(item.label || item.uid || '-', 24))}</span>`).join('')}</div>`
     : '';
+  const inspectorSchemaByType = {
+    text: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['라벨', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['텍스트 편집', (node) => node.textEditing ? '진행 중' : '아님'],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+    ],
+    image: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['라벨', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['감지 타입', (node) => node.detectedType || '-'],
+      ['점수', (node) => String(node.score ?? '-')],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+    ],
+    slot: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['라벨', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['감지 타입', (node) => node.detectedType || '-'],
+      ['점수', (node) => String(node.score ?? '-')],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+    ],
+    section: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['섹션명', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['선택 개수', () => `${formatNumber(editorMeta.selectionCount || 0)}개`],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+    ],
+    default: [
+      ['선택 타입', (node) => node.type || '-'],
+      ['라벨', (node) => node.label || '-'],
+      ['UID', (node) => node.uid || '-'],
+      ['감지', (node) => node.detectedType || '-'],
+      ['점수', (node) => String(node.score ?? '-')],
+      ['선택 개수', () => `${formatNumber(editorMeta.selectionCount || 0)}개`],
+      ['숨김', (node) => node.hidden ? '예' : '아니오'],
+      ['잠금', (node) => node.locked ? '예' : '아니오'],
+      ['텍스트 편집', (node) => node.textEditing ? '진행 중' : '아님'],
+    ],
+  };
+  const schemaRows = (selected
+    ? (inspectorSchemaByType[selected.type] || inspectorSchemaByType.default)
+    : []).map(([label, valueResolver]) => `
+      <div class="inspector-kv"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(String(valueResolver(selected)))}</span></div>
+    `).join('');
   const selectionHtml = !selected
     ? '<div class="asset-empty">현재 선택된 요소가 없습니다.</div>'
     : `
       <div class="inspector-card">
-        <div class="inspector-kv"><strong>선택 타입</strong><span>${escapeHtml(selected.type || '-')}</span></div>
-        <div class="inspector-kv"><strong>라벨</strong><span>${escapeHtml(selected.label || '-')}</span></div>
-        <div class="inspector-kv"><strong>UID</strong><span>${escapeHtml(selected.uid || '-')}</span></div>
-        <div class="inspector-kv"><strong>감지</strong><span>${escapeHtml(selected.detectedType || '-')}</span></div>
-        <div class="inspector-kv"><strong>점수</strong><span>${escapeHtml(String(selected.score ?? '-'))}</span></div>
-        <div class="inspector-kv"><strong>선택 개수</strong><span>${formatNumber(editorMeta.selectionCount || 0)}개</span></div>
-        <div class="inspector-kv"><strong>숨김</strong><span>${selected.hidden ? '예' : '아니오'}</span></div>
-        <div class="inspector-kv"><strong>잠금</strong><span>${selected.locked ? '예' : '아니오'}</span></div>
-        <div class="inspector-kv"><strong>텍스트 편집</strong><span>${selected.textEditing ? '진행 중' : '아님'}</span></div>
+        <div class="asset-ref">Inspector schema: <strong>${escapeHtml(selected.type || 'default')}</strong></div>
+        ${schemaRows}
         ${selectedItemsHtml}
         <div class="inspector-reasons">${(selected.reasons || []).length ? selected.reasons.map((item) => `<div>${escapeHtml(item)}</div>`).join('') : '감지 이유가 없습니다.'}</div>
       </div>`;
@@ -5295,6 +5340,8 @@ let currentAppState = APP_STATES.launch;
 const BEGINNER_MODE_STORAGE_KEY = 'detail_editor_beginner_mode_v1';
 const ONBOARDING_COMPLETED_STORAGE_KEY = 'detail_editor_onboarding_completed_v1';
 const ONBOARDING_SAMPLE_CHECKED_STORAGE_KEY = 'detail_editor_onboarding_sample_checked_v1';
+const PANEL_LAYOUT_STORAGE_KEY_PREFIX = 'detail_editor_panel_layout_v2';
+const PANEL_LAYOUT_USER_KEY = 'detail_editor_layout_user_v1';
 const COMMAND_REGISTRY = Object.freeze([
   { id: 'tool-select', label: '선택 도구', shortcut: 'V', keywords: ['선택', '화살표', 'v'], run: () => { setSelectionMode('smart'); return { ok: true, message: '선택 도구(V)로 전환했습니다.' }; } },
   { id: 'tool-text', label: '텍스트 도구', shortcut: 'T', keywords: ['텍스트', '글자', 't'], run: () => { setSelectionMode('text'); return { ok: true, message: '텍스트 도구(T)로 전환했습니다.' }; } },
@@ -5437,6 +5484,9 @@ const elements = {
   exportJpgQualityInputMain: document.getElementById('exportJpgQualityInputMain'),
   exportJpgQualityInputs: Array.from(document.querySelectorAll('[data-export-jpg-quality-control]')),
   downloadReportButton: document.getElementById('downloadReportButton'),
+  shareReportButton: document.getElementById('shareReportButton'),
+  leftSidebarWidthInput: document.getElementById('leftSidebarWidthInput'),
+  rightSidebarWidthInput: document.getElementById('rightSidebarWidthInput'),
   htmlFileInput: document.getElementById('htmlFileInput'),
   folderInput: document.getElementById('folderInput'),
   replaceImageInput: document.getElementById('replaceImageInput'),
@@ -6244,14 +6294,22 @@ function applyAdvancedSettingsIfDirty() {
 }
 
 function readPanelLayoutState() {
+  const storageKey = getPanelLayoutStorageKey();
   try {
-    const raw = window.localStorage.getItem(PANEL_LAYOUT_STORAGE_KEY);
+    const raw = window.localStorage.getItem(storageKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;
     return {
       basicOpen: parsed.basicOpen !== false,
       advancedOpen: parsed.advancedOpen === true,
+      leftCollapsed: parsed.leftCollapsed === true,
+      rightCollapsed: parsed.rightCollapsed === true,
+      focusStage: parsed.focusStage === true,
+      leftTab: String(parsed.leftTab || ''),
+      rightTab: String(parsed.rightTab || ''),
+      leftWidth: normalizeSidebarWidth(parsed.leftWidth, 340, 260, 480),
+      rightWidth: normalizeSidebarWidth(parsed.rightWidth, 420, 300, 560),
     };
   } catch {
     return null;
@@ -6259,10 +6317,18 @@ function readPanelLayoutState() {
 }
 
 function persistPanelLayoutState() {
+  const storageKey = getPanelLayoutStorageKey();
   try {
-    window.localStorage.setItem(PANEL_LAYOUT_STORAGE_KEY, JSON.stringify({
+    window.localStorage.setItem(storageKey, JSON.stringify({
       basicOpen: !!elements.basicAttributeSection?.open,
       advancedOpen: !!elements.advancedAttributeSection?.open,
+      leftCollapsed: document.body.classList.contains('layout--left-collapsed'),
+      rightCollapsed: document.body.classList.contains('layout--right-collapsed'),
+      focusStage: document.body.classList.contains('layout--focus-stage'),
+      leftTab: getActiveSidebarTab('left'),
+      rightTab: getActiveSidebarTab('right'),
+      leftWidth: normalizeSidebarWidth(elements.leftSidebarWidthInput?.value, 340, 260, 480),
+      rightWidth: normalizeSidebarWidth(elements.rightSidebarWidthInput?.value, 420, 300, 560),
     }));
   } catch {}
 }
@@ -6272,6 +6338,50 @@ function restorePanelLayoutState() {
   if (!saved) return;
   if (elements.basicAttributeSection) elements.basicAttributeSection.open = saved.basicOpen;
   if (elements.advancedAttributeSection) elements.advancedAttributeSection.open = saved.advancedOpen;
+  document.body.classList.toggle('layout--left-collapsed', saved.leftCollapsed);
+  document.body.classList.toggle('layout--right-collapsed', saved.rightCollapsed);
+  document.body.classList.toggle('layout--focus-stage', saved.focusStage);
+  applySidebarWidths(saved.leftWidth, saved.rightWidth);
+  if (saved.leftTab) setSidebarTab(saved.leftTab, { syncWorkflow: false, persist: false });
+  if (saved.rightTab) setSidebarTab(saved.rightTab, { syncWorkflow: false, persist: false });
+}
+
+function getPanelLayoutStorageKey() {
+  const uid = getLayoutUserId();
+  return `${PANEL_LAYOUT_STORAGE_KEY_PREFIX}:${uid}`;
+}
+
+function getLayoutUserId() {
+  const fallbackId = 'local-default';
+  const stored = readFromLocalStorage(PANEL_LAYOUT_USER_KEY, '');
+  if (stored) return String(stored);
+  const generated = `u${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  writeToLocalStorage(PANEL_LAYOUT_USER_KEY, generated);
+  return generated || fallbackId;
+}
+
+function normalizeSidebarWidth(rawValue, fallback, min, max) {
+  const value = Number.parseFloat(String(rawValue ?? ''));
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function applySidebarWidths(leftWidth, rightWidth) {
+  const nextLeft = normalizeSidebarWidth(leftWidth, 340, 260, 480);
+  const nextRight = normalizeSidebarWidth(rightWidth, 420, 300, 560);
+  document.body.style.setProperty('--left-sidebar-width', `${nextLeft}px`);
+  document.body.style.setProperty('--right-sidebar-width', `${nextRight}px`);
+  if (elements.leftSidebarWidthInput) elements.leftSidebarWidthInput.value = String(nextLeft);
+  if (elements.rightSidebarWidthInput) elements.rightSidebarWidthInput.value = String(nextRight);
+}
+
+function getActiveSidebarTab(scope) {
+  if (scope !== 'left' && scope !== 'right') return '';
+  const active = elements.sidebarTabButtons.find((button) => {
+    const id = String(button.dataset.sidebarTab || '');
+    return id.startsWith(`${scope}-`) && button.classList.contains('is-active');
+  });
+  return active?.dataset.sidebarTab || '';
 }
 
 function resolveSidebarTab(panelId) {
@@ -6289,7 +6399,7 @@ function resolveSidebarTab(panelId) {
   return fallback?.dataset.sidebarTab || '';
 }
 
-function setSidebarTab(panelId, { syncWorkflow = true } = {}) {
+function setSidebarTab(panelId, { syncWorkflow = true, persist = true } = {}) {
   const targetPanelId = resolveSidebarTab(panelId);
   const scope = String(targetPanelId || '').startsWith('left-')
     ? 'left'
@@ -6310,6 +6420,7 @@ function setSidebarTab(panelId, { syncWorkflow = true } = {}) {
     panel.classList.toggle('is-active', panel.dataset.sidebarPanel === targetPanelId);
   }
   if (scope === 'left' && syncWorkflow) syncWorkflowGuideStepByLeftTab(targetPanelId);
+  if (persist) persistPanelLayoutState();
 }
 
 function getSlotRuntimeMeta(slotUid) {
@@ -8224,12 +8335,14 @@ elements.toggleLeftSidebarButton?.addEventListener('click', () => {
   document.body.classList.toggle('layout--left-collapsed');
   document.body.classList.remove('layout--focus-stage');
   syncWorkspaceButtons();
+  persistPanelLayoutState();
   applyPreviewZoom();
 });
 elements.toggleRightSidebarButton?.addEventListener('click', () => {
   document.body.classList.toggle('layout--right-collapsed');
   document.body.classList.remove('layout--focus-stage');
   syncWorkspaceButtons();
+  persistPanelLayoutState();
   applyPreviewZoom();
 });
 elements.focusModeButton?.addEventListener('click', () => {
@@ -8238,8 +8351,20 @@ elements.focusModeButton?.addEventListener('click', () => {
     document.body.classList.add('layout--left-collapsed', 'layout--right-collapsed');
   }
   syncWorkspaceButtons();
+  persistPanelLayoutState();
   applyPreviewZoom();
 });
+elements.leftSidebarWidthInput?.addEventListener('input', () => {
+  applySidebarWidths(elements.leftSidebarWidthInput?.value, elements.rightSidebarWidthInput?.value);
+  persistPanelLayoutState();
+  applyPreviewZoom();
+});
+elements.rightSidebarWidthInput?.addEventListener('input', () => {
+  applySidebarWidths(elements.leftSidebarWidthInput?.value, elements.rightSidebarWidthInput?.value);
+  persistPanelLayoutState();
+  applyPreviewZoom();
+});
+elements.shareReportButton?.addEventListener('click', () => elements.downloadReportButton?.click());
 elements.zoomOutButton?.addEventListener('click', () => nudgeZoom(-0.1));
 elements.zoomInButton?.addEventListener('click', () => nudgeZoom(0.1));
 elements.zoomResetButton?.addEventListener('click', () => setZoom('manual', 1));
@@ -8362,12 +8487,14 @@ window.addEventListener('keydown', (event) => {
     event.preventDefault();
     document.body.classList.toggle('layout--left-collapsed');
     syncWorkspaceButtons();
+    persistPanelLayoutState();
     return applyPreviewZoom();
   }
   if (key === 'i') {
     event.preventDefault();
     document.body.classList.toggle('layout--right-collapsed');
     syncWorkspaceButtons();
+    persistPanelLayoutState();
     return applyPreviewZoom();
   }
   if (key === 'f') {
@@ -8422,8 +8549,9 @@ bindEvents();
 for (const guideContainer of document.querySelectorAll('[data-left-tab-guide-for]')) {
   renderLeftTabStepGuide(guideContainer, guideContainer.getAttribute('data-left-tab-guide-for') || '');
 }
-setSidebarTab('left-start');
-setSidebarTab('right-inspect');
+applySidebarWidths(340, 420);
+setSidebarTab('left-image', { persist: false });
+setSidebarTab('right-inspect', { persist: false });
 setCodeSource('edited', { preserveDraft: false });
 syncSaveFormatUi();
 restorePanelLayoutState();
