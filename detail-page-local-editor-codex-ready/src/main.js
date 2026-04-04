@@ -56,6 +56,11 @@ const viewFeatureFlags = {
 };
 const OPEN_DOWNLOAD_MODAL_BUTTON_LABEL = '저장/출력 열기';
 const DEFAULT_JPG_QUALITY = 0.92;
+const NUDGE_STEP_RULE = Object.freeze({
+  base: 2,
+  shift: 10,
+  alt: 1,
+});
 const WORKFLOW_STEP_GUIDES = Object.freeze({
   load: 'HTML 파일이나 폴더를 먼저 불러오세요.',
   edit: '요소를 클릭한 뒤 드래그하세요.',
@@ -2069,6 +2074,26 @@ function applyNumberStep(input, direction) {
   input.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
+function resolveNudgeStepFromEvent(event) {
+  if (event?.shiftKey) return NUDGE_STEP_RULE.shift;
+  if (event?.altKey) return NUDGE_STEP_RULE.alt;
+  return NUDGE_STEP_RULE.base;
+}
+
+function applyKeyboardNudgeToNumberInput(event, input) {
+  if (!input || input.disabled) return false;
+  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return false;
+  const direction = event.key === 'ArrowUp' ? 1 : -1;
+  const step = resolveNudgeStepFromEvent(event);
+  const current = Number.parseFloat(input.value);
+  const base = Number.isFinite(current) ? current : 0;
+  input.value = String(base + (direction * step));
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  event.preventDefault();
+  return true;
+}
+
 function attachNumberStepper(input) {
   if (!input || input.dataset.stepperReady === '1') return;
   const wrapper = document.createElement('div');
@@ -2769,6 +2794,10 @@ for (const [canvasInput, sourceInput] of [
     const result = applyGeometryFromInputs();
     if (result.ok) setStatus(result.message);
   });
+  canvasInput?.addEventListener('keydown', (event) => {
+    if (!applyKeyboardNudgeToNumberInput(event, canvasInput)) return;
+    if (sourceInput) sourceInput.value = canvasInput.value;
+  });
 }
 
 elements.openHtmlButton?.addEventListener('click', () => elements.htmlFileInput?.click());
@@ -2859,6 +2888,9 @@ for (const input of [elements.geometryXInput, elements.geometryYInput, elements.
     const result = applyGeometryFromInputs();
     if (result.ok) setStatus(result.message);
   });
+  input?.addEventListener('keydown', (event) => {
+    applyKeyboardNudgeToNumberInput(event, input);
+  });
 }
 elements.bringForwardButton?.addEventListener('click', () => {
   executeEditorCommand('layer-index-forward');
@@ -2872,10 +2904,10 @@ elements.bringToFrontButton?.addEventListener('click', () => {
 elements.sendToBackButton?.addEventListener('click', () => {
   executeEditorCommand('layer-index-back');
 });
-elements.imageNudgeLeftButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: -2, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
-elements.imageNudgeRightButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 2, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
-elements.imageNudgeUpButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: -2 })?.message || '먼저 미리보기를 로드해 주세요.'));
-elements.imageNudgeDownButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: 2 })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeLeftButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: -NUDGE_STEP_RULE.base, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeRightButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: NUDGE_STEP_RULE.base, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeUpButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: -NUDGE_STEP_RULE.base })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeDownButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: NUDGE_STEP_RULE.base })?.message || '먼저 미리보기를 로드해 주세요.'));
 elements.preflightRefreshButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   activeEditor.refreshDerivedMeta();

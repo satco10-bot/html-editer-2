@@ -19,6 +19,11 @@ import { restoreSerializedAssetRefs } from '../core/serialize-layer.js';
 
 const FRAME_CSS_URL_RE = /url\((['"]?)([^"'()]+)\1\)/gi;
 const UNSUPPORTED_COMMAND_MESSAGE_PREFIX = '지원하지 않는 명령입니다:';
+const FRAME_NUDGE_STEP_RULE = Object.freeze({
+  base: 2,
+  shift: 10,
+  alt: 1,
+});
 const ADD_ELEMENT_PRESETS = {
   text: {
     tagName: 'p',
@@ -137,6 +142,12 @@ function shallowDescendantMedia(element) {
 function hasBackgroundImage(element) {
   const style = (element.getAttribute('style') || '').toLowerCase();
   return style.includes('background-image') || style.includes('background:url(') || style.includes('background: url(');
+}
+
+function resolveNudgeStep(event) {
+  if (event?.shiftKey) return FRAME_NUDGE_STEP_RULE.shift;
+  if (event?.altKey) return FRAME_NUDGE_STEP_RULE.alt;
+  return FRAME_NUDGE_STEP_RULE.base;
 }
 
 function isSimpleSlotContainer(element) {
@@ -781,6 +792,82 @@ export function createFrameEditor({
     };
   }
 
+  function pickSharedStyleValue(elements, getter) {
+    if (!elements.length) return { mixed: false, value: '' };
+    const first = getter(win.getComputedStyle(elements[0]));
+    const same = elements.every((element) => getter(win.getComputedStyle(element)) === first);
+    return {
+      mixed: !same,
+      value: same ? first : '',
+    };
+  }
+
+  function buildObjectInspectorProfile() {
+    const targets = uniqueConnectedElements(selectedElements).filter(Boolean);
+    if (!targets.length) return null;
+    const geometry = summarizeGeometryForSelection(targets);
+    const typeSet = new Set(targets.map((element) => selectionTypeOf(element)));
+    const sharedOpacity = pickSharedStyleValue(targets, (style) => formatNumberString(style.opacity, 2));
+    const sharedDisplay = pickSharedStyleValue(targets, (style) => style.display || '');
+    const sharedVisibility = pickSharedStyleValue(targets, (style) => style.visibility || '');
+    const sharedPosition = pickSharedStyleValue(targets, (style) => style.position || '');
+    const sharedZIndex = pickSharedStyleValue(targets, (style) => style.zIndex || '');
+    const primary = selectedElement || targets[0];
+    const imageElement = primary?.querySelector?.('img') || (primary?.tagName === 'IMG' ? primary : null);
+    const primaryStyle = primary ? win.getComputedStyle(primary) : null;
+    const imageStyle = imageElement ? win.getComputedStyle(imageElement) : null;
+    const textState = getTextStyleState();
+    return {
+      common: {
+        transform: {
+          x: geometry?.relative?.x ?? '',
+          y: geometry?.relative?.y ?? '',
+          w: geometry?.relative?.w ?? '',
+          h: geometry?.relative?.h ?? '',
+          mixed: geometry?.relative?.mixed || {},
+        },
+        appearance: {
+          opacity: sharedOpacity.mixed ? '' : sharedOpacity.value,
+          display: sharedDisplay.mixed ? '' : sharedDisplay.value,
+          visibility: sharedVisibility.mixed ? '' : sharedVisibility.value,
+          mixed: {
+            opacity: sharedOpacity.mixed,
+            display: sharedDisplay.mixed,
+            visibility: sharedVisibility.mixed,
+          },
+        },
+        layout: {
+          position: sharedPosition.mixed ? '' : sharedPosition.value,
+          zIndex: sharedZIndex.mixed ? '' : sharedZIndex.value,
+          mixed: {
+            position: sharedPosition.mixed,
+            zIndex: sharedZIndex.mixed,
+          },
+        },
+      },
+      plugins: {
+        text: textState.enabled ? {
+          targetCount: textState.targetCount,
+          fontSize: textState.fontSize,
+          lineHeight: textState.lineHeight,
+          letterSpacing: textState.letterSpacing,
+          color: textState.color,
+          fontWeight: textState.fontWeight,
+          textAlign: textState.textAlign,
+        } : null,
+        image: typeSet.has('slot') ? {
+          fit: imageStyle?.objectFit || primaryStyle?.backgroundSize || '',
+          position: imageStyle?.objectPosition || primaryStyle?.backgroundPosition || '',
+        } : null,
+        vector: typeSet.has('box') ? {
+          borderRadius: primaryStyle?.borderRadius || '',
+          background: primaryStyle?.backgroundColor || '',
+          border: primaryStyle?.border || '',
+        } : null,
+      },
+    };
+  }
+
   function getDerivedMeta() {
     const selectedItems = selectedElements.map((element) => buildSelectionInfo(element)).filter(Boolean);
     const layerTree = buildLayerTree();
@@ -812,6 +899,7 @@ export function createFrameEditor({
       preflight: buildPreflightReport(),
       canGroupSelection: canGroupSelection(),
       canUngroupSelection: canUngroupSelection(),
+      objectInspector: buildObjectInspectorProfile(),
     };
   }
 
@@ -3114,7 +3202,7 @@ export function createFrameEditor({
 
   function handleKeydown(event) {
     if (imageCropRuntime) {
-      const step = event.shiftKey ? 10 : event.altKey ? 1 : 2;
+      const step = resolveNudgeStep(event);
       if (event.key === 'Escape') {
         event.preventDefault();
         onStatus(finishImageCropMode({ apply: false }).message);
@@ -3219,7 +3307,7 @@ export function createFrameEditor({
     }
     if (!withModifier && !editingTextElement && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
       event.preventDefault();
-      const unit = event.altKey ? 1 : event.shiftKey ? 10 : 2;
+      const unit = resolveNudgeStep(event);
       const dx = event.key === 'ArrowLeft' ? -unit : event.key === 'ArrowRight' ? unit : 0;
       const dy = event.key === 'ArrowUp' ? -unit : event.key === 'ArrowDown' ? unit : 0;
       onStatus(executeCommand('nudge-selection', { dx, dy }).message);

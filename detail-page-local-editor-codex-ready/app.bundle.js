@@ -1572,6 +1572,11 @@ function restoreSerializedAssetRefs(exportDoc, { keepEditedAssets = true } = {})
 
 const FRAME_CSS_URL_RE = /url\((['"]?)([^"'()]+)\1\)/gi;
 const UNSUPPORTED_COMMAND_MESSAGE_PREFIX = '지원하지 않는 명령입니다:';
+const FRAME_NUDGE_STEP_RULE = Object.freeze({
+  base: 2,
+  shift: 10,
+  alt: 1,
+});
 const ADD_ELEMENT_PRESETS = {
   text: {
     tagName: 'p',
@@ -1690,6 +1695,12 @@ function shallowDescendantMedia(element) {
 function hasBackgroundImage(element) {
   const style = (element.getAttribute('style') || '').toLowerCase();
   return style.includes('background-image') || style.includes('background:url(') || style.includes('background: url(');
+}
+
+function resolveNudgeStep(event) {
+  if (event?.shiftKey) return FRAME_NUDGE_STEP_RULE.shift;
+  if (event?.altKey) return FRAME_NUDGE_STEP_RULE.alt;
+  return FRAME_NUDGE_STEP_RULE.base;
 }
 
 function isSimpleSlotContainer(element) {
@@ -2332,6 +2343,82 @@ function createFrameEditor({
     };
   }
 
+  function pickSharedStyleValue(elements, getter) {
+    if (!elements.length) return { mixed: false, value: '' };
+    const first = getter(win.getComputedStyle(elements[0]));
+    const same = elements.every((element) => getter(win.getComputedStyle(element)) === first);
+    return {
+      mixed: !same,
+      value: same ? first : '',
+    };
+  }
+
+  function buildObjectInspectorProfile() {
+    const targets = uniqueConnectedElements(selectedElements).filter(Boolean);
+    if (!targets.length) return null;
+    const geometry = summarizeGeometryForSelection(targets);
+    const typeSet = new Set(targets.map((element) => selectionTypeOf(element)));
+    const sharedOpacity = pickSharedStyleValue(targets, (style) => formatNumberString(style.opacity, 2));
+    const sharedDisplay = pickSharedStyleValue(targets, (style) => style.display || '');
+    const sharedVisibility = pickSharedStyleValue(targets, (style) => style.visibility || '');
+    const sharedPosition = pickSharedStyleValue(targets, (style) => style.position || '');
+    const sharedZIndex = pickSharedStyleValue(targets, (style) => style.zIndex || '');
+    const primary = selectedElement || targets[0];
+    const imageElement = primary?.querySelector?.('img') || (primary?.tagName === 'IMG' ? primary : null);
+    const primaryStyle = primary ? win.getComputedStyle(primary) : null;
+    const imageStyle = imageElement ? win.getComputedStyle(imageElement) : null;
+    const textState = getTextStyleState();
+    return {
+      common: {
+        transform: {
+          x: geometry?.relative?.x ?? '',
+          y: geometry?.relative?.y ?? '',
+          w: geometry?.relative?.w ?? '',
+          h: geometry?.relative?.h ?? '',
+          mixed: geometry?.relative?.mixed || {},
+        },
+        appearance: {
+          opacity: sharedOpacity.mixed ? '' : sharedOpacity.value,
+          display: sharedDisplay.mixed ? '' : sharedDisplay.value,
+          visibility: sharedVisibility.mixed ? '' : sharedVisibility.value,
+          mixed: {
+            opacity: sharedOpacity.mixed,
+            display: sharedDisplay.mixed,
+            visibility: sharedVisibility.mixed,
+          },
+        },
+        layout: {
+          position: sharedPosition.mixed ? '' : sharedPosition.value,
+          zIndex: sharedZIndex.mixed ? '' : sharedZIndex.value,
+          mixed: {
+            position: sharedPosition.mixed,
+            zIndex: sharedZIndex.mixed,
+          },
+        },
+      },
+      plugins: {
+        text: textState.enabled ? {
+          targetCount: textState.targetCount,
+          fontSize: textState.fontSize,
+          lineHeight: textState.lineHeight,
+          letterSpacing: textState.letterSpacing,
+          color: textState.color,
+          fontWeight: textState.fontWeight,
+          textAlign: textState.textAlign,
+        } : null,
+        image: typeSet.has('slot') ? {
+          fit: imageStyle?.objectFit || primaryStyle?.backgroundSize || '',
+          position: imageStyle?.objectPosition || primaryStyle?.backgroundPosition || '',
+        } : null,
+        vector: typeSet.has('box') ? {
+          borderRadius: primaryStyle?.borderRadius || '',
+          background: primaryStyle?.backgroundColor || '',
+          border: primaryStyle?.border || '',
+        } : null,
+      },
+    };
+  }
+
   function getDerivedMeta() {
     const selectedItems = selectedElements.map((element) => buildSelectionInfo(element)).filter(Boolean);
     const layerTree = buildLayerTree();
@@ -2363,6 +2450,7 @@ function createFrameEditor({
       preflight: buildPreflightReport(),
       canGroupSelection: canGroupSelection(),
       canUngroupSelection: canUngroupSelection(),
+      objectInspector: buildObjectInspectorProfile(),
     };
   }
 
@@ -4665,7 +4753,7 @@ function createFrameEditor({
 
   function handleKeydown(event) {
     if (imageCropRuntime) {
-      const step = event.shiftKey ? 10 : event.altKey ? 1 : 2;
+      const step = resolveNudgeStep(event);
       if (event.key === 'Escape') {
         event.preventDefault();
         onStatus(finishImageCropMode({ apply: false }).message);
@@ -4770,7 +4858,7 @@ function createFrameEditor({
     }
     if (!withModifier && !editingTextElement && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
       event.preventDefault();
-      const unit = event.altKey ? 1 : event.shiftKey ? 10 : 2;
+      const unit = resolveNudgeStep(event);
       const dx = event.key === 'ArrowLeft' ? -unit : event.key === 'ArrowRight' ? unit : 0;
       const dy = event.key === 'ArrowUp' ? -unit : event.key === 'ArrowDown' ? unit : 0;
       onStatus(executeCommand('nudge-selection', { dx, dy }).message);
@@ -4969,6 +5057,69 @@ function createFrameEditor({
 }
 
 
+/* ===== src/ui/object-inspector-schema.js ===== */
+
+const OBJECT_INSPECTOR_SCHEMA = Object.freeze({
+  sections: Object.freeze([
+    Object.freeze({
+      id: 'transform',
+      title: 'Transform',
+      fields: Object.freeze([
+        Object.freeze({ key: 'x', label: 'X' }),
+        Object.freeze({ key: 'y', label: 'Y' }),
+        Object.freeze({ key: 'w', label: 'W' }),
+        Object.freeze({ key: 'h', label: 'H' }),
+      ]),
+    }),
+    Object.freeze({
+      id: 'appearance',
+      title: 'Appearance',
+      fields: Object.freeze([
+        Object.freeze({ key: 'opacity', label: 'Opacity' }),
+        Object.freeze({ key: 'display', label: 'Display' }),
+        Object.freeze({ key: 'visibility', label: 'Visibility' }),
+      ]),
+    }),
+    Object.freeze({
+      id: 'layout',
+      title: 'Layout',
+      fields: Object.freeze([
+        Object.freeze({ key: 'position', label: 'Position' }),
+        Object.freeze({ key: 'zIndex', label: 'z-index' }),
+      ]),
+    }),
+  ]),
+  plugins: Object.freeze({
+    text: Object.freeze({
+      title: 'Text Plugin',
+      fields: Object.freeze([
+        Object.freeze({ key: 'fontSize', label: 'Font size' }),
+        Object.freeze({ key: 'lineHeight', label: 'Line height' }),
+        Object.freeze({ key: 'letterSpacing', label: 'Letter spacing' }),
+        Object.freeze({ key: 'fontWeight', label: 'Weight' }),
+        Object.freeze({ key: 'color', label: 'Color' }),
+        Object.freeze({ key: 'textAlign', label: 'Align' }),
+      ]),
+    }),
+    image: Object.freeze({
+      title: 'Image Plugin',
+      fields: Object.freeze([
+        Object.freeze({ key: 'fit', label: 'Fit' }),
+        Object.freeze({ key: 'position', label: 'Position' }),
+      ]),
+    }),
+    vector: Object.freeze({
+      title: 'Vector Plugin',
+      fields: Object.freeze([
+        Object.freeze({ key: 'borderRadius', label: 'Radius' }),
+        Object.freeze({ key: 'background', label: 'Background' }),
+        Object.freeze({ key: 'border', label: 'Border' }),
+      ]),
+    }),
+  }),
+});
+
+
 /* ===== src/ui/renderers.js ===== */
 
 const LEFT_TAB_STEP_GUIDES = Object.freeze({
@@ -5104,6 +5255,36 @@ function renderSelectionInspector(container, editorMeta, imageDiagnostic = null)
   }
   const selected = editorMeta.selected;
   const summary = editorMeta.slotSummary || { totalCount: 0, nearMissCount: 0 };
+  const objectInspector = editorMeta?.objectInspector || null;
+  const renderFieldRows = (source, fields, mixedMap = {}) => fields.map((field) => {
+    const mixed = !!mixedMap?.[field.key];
+    const raw = source?.[field.key];
+    const value = mixed ? '혼합' : (raw === '' || raw == null ? '-' : String(raw));
+    return `<div class="inspector-kv"><strong>${escapeHtml(field.label)}</strong><span>${escapeHtml(value)}</span></div>`;
+  }).join('');
+  const commonSectionsHtml = objectInspector
+    ? OBJECT_INSPECTOR_SCHEMA.sections.map((section) => {
+      const source = objectInspector.common?.[section.id] || {};
+      return `
+        <article class="inspector-card">
+          <h4>${escapeHtml(section.title)}</h4>
+          ${renderFieldRows(source, section.fields, source.mixed)}
+        </article>
+      `;
+    }).join('')
+    : '<div class="asset-empty">선택하면 공통 속성을 계산해 표시합니다.</div>';
+  const pluginSectionsHtml = objectInspector
+    ? Object.entries(OBJECT_INSPECTOR_SCHEMA.plugins).map(([pluginKey, schema]) => {
+      const source = objectInspector.plugins?.[pluginKey];
+      if (!source) return '';
+      return `
+        <article class="inspector-card">
+          <h4>${escapeHtml(schema.title)}</h4>
+          ${renderFieldRows(source, schema.fields)}
+        </article>
+      `;
+    }).join('') || '<div class="asset-empty">선택 타입 전용 플러그인이 없습니다.</div>'
+    : '';
   const selectedItemsHtml = editorMeta.selectedItems?.length
     ? `<div class="selected-pill-list">${editorMeta.selectedItems.slice(0, 8).map((item) => `<span class="selected-pill">${escapeHtml(truncate(item.label || item.uid || '-', 24))}</span>`).join('')}</div>`
     : '';
@@ -5178,6 +5359,14 @@ function renderSelectionInspector(container, editorMeta, imageDiagnostic = null)
         <li>hidden ${formatNumber(editorMeta.hiddenCount || 0)}개 · locked ${formatNumber(editorMeta.lockedCount || 0)}개</li>
         <li>selection mode ${escapeHtml(editorMeta.selectionMode || 'smart')}</li>
       </ul>
+    </article>
+    <article class="slot-card">
+      <h3>Object Inspector (Schema 기반)</h3>
+      ${commonSectionsHtml}
+    </article>
+    <article class="slot-card">
+      <h3>Type Plugins</h3>
+      ${pluginSectionsHtml}
     </article>
     ${diagnosticHtml}
   `;
@@ -5439,6 +5628,11 @@ const viewFeatureFlags = {
 };
 const OPEN_DOWNLOAD_MODAL_BUTTON_LABEL = '저장/출력 열기';
 const DEFAULT_JPG_QUALITY = 0.92;
+const NUDGE_STEP_RULE = Object.freeze({
+  base: 2,
+  shift: 10,
+  alt: 1,
+});
 const WORKFLOW_STEP_GUIDES = Object.freeze({
   load: 'HTML 파일이나 폴더를 먼저 불러오세요.',
   edit: '요소를 클릭한 뒤 드래그하세요.',
@@ -7452,6 +7646,26 @@ function applyNumberStep(input, direction) {
   input.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
+function resolveNudgeStepFromEvent(event) {
+  if (event?.shiftKey) return NUDGE_STEP_RULE.shift;
+  if (event?.altKey) return NUDGE_STEP_RULE.alt;
+  return NUDGE_STEP_RULE.base;
+}
+
+function applyKeyboardNudgeToNumberInput(event, input) {
+  if (!input || input.disabled) return false;
+  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return false;
+  const direction = event.key === 'ArrowUp' ? 1 : -1;
+  const step = resolveNudgeStepFromEvent(event);
+  const current = Number.parseFloat(input.value);
+  const base = Number.isFinite(current) ? current : 0;
+  input.value = String(base + (direction * step));
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  event.preventDefault();
+  return true;
+}
+
 function attachNumberStepper(input) {
   if (!input || input.dataset.stepperReady === '1') return;
   const wrapper = document.createElement('div');
@@ -8152,6 +8366,10 @@ for (const [canvasInput, sourceInput] of [
     const result = applyGeometryFromInputs();
     if (result.ok) setStatus(result.message);
   });
+  canvasInput?.addEventListener('keydown', (event) => {
+    if (!applyKeyboardNudgeToNumberInput(event, canvasInput)) return;
+    if (sourceInput) sourceInput.value = canvasInput.value;
+  });
 }
 
 elements.openHtmlButton?.addEventListener('click', () => elements.htmlFileInput?.click());
@@ -8242,6 +8460,9 @@ for (const input of [elements.geometryXInput, elements.geometryYInput, elements.
     const result = applyGeometryFromInputs();
     if (result.ok) setStatus(result.message);
   });
+  input?.addEventListener('keydown', (event) => {
+    applyKeyboardNudgeToNumberInput(event, input);
+  });
 }
 elements.bringForwardButton?.addEventListener('click', () => {
   executeEditorCommand('layer-index-forward');
@@ -8255,10 +8476,10 @@ elements.bringToFrontButton?.addEventListener('click', () => {
 elements.sendToBackButton?.addEventListener('click', () => {
   executeEditorCommand('layer-index-back');
 });
-elements.imageNudgeLeftButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: -2, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
-elements.imageNudgeRightButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 2, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
-elements.imageNudgeUpButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: -2 })?.message || '먼저 미리보기를 로드해 주세요.'));
-elements.imageNudgeDownButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: 2 })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeLeftButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: -NUDGE_STEP_RULE.base, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeRightButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: NUDGE_STEP_RULE.base, dy: 0 })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeUpButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: -NUDGE_STEP_RULE.base })?.message || '먼저 미리보기를 로드해 주세요.'));
+elements.imageNudgeDownButton?.addEventListener('click', () => setStatus(activeEditor?.nudgeSelectedImage({ dx: 0, dy: NUDGE_STEP_RULE.base })?.message || '먼저 미리보기를 로드해 주세요.'));
 elements.preflightRefreshButton?.addEventListener('click', () => {
   if (!activeEditor) return setStatus('먼저 미리보기를 로드해 주세요.');
   activeEditor.refreshDerivedMeta();
