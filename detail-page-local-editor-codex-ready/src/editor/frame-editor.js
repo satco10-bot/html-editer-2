@@ -19,6 +19,11 @@ import { restoreSerializedAssetRefs } from '../core/serialize-layer.js';
 
 const FRAME_CSS_URL_RE = /url\((['"]?)([^"'()]+)\1\)/gi;
 const UNSUPPORTED_COMMAND_MESSAGE_PREFIX = '지원하지 않는 명령입니다:';
+const FRAME_NUDGE_STEP_RULE = Object.freeze({
+  base: 2,
+  shift: 10,
+  alt: 1,
+});
 const ADD_ELEMENT_PRESETS = {
   text: {
     tagName: 'p',
@@ -124,7 +129,8 @@ function shallowDescendantMedia(element) {
     const { node, depth } = queue.shift();
     if (depth > 2) continue;
     for (const child of Array.from(node.children || [])) {
-      if (child.tagName === 'IMG' || child.tagName === 'PICTURE') return { kind: 'img', element: child.tagName === 'IMG' ? child : child.querySelector('img') };
+      if (child.tagName === 'IMG') return { kind: 'img', element: child };
+      if (child.tagName === 'PICTURE') return { kind: 'picture', element: child };
       const style = (child.getAttribute('style') || '').toLowerCase();
       if (style.includes('background-image')) return { kind: 'background', element: child };
       queue.push({ node: child, depth: depth + 1 });
@@ -136,6 +142,12 @@ function shallowDescendantMedia(element) {
 function hasBackgroundImage(element) {
   const style = (element.getAttribute('style') || '').toLowerCase();
   return style.includes('background-image') || style.includes('background:url(') || style.includes('background: url(');
+}
+
+function resolveNudgeStep(event) {
+  if (event?.shiftKey) return FRAME_NUDGE_STEP_RULE.shift;
+  if (event?.altKey) return FRAME_NUDGE_STEP_RULE.alt;
+  return FRAME_NUDGE_STEP_RULE.base;
 }
 
 function isSimpleSlotContainer(element) {
@@ -352,6 +364,7 @@ export function createFrameEditor({
   const modifiedSlots = new Set();
   const editorModel = createEditorModel(doc);
   let lastCommittedSnapshot = initialSnapshot?.html ? { ...initialSnapshot } : null;
+  let lastInputTs = 0;
 
   function uniqueConnectedElements(items) {
     const seen = new Set();
@@ -779,6 +792,82 @@ export function createFrameEditor({
     };
   }
 
+  function pickSharedStyleValue(elements, getter) {
+    if (!elements.length) return { mixed: false, value: '' };
+    const first = getter(win.getComputedStyle(elements[0]));
+    const same = elements.every((element) => getter(win.getComputedStyle(element)) === first);
+    return {
+      mixed: !same,
+      value: same ? first : '',
+    };
+  }
+
+  function buildObjectInspectorProfile() {
+    const targets = uniqueConnectedElements(selectedElements).filter(Boolean);
+    if (!targets.length) return null;
+    const geometry = summarizeGeometryForSelection(targets);
+    const typeSet = new Set(targets.map((element) => selectionTypeOf(element)));
+    const sharedOpacity = pickSharedStyleValue(targets, (style) => formatNumberString(style.opacity, 2));
+    const sharedDisplay = pickSharedStyleValue(targets, (style) => style.display || '');
+    const sharedVisibility = pickSharedStyleValue(targets, (style) => style.visibility || '');
+    const sharedPosition = pickSharedStyleValue(targets, (style) => style.position || '');
+    const sharedZIndex = pickSharedStyleValue(targets, (style) => style.zIndex || '');
+    const primary = selectedElement || targets[0];
+    const imageElement = primary?.querySelector?.('img') || (primary?.tagName === 'IMG' ? primary : null);
+    const primaryStyle = primary ? win.getComputedStyle(primary) : null;
+    const imageStyle = imageElement ? win.getComputedStyle(imageElement) : null;
+    const textState = getTextStyleState();
+    return {
+      common: {
+        transform: {
+          x: geometry?.relative?.x ?? '',
+          y: geometry?.relative?.y ?? '',
+          w: geometry?.relative?.w ?? '',
+          h: geometry?.relative?.h ?? '',
+          mixed: geometry?.relative?.mixed || {},
+        },
+        appearance: {
+          opacity: sharedOpacity.mixed ? '' : sharedOpacity.value,
+          display: sharedDisplay.mixed ? '' : sharedDisplay.value,
+          visibility: sharedVisibility.mixed ? '' : sharedVisibility.value,
+          mixed: {
+            opacity: sharedOpacity.mixed,
+            display: sharedDisplay.mixed,
+            visibility: sharedVisibility.mixed,
+          },
+        },
+        layout: {
+          position: sharedPosition.mixed ? '' : sharedPosition.value,
+          zIndex: sharedZIndex.mixed ? '' : sharedZIndex.value,
+          mixed: {
+            position: sharedPosition.mixed,
+            zIndex: sharedZIndex.mixed,
+          },
+        },
+      },
+      plugins: {
+        text: textState.enabled ? {
+          targetCount: textState.targetCount,
+          fontSize: textState.fontSize,
+          lineHeight: textState.lineHeight,
+          letterSpacing: textState.letterSpacing,
+          color: textState.color,
+          fontWeight: textState.fontWeight,
+          textAlign: textState.textAlign,
+        } : null,
+        image: typeSet.has('slot') ? {
+          fit: imageStyle?.objectFit || primaryStyle?.backgroundSize || '',
+          position: imageStyle?.objectPosition || primaryStyle?.backgroundPosition || '',
+        } : null,
+        vector: typeSet.has('box') ? {
+          borderRadius: primaryStyle?.borderRadius || '',
+          background: primaryStyle?.backgroundColor || '',
+          border: primaryStyle?.border || '',
+        } : null,
+      },
+    };
+  }
+
   function getDerivedMeta() {
     const selectedItems = selectedElements.map((element) => buildSelectionInfo(element)).filter(Boolean);
     const layerTree = buildLayerTree();
@@ -810,6 +899,7 @@ export function createFrameEditor({
       preflight: buildPreflightReport(),
       canGroupSelection: canGroupSelection(),
       canUngroupSelection: canUngroupSelection(),
+      objectInspector: buildObjectInspectorProfile(),
     };
   }
 
@@ -826,7 +916,42 @@ export function createFrameEditor({
     const before = lastCommittedSnapshot || captureSnapshot('before-command');
     const after = captureSnapshot(label);
     lastCommittedSnapshot = after;
-    onMutation({ type: 'command', id: nextId('cmd'), label, before, after, modelVersion: editorModel.version, at: new Date().toISOString() });
+    const nowPerf = win.performance?.now?.() || Date.now();
+    const inputLatencyMs = lastInputTs > 0 ? Math.max(0, nowPerf - lastInputTs) : null;
+    onMutation({
+      type: 'command',
+      id: nextId('cmd'),
+      label,
+      before,
+      after,
+      modelVersion: editorModel.version,
+      at: new Date().toISOString(),
+      inputLatencyMs: Number.isFinite(inputLatencyMs) ? Number(inputLatencyMs.toFixed(2)) : null,
+      dirtyRect: collectSelectionDirtyRect(),
+    });
+  }
+
+  function collectSelectionDirtyRect() {
+    if (!selectedElements.length) return null;
+    const records = selectedElements
+      .filter((element) => element?.isConnected)
+      .map((element) => element.getBoundingClientRect())
+      .filter((rect) => rect.width > 0 && rect.height > 0);
+    if (!records.length) return null;
+    const left = Math.min(...records.map((rect) => rect.left));
+    const top = Math.min(...records.map((rect) => rect.top));
+    const right = Math.max(...records.map((rect) => rect.right));
+    const bottom = Math.max(...records.map((rect) => rect.bottom));
+    return {
+      x: Math.max(0, Math.round(left)),
+      y: Math.max(0, Math.round(top)),
+      width: Math.max(1, Math.round(right - left)),
+      height: Math.max(1, Math.round(bottom - top)),
+    };
+  }
+
+  function markInputTimestamp() {
+    lastInputTs = win.performance?.now?.() || Date.now();
   }
 
   function unsupportedCommandResult(command) {
@@ -1085,7 +1210,7 @@ export function createFrameEditor({
 
   function findSlotMediaTarget(slot) {
     const shallow = shallowDescendantMedia(slot);
-    if (shallow?.kind === 'img' && shallow.element) return shallow;
+    if ((shallow?.kind === 'img' || shallow?.kind === 'picture') && shallow.element) return shallow;
     if (slot.dataset.slotMode === 'background') return { kind: 'background', element: slot };
     if (hasBackgroundImage(slot) && !isSimpleSlotContainer(slot)) return { kind: 'background', element: slot };
     if (shallow?.kind === 'background' && shallow.element && !isSimpleSlotContainer(slot)) return shallow;
@@ -1095,6 +1220,17 @@ export function createFrameEditor({
   function clearSimplePlaceholder(slot) {
     if (!isSimpleSlotContainer(slot)) return;
     slot.innerHTML = '';
+  }
+
+  function applyDataUrlToSourceSrcset(source, dataUrl) {
+    if (!source) return;
+    const candidates = parseSrcsetCandidates(source.getAttribute('srcset') || '');
+    const rewritten = candidates.length
+      ? candidates.map((candidate) => ({ ...candidate, url: dataUrl }))
+      : [{ url: dataUrl, descriptor: '' }];
+    const nextSrcset = serializeSrcsetCandidates(rewritten);
+    source.setAttribute('srcset', nextSrcset);
+    source.dataset.exportSrcset = nextSrcset;
   }
 
   async function applyFileToSlot(slot, file, { emit = true } = {}) {
@@ -1116,19 +1252,25 @@ export function createFrameEditor({
       styleTarget.dataset.exportStyle = nextStyle;
       slot.dataset.editorModified = '1';
     } else {
-      let img = target.element;
+      let img = target.kind === 'picture'
+        ? target.element?.querySelector('img')
+        : target.element;
       if (!img || !img.isConnected || img === slot) {
         clearSimplePlaceholder(slot);
         img = doc.createElement('img');
         img.className = '__phase5_runtime_image';
-        slot.appendChild(img);
+        if (target.kind === 'picture' && target.element?.isConnected) target.element.appendChild(img);
+        else slot.appendChild(img);
       }
       img.classList.add('__phase5_runtime_image');
       img.setAttribute('src', dataUrl);
       img.dataset.exportSrc = dataUrl;
       img.dataset.editorImageModified = '1';
-      img.removeAttribute('srcset');
-      img.removeAttribute('sizes');
+      if (target.kind === 'picture') {
+        for (const source of Array.from(target.element.querySelectorAll('source[srcset]'))) {
+          applyDataUrlToSourceSrcset(source, dataUrl);
+        }
+      }
       setInlineStyle(img, {
         width: '100%',
         height: '100%',
@@ -1375,12 +1517,15 @@ export function createFrameEditor({
     if (editingTextElement) finishTextEdit({ commit: true, emit: false });
     if (imageCropRuntime?.slot === slot) return { ok: true, message: '이미 이미지 크롭 편집 중입니다. Enter=적용, Esc=취소.' };
     if (imageCropRuntime) finishImageCropMode({ apply: true, emit: false });
+    const initialZoom = Number.parseFloat(slot.dataset.editorCropZoom || '1');
+    const initialOffsetX = Number.parseFloat(slot.dataset.editorCropOffsetX || '0');
+    const initialOffsetY = Number.parseFloat(slot.dataset.editorCropOffsetY || '0');
     imageCropRuntime = {
       slot,
       img,
-      zoom: 1,
-      offsetX: 0,
-      offsetY: 0,
+      zoom: Number.isFinite(initialZoom) ? initialZoom : 1,
+      offsetX: Number.isFinite(initialOffsetX) ? initialOffsetX : 0,
+      offsetY: Number.isFinite(initialOffsetY) ? initialOffsetY : 0,
       initialStyle: img.getAttribute('style') || '',
       initialExportStyle: img.dataset.exportStyle || '',
     };
@@ -1408,11 +1553,49 @@ export function createFrameEditor({
   function parseTranslateFromTransform(transformText) {
     const value = String(transformText || '').trim();
     if (!value || value === 'none') return { base: '', tx: 0, ty: 0 };
-    const match = value.match(/translate\(\s*([-+]?\d*\.?\d+)px\s*,\s*([-+]?\d*\.?\d+)px\s*\)\s*$/i);
-    if (!match) return { base: value, tx: 0, ty: 0 };
-    const tx = Number.parseFloat(match[1]) || 0;
-    const ty = Number.parseFloat(match[2]) || 0;
-    const base = value.slice(0, match.index).trim();
+    const translateRe = /(translate(?:3d|x|y)?\(([^)]+)\))/ig;
+    let tx = 0;
+    let ty = 0;
+    let consumed = false;
+    const base = value.replace(translateRe, (full, _fnName, rawArgs) => {
+      const args = String(rawArgs || '').split(',').map((item) => item.trim());
+      const parsePx = (token) => {
+        const match = String(token || '').match(/^([-+]?\d*\.?\d+)(px)?$/i);
+        if (!match) return null;
+        return Number.parseFloat(match[1]);
+      };
+      if (/^translatex\(/i.test(full)) {
+        const px = parsePx(args[0]);
+        if (px == null) return full;
+        tx += px;
+        consumed = true;
+        return '';
+      }
+      if (/^translatey\(/i.test(full)) {
+        const py = parsePx(args[0]);
+        if (py == null) return full;
+        ty += py;
+        consumed = true;
+        return '';
+      }
+      if (/^translate3d\(/i.test(full)) {
+        const px = parsePx(args[0]);
+        const py = parsePx(args[1]);
+        if (px == null || py == null) return full;
+        tx += px;
+        ty += py;
+        consumed = true;
+        return '';
+      }
+      const px = parsePx(args[0]);
+      const py = parsePx(args[1] ?? '0');
+      if (px == null || py == null) return full;
+      tx += px;
+      ty += py;
+      consumed = true;
+      return '';
+    }).replace(/\s{2,}/g, ' ').trim();
+    if (!consumed) return { base: value, tx: 0, ty: 0 };
     return { base, tx, ty };
   }
 
@@ -1519,15 +1702,6 @@ export function createFrameEditor({
     emitState();
     emitMutation('geometry-patch');
     return { ok: true, message: `선택 요소 ${changed}개에 XYWH를 적용했습니다.` };
-  }
-
-  function nudgeSelectedElements(dx = 0, dy = 0) {
-    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
-    if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
-    for (const element of targets) shiftElementBy(element, dx, dy);
-    emitState();
-    emitMutation('nudge');
-    return { ok: true, message: `선택 요소 ${targets.length}개를 (${dx}, ${dy})만큼 이동했습니다.` };
   }
 
   function duplicateSelected() {
@@ -2216,18 +2390,47 @@ export function createFrameEditor({
   function collectLinkedPathWarnings(exportDoc) {
     const warnings = [];
     const unresolvedTokenRe = /%EB%AF%B8%ED%95%B4%EA%B2%B0|미해결/i;
+    const seen = new Set();
+    const pushWarning = ({ ref = '', uid = '', code = 'BROKEN_LINKED_PATH' } = {}) => {
+      const kind = classifyAssetPath(ref);
+      if (!['relative', 'uploaded'].includes(kind)) return;
+      const key = `${code}::${uid}::${ref}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      warnings.push({ code, kind, uid, ref });
+    };
+
     for (const img of Array.from(exportDoc.querySelectorAll('img'))) {
       const src = img.getAttribute('src') || '';
-      const kind = classifyAssetPath(src);
-      if (!['relative', 'uploaded'].includes(kind)) continue;
       const unresolved = img.dataset.normalizedUnresolvedImage === '1' || unresolvedTokenRe.test(src);
-      if (!unresolved) continue;
-      warnings.push({
-        code: 'BROKEN_LINKED_PATH',
-        kind,
-        uid: img.dataset.nodeUid || '',
-        ref: src,
-      });
+      if (unresolved) pushWarning({ ref: src, uid: img.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_IMG' });
+    }
+
+    for (const source of Array.from(exportDoc.querySelectorAll('source[srcset]'))) {
+      for (const item of parseSrcsetCandidates(source.getAttribute('srcset') || '')) {
+        if (!unresolvedTokenRe.test(item.url || '')) continue;
+        pushWarning({ ref: item.url, uid: source.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_SOURCE' });
+      }
+    }
+
+    for (const element of Array.from(exportDoc.querySelectorAll('[style]'))) {
+      const styleValue = element.getAttribute('style') || '';
+      if (!styleValue.includes('url(')) continue;
+      for (const match of Array.from(styleValue.matchAll(FRAME_CSS_URL_RE))) {
+        const ref = String(match[2] || '');
+        if (!unresolvedTokenRe.test(ref)) continue;
+        pushWarning({ ref, uid: element.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_STYLE' });
+      }
+    }
+
+    for (const styleBlock of Array.from(exportDoc.querySelectorAll('style'))) {
+      const css = styleBlock.textContent || '';
+      if (!css.includes('url(')) continue;
+      for (const match of Array.from(css.matchAll(FRAME_CSS_URL_RE))) {
+        const ref = String(match[2] || '');
+        if (!unresolvedTokenRe.test(ref)) continue;
+        pushWarning({ ref, uid: styleBlock.dataset.nodeUid || '', code: 'BROKEN_LINKED_PATH_STYLE_BLOCK' });
+      }
     }
     return warnings;
   }
@@ -2999,7 +3202,7 @@ export function createFrameEditor({
 
   function handleKeydown(event) {
     if (imageCropRuntime) {
-      const step = event.shiftKey ? 10 : event.altKey ? 1 : 2;
+      const step = resolveNudgeStep(event);
       if (event.key === 'Escape') {
         event.preventDefault();
         onStatus(finishImageCropMode({ apply: false }).message);
@@ -3104,7 +3307,7 @@ export function createFrameEditor({
     }
     if (!withModifier && !editingTextElement && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
       event.preventDefault();
-      const unit = event.altKey ? 1 : event.shiftKey ? 10 : 2;
+      const unit = resolveNudgeStep(event);
       const dx = event.key === 'ArrowLeft' ? -unit : event.key === 'ArrowRight' ? unit : 0;
       const dy = event.key === 'ArrowUp' ? -unit : event.key === 'ArrowDown' ? unit : 0;
       onStatus(executeCommand('nudge-selection', { dx, dy }).message);
@@ -3157,7 +3360,10 @@ export function createFrameEditor({
   doc.addEventListener('click', handleDocClick, true);
   doc.addEventListener('dblclick', handleDocDoubleClick, true);
   doc.addEventListener('keydown', handleKeydown, true);
+  doc.addEventListener('beforeinput', markInputTimestamp, true);
+  doc.addEventListener('input', markInputTimestamp, true);
   doc.addEventListener('pointerdown', handlePointerDown, true);
+  doc.addEventListener('pointerdown', markInputTimestamp, true);
   doc.addEventListener('pointermove', handlePointerMove, true);
   doc.addEventListener('pointerup', finishPointerDrag, true);
   doc.addEventListener('pointercancel', finishPointerDrag, true);
@@ -3281,7 +3487,10 @@ export function createFrameEditor({
       doc.removeEventListener('click', handleDocClick, true);
       doc.removeEventListener('dblclick', handleDocDoubleClick, true);
       doc.removeEventListener('keydown', handleKeydown, true);
+      doc.removeEventListener('beforeinput', markInputTimestamp, true);
+      doc.removeEventListener('input', markInputTimestamp, true);
       doc.removeEventListener('pointerdown', handlePointerDown, true);
+      doc.removeEventListener('pointerdown', markInputTimestamp, true);
       doc.removeEventListener('pointermove', handlePointerMove, true);
       doc.removeEventListener('pointerup', finishPointerDrag, true);
       doc.removeEventListener('pointercancel', finishPointerDrag, true);

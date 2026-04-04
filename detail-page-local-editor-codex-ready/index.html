@@ -138,25 +138,37 @@
 
   <div id="appShell" class="app-shell" hidden>
     <header class="topbar">
-      <div class="topbar__left">
-        <div class="topbar__brand">
-          <div class="brand__eyebrow">LOCAL DETAIL PAGE EDITOR · UX REBOOT</div>
-          <h1>상세페이지 로컬 웹앱</h1>
-          <div class="topbar__sub">버튼 나열형 인터페이스를 줄이고, 캔버스·코드·속성 패널 중심으로 다시 묶은 리부트 셸입니다.</div>
+      <div class="topbar-core" role="toolbar" aria-label="핵심 작업">
+        <div class="project-name-inline">
+          <button id="projectNameDisplay" class="project-name-inline__display" type="button" aria-label="프로젝트 이름 편집">
+            프로젝트 이름
+          </button>
+          <input id="projectNameInput" class="project-name-inline__input" type="text" maxlength="80" hidden aria-label="프로젝트 이름 입력" />
         </div>
+        <div class="topbar-core__group">
+          <button id="undoButton" class="button button--ghost" type="button">되돌리기</button>
+          <button id="redoButton" class="button button--ghost" type="button">다시하기</button>
+        </div>
+        <div id="topbarSaveStatusBadge" class="topbar-save-badge" data-status="idle" aria-live="polite">문서 없음</div>
+        <button id="shareProjectButton" class="button button--secondary" type="button">공유</button>
+        <button id="openDownloadModalButton" class="button topbar-export-primary" type="button">내보내기</button>
       </div>
 
-      <div class="topbar__center">
-        <label class="workflow-guide-picker" for="workflowGuideSelect">
-          <span>진행 안내</span>
-          <select id="workflowGuideSelect">
-            <option value="load">1) 불러오기</option>
-            <option value="edit">2) 편집</option>
-            <option value="save">3) 저장/출력</option>
-          </select>
-        </label>
-        <p id="workflowGuideLine" class="workflow-guide">HTML 파일이나 폴더를 먼저 불러오세요.</p>
-      </div>
+      <details class="topbar-view-menu">
+        <summary>View · 고급 기능</summary>
+        <div class="topbar-view-menu__items">
+          <label class="workflow-guide-picker" for="workflowGuideSelect">
+            <span>진행 안내</span>
+            <select id="workflowGuideSelect">
+              <option value="load">1) 불러오기</option>
+              <option value="edit">2) 편집</option>
+              <option value="save">3) 저장/출력</option>
+            </select>
+          </label>
+          <p id="workflowGuideLine" class="workflow-guide">HTML 파일이나 폴더를 먼저 불러오세요.</p>
+
+          <button id="beginnerModeToggle" class="button button--secondary" type="button" aria-pressed="false">초보 모드: OFF</button>
+          <button id="onboardingReplayButton" class="button button--ghost" type="button">온보딩 다시보기</button>
 
       <div class="topbar__right">
         <button id="beginnerModeToggle" class="button button--secondary" type="button" aria-pressed="false">초보 모드: OFF</button>
@@ -408,13 +420,6 @@
             <button class="segmented__item" data-action="remove-image">이미지 복구/제거</button>
           </div>
           <div class="canvas-controls button-row">
-            <button id="zoomOutButton" class="button button--ghost button--small">-</button>
-            <div id="zoomLabel" class="mini-control mini-control--value">100%</div>
-            <button id="zoomInButton" class="button button--ghost button--small">+</button>
-            <button id="zoomResetButton" class="button button--ghost button--small">100%</button>
-            <button id="zoomFitButton" class="button button--ghost button--small">폭 맞춤</button>
-          </div>
-          <div class="canvas-controls button-row">
             <button id="viewSnapToggleButton" class="button button--ghost button--small">스냅</button>
             <button id="viewGuideToggleButton" class="button button--ghost button--small">가이드</button>
             <button id="viewRulerToggleButton" class="button button--ghost button--small">눈금자</button>
@@ -477,6 +482,14 @@
           </div>
         </div>
       </section>
+
+      <div class="bottom-zoom-bar" role="toolbar" aria-label="캔버스 확대/축소">
+        <button id="zoomOutButton" class="button button--ghost button--small" type="button" aria-label="축소">-</button>
+        <div id="zoomLabel" class="mini-control mini-control--value" aria-live="polite">100%</div>
+        <button id="zoomInButton" class="button button--ghost button--small" type="button" aria-label="확대">+</button>
+        <button id="zoomResetButton" class="button button--ghost button--small" type="button">100%</button>
+        <button id="zoomFitButton" class="button button--ghost button--small" type="button">화면 맞춤</button>
+      </div>
     </main>
 
     <aside id="rightSidebar" class="sidebar sidebar--right">
@@ -617,6 +630,13 @@
         </details>
         <div class="panel-divider"></div>
         <div class="style-form">
+          <label class="field">
+            <span>배치 프리셋</span>
+            <select id="arrangePresetSelect"></select>
+          </label>
+          <div class="button-row">
+            <button id="applyArrangePresetButton" class="button button--secondary button--small" type="button">프리셋 적용</button>
+          </div>
           <label class="field">
             <span>스택 방향</span>
             <select id="stackDirectionSelect">
@@ -816,12 +836,16 @@
         <span>명령 검색</span>
         <input id="commandPaletteInput" type="search" placeholder="예: 복제, 삭제, PNG, 섹션 추가" autocomplete="off" />
       </label>
+      <p id="commandPaletteRecentHint" class="hint" hidden>최근 실행한 명령이 위쪽에 먼저 표시됩니다.</p>
       <ul id="commandPaletteList" class="command-palette__list" role="listbox" aria-label="명령 결과"></ul>
       <div class="button-row">
         <button id="commandPaletteRunButton" class="button button--secondary button--small" type="button">선택 명령 실행</button>
+        <button id="commandPaletteShortcutExportButton" class="button button--ghost button--small" type="button">단축키 JSON 내보내기</button>
+        <button id="commandPaletteShortcutImportButton" class="button button--ghost button--small" type="button">단축키 JSON 불러오기</button>
       </div>
     </section>
   </div>
+  <input id="shortcutMapImportInput" type="file" accept="application/json,.json" hidden />
   <div id="beginnerTutorialTooltip" class="beginner-tutorial" role="dialog" aria-live="polite" hidden>
     <strong id="beginnerTutorialTitle">초보 모드 안내</strong>
     <p id="beginnerTutorialBody"></p>

@@ -75,8 +75,10 @@ export function createAssetResolver(fileIndex, htmlEntryRelativePath = '') {
   const blobUrlCache = new Map();
   const htmlDirPath = normalizeRelativePath(htmlEntryRelativePath.split('/').slice(0, -1).join('/'));
 
-  function getBlobUrl(file) {
-    const cacheKey = `${file.name}__${file.size}__${file.lastModified}`;
+  function getBlobUrl(entry) {
+    const file = entry?.file;
+    if (!file) return '';
+    const cacheKey = `${entry.relativePath || file.webkitRelativePath || file.name}__${file.name}__${file.size}__${file.lastModified}`;
     if (!blobUrlCache.has(cacheKey)) blobUrlCache.set(cacheKey, URL.createObjectURL(file));
     return blobUrlCache.get(cacheKey);
   }
@@ -101,7 +103,7 @@ export function createAssetResolver(fileIndex, htmlEntryRelativePath = '') {
       if (hit) {
         return {
           status: 'resolved',
-          previewUrl: getBlobUrl(hit.file),
+          previewUrl: getBlobUrl(hit),
           scheme: refInfo.scheme,
           matchedPath: candidate,
           method: 'relative-path',
@@ -112,11 +114,22 @@ export function createAssetResolver(fileIndex, htmlEntryRelativePath = '') {
 
     const name = basename(stripQueryHash(originalRef)).toLowerCase();
     if (name && fileIndex?.byBasename?.has(name)) {
-      const [first] = fileIndex.byBasename.get(name);
+      const candidates = fileIndex.byBasename.get(name);
+      if (candidates.length > 1) {
+        return {
+          status: 'unresolved',
+          previewUrl: '',
+          scheme: refInfo.scheme,
+          matchedPath: '',
+          method: 'basename-ambiguous',
+          likelyImage: true,
+        };
+      }
+      const [first] = candidates;
       if (first?.file) {
         return {
           status: 'resolved',
-          previewUrl: getBlobUrl(first.file),
+          previewUrl: getBlobUrl(first),
           scheme: refInfo.scheme,
           matchedPath: first.relativePath,
           method: 'basename-fallback',
