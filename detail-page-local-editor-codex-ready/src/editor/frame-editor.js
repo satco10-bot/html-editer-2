@@ -1,4 +1,4 @@
-import { BOX_CLASS_RE, EXPLICIT_SLOT_SELECTOR, FRAME_STYLE_ID, PLACEHOLDER_TEXT_RE, TEXTISH_TAGS, TEXT_CLASS_RE } from '../config.js';
+import { BOX_CLASS_RE, EXPLICIT_SLOT_SELECTOR, FRAME_STYLE_ID, NUDGE_STEP_RULE, PLACEHOLDER_TEXT_RE, TEXTISH_TAGS, TEXT_CLASS_RE, resolveNudgeStepByModifier } from '../config.js';
 import {
   canvasToBlob,
   createDoctypeHtml,
@@ -22,6 +22,8 @@ const UNSUPPORTED_COMMAND_MESSAGE_PREFIX = '지원하지 않는 명령입니다:
 const TYPOGRAPHY_STYLE_TAG_ID = 'editor-typography-definitions';
 const VARIABLE_FONT_AXES = ['wght', 'wdth', 'opsz', 'slnt'];
 const OPEN_TYPE_FEATURE_KEYS = ['liga', 'kern', 'ss01', 'ss02', 'onum'];
+const FRAME_NUDGE_STEP_RULE = NUDGE_STEP_RULE;
+
 const ADD_ELEMENT_PRESETS = {
   text: {
     tagName: 'p',
@@ -143,9 +145,7 @@ function hasBackgroundImage(element) {
 }
 
 function resolveNudgeStep(event) {
-  if (event?.shiftKey) return FRAME_NUDGE_STEP_RULE.shift;
-  if (event?.altKey) return FRAME_NUDGE_STEP_RULE.alt;
-  return FRAME_NUDGE_STEP_RULE.base;
+  return resolveNudgeStepByModifier(event, FRAME_NUDGE_STEP_RULE);
 }
 
 function isSimpleSlotContainer(element) {

@@ -3,9 +3,11 @@ import {
   AUTOSAVE_KEY,
   EXPORT_PRESETS,
   HISTORY_LIMIT,
+  NUDGE_STEP_RULE,
   PROJECT_SNAPSHOT_KEY,
   PROJECT_SNAPSHOT_LIMIT,
   getExportPresetById,
+  resolveNudgeStepByModifier,
 } from './config.js';
 import { createImportFileIndex, choosePrimaryHtmlEntry } from './core/asset-resolver.js';
 import { normalizeProject } from './core/normalize-project.js';
@@ -61,11 +63,6 @@ const viewFeatureFlags = {
 };
 const OPEN_DOWNLOAD_MODAL_BUTTON_LABEL = '저장/출력 열기';
 const DEFAULT_JPG_QUALITY = 0.92;
-const NUDGE_STEP_RULE = Object.freeze({
-  base: 2,
-  shift: 10,
-  alt: 1,
-});
 const WORKFLOW_STEP_GUIDES = Object.freeze({
   load: 'HTML 파일이나 폴더를 먼저 불러오세요.',
   edit: '요소를 클릭한 뒤 드래그하세요.',
@@ -2169,7 +2166,7 @@ function syncGeometryControls() {
     ? '절대 좌표: 문서의 왼쪽/위(0,0) 기준'
     : '상대 좌표: 각 요소의 transform 이동값 기준';
   if (elements.geometryRuleHint) {
-    elements.geometryRuleHint.textContent = `${modeText} · Shift=10px, Alt=1px, 기본=2px`;
+    elements.geometryRuleHint.textContent = `${modeText} · Shift=큰 이동(${NUDGE_STEP_RULE.shift}px), Alt=미세 이동(${NUDGE_STEP_RULE.alt}px), 기본=${NUDGE_STEP_RULE.base}px`;
   }
 }
 
@@ -2194,10 +2191,10 @@ function executeCanvasContextAction(action) {
   if (action === 'image-crop-enter') return executeEditorCommand('image-crop-enter');
   if (action === 'image-cover') return activeEditor.applyImagePreset('cover');
   if (action === 'image-contain') return activeEditor.applyImagePreset('contain');
-  if (action === 'image-nudge-left') return activeEditor.nudgeSelectedImage({ dx: -2, dy: 0 });
-  if (action === 'image-nudge-right') return activeEditor.nudgeSelectedImage({ dx: 2, dy: 0 });
-  if (action === 'image-nudge-up') return activeEditor.nudgeSelectedImage({ dx: 0, dy: -2 });
-  if (action === 'image-nudge-down') return activeEditor.nudgeSelectedImage({ dx: 0, dy: 2 });
+  if (action === 'image-nudge-left') return activeEditor.nudgeSelectedImage({ dx: -NUDGE_STEP_RULE.base, dy: 0 });
+  if (action === 'image-nudge-right') return activeEditor.nudgeSelectedImage({ dx: NUDGE_STEP_RULE.base, dy: 0 });
+  if (action === 'image-nudge-up') return activeEditor.nudgeSelectedImage({ dx: 0, dy: -NUDGE_STEP_RULE.base });
+  if (action === 'image-nudge-down') return activeEditor.nudgeSelectedImage({ dx: 0, dy: NUDGE_STEP_RULE.base });
   if ([
     'same-width',
     'same-height',
@@ -2409,9 +2406,7 @@ function applyNumberStep(input, direction) {
 }
 
 function resolveNudgeStepFromEvent(event) {
-  if (event?.shiftKey) return NUDGE_STEP_RULE.shift;
-  if (event?.altKey) return NUDGE_STEP_RULE.alt;
-  return NUDGE_STEP_RULE.base;
+  return resolveNudgeStepByModifier(event, NUDGE_STEP_RULE);
 }
 
 function applyKeyboardNudgeToNumberInput(event, input) {
