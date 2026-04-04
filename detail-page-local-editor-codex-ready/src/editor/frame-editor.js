@@ -2059,10 +2059,72 @@ export function createFrameEditor({
     return { ok: true, message: clear ? `텍스트 ${targets.length}개의 인라인 스타일을 비웠습니다.` : `텍스트 ${targets.length}개에 스타일을 적용했습니다.` };
   }
 
+  function normalizeTypographyDefinitionId(value) {
+    const normalized = String(value || '')
+      .normalize('NFKC')
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/[^\p{L}\p{N}_-]+/gu, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .toLowerCase();
+    return normalized;
+  }
+
+  function createTypographyDefinitionId({ id = '', name = '' } = {}) {
+    const normalizedId = normalizeTypographyDefinitionId(id);
+    if (normalizedId) return normalizedId;
+    const baseId = normalizeTypographyDefinitionId(slugify(name) || name) || nextId('typo');
+    let styleId = baseId;
+    let suffix = 2;
+    while (typographyDefinitions.some((item) => item.id === styleId)) {
+      styleId = `${baseId}-${suffix}`;
+      suffix += 1;
+    }
+    return styleId;
+  }
+
+  function toTextStylePatchFromDefinitionPatch(patch = {}) {
+    const normalized = {};
+    const source = patch || {};
+    if (Object.prototype.hasOwnProperty.call(source, 'font-size')) {
+      const fontSize = Number.parseFloat(source['font-size']);
+      if (Number.isFinite(fontSize) && fontSize > 0) normalized.fontSize = fontSize;
+    }
+    if (Object.prototype.hasOwnProperty.call(source, 'line-height')) {
+      const lineHeight = Number.parseFloat(source['line-height']);
+      if (Number.isFinite(lineHeight) && lineHeight > 0) normalized.lineHeight = lineHeight;
+    }
+    if (Object.prototype.hasOwnProperty.call(source, 'letter-spacing')) {
+      const letterSpacing = String(source['letter-spacing'] || '').trim();
+      const emMatch = letterSpacing.match(/^(-?[\d.]+)em$/i);
+      if (emMatch) {
+        const letterSpacingValue = Number.parseFloat(emMatch[1]);
+        if (Number.isFinite(letterSpacingValue)) normalized.letterSpacing = letterSpacingValue;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(source, 'font-weight')) normalized.fontWeight = source['font-weight'];
+    if (Object.prototype.hasOwnProperty.call(source, 'color')) normalized.color = source.color;
+    if (Object.prototype.hasOwnProperty.call(source, 'text-align')) normalized.textAlign = source['text-align'];
+    if (Object.prototype.hasOwnProperty.call(source, 'font-variation-settings')) normalized.fontVariationSettings = source['font-variation-settings'];
+    if (Object.prototype.hasOwnProperty.call(source, 'font-feature-settings')) normalized.fontFeatureSettings = source['font-feature-settings'];
+    if (Object.prototype.hasOwnProperty.call(source, '--editor-optical-align')) normalized.opticalAlignment = source['--editor-optical-align'];
+    if (Object.prototype.hasOwnProperty.call(source, '--editor-baseline-step')) {
+      const baselineStep = String(source['--editor-baseline-step'] || '').trim();
+      const pxMatch = baselineStep.match(/^([\d.]+)px$/i);
+      if (pxMatch) {
+        const baselineStepValue = Number.parseFloat(pxMatch[1]);
+        if (Number.isFinite(baselineStepValue) && baselineStepValue > 0) normalized.baselineGridStep = baselineStepValue;
+      }
+    }
+    return normalized;
+  }
+
   function upsertTypographyDefinition({ id = '', name = '', kind = 'character', patch = {} } = {}) {
     const cleanName = String(name || '').trim();
     if (!cleanName) return { ok: false, message: '스타일 이름을 입력해 주세요.' };
-    const styleId = String(id || slugify(cleanName) || nextId('typo')).replace(/[^a-z0-9-_]/gi, '').toLowerCase();
+    const existingById = id ? typographyDefinitions.find((item) => item.id === normalizeTypographyDefinitionId(id)) : null;
+    const styleId = existingById?.id || createTypographyDefinitionId({ id, name: cleanName });
     const cleanPatch = Object.fromEntries(Object.entries(patch || {}).filter(([, value]) => value != null && value !== ''));
     const existingIndex = typographyDefinitions.findIndex((item) => item.id === styleId);
     const next = { id: styleId, name: cleanName, kind: kind === 'paragraph' ? 'paragraph' : 'character', patch: cleanPatch };
@@ -2077,7 +2139,8 @@ export function createFrameEditor({
   function applyTypographyDefinition(definitionId = '') {
     const definition = typographyDefinitions.find((item) => item.id === definitionId);
     if (!definition) return { ok: false, message: '선택한 스타일 정의를 찾을 수 없습니다.' };
-    return applyTextStyle({ styleClass: `typo-style-${definition.id}` });
+    const stylePatch = toTextStylePatchFromDefinitionPatch(definition.patch);
+    return applyTextStyle({ ...stylePatch, styleClass: `typo-style-${definition.id}` });
   }
 
   function inspectSlot(slot, slotRecord) {
