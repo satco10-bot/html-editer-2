@@ -1743,6 +1743,26 @@ function decodeData(value) {
   }
 }
 
+const LAYOUT_ENGINE_ATTR = 'data-layout-engine';
+const LAYOUT_CONTAINER_ATTRS = [
+  LAYOUT_ENGINE_ATTR,
+  'data-layout-direction',
+  'data-layout-gap',
+  'data-layout-padding',
+  'data-layout-align',
+  'data-layout-wrap',
+  'data-layout-version',
+];
+const LAYOUT_CHILD_ATTRS = [
+  'data-layout-size',
+  'data-layout-min-w',
+  'data-layout-max-w',
+  'data-layout-min-h',
+  'data-layout-max-h',
+  'data-layout-constraint-x',
+  'data-layout-constraint-y',
+];
+
 function stripTransientRuntime(doc) {
   doc.getElementById(FRAME_STYLE_ID)?.remove();
   for (const runtimeNode of Array.from(doc.querySelectorAll('[data-editor-runtime="1"]'))) runtimeNode.remove();
@@ -3510,9 +3530,164 @@ function createFrameEditor({
     return { ok: true, message: `이미지 위치를 ${dx || 0}, ${dy || 0}만큼 미세 조정했습니다.` };
   }
 
+  function parseLayoutPadding(value = '0') {
+    const nums = String(value || '0').split(/[,\s]+/).map((item) => Number.parseFloat(item)).filter((item) => Number.isFinite(item));
+    if (!nums.length) return { top: 0, right: 0, bottom: 0, left: 0 };
+    if (nums.length === 1) return { top: nums[0], right: nums[0], bottom: nums[0], left: nums[0] };
+    if (nums.length === 2) return { top: nums[0], right: nums[1], bottom: nums[0], left: nums[1] };
+    if (nums.length === 3) return { top: nums[0], right: nums[1], bottom: nums[2], left: nums[1] };
+    return { top: nums[0], right: nums[1], bottom: nums[2], left: nums[3] };
+  }
+
+  function clampWithMinMax(size, minRaw, maxRaw) {
+    const min = Number.parseFloat(minRaw);
+    const max = Number.parseFloat(maxRaw);
+    let next = Number.isFinite(size) ? size : 0;
+    if (Number.isFinite(min)) next = Math.max(next, min);
+    if (Number.isFinite(max)) next = Math.min(next, max);
+    return next;
+  }
+
+  function getLayoutChildren(container) {
+    return Array.from(container?.children || []).filter((child) => isElement(child) && !isHiddenElement(child));
+  }
+
+  function applyConstraintsForContainerResize(container, beforeRect, afterRect) {
+    if (!container || !beforeRect || !afterRect) return;
+    const dx = afterRect.width - beforeRect.width;
+    const dy = afterRect.height - beforeRect.height;
+    if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return;
+    for (const child of getLayoutChildren(container)) {
+      if (child.dataset.layoutSize) continue;
+      const constraintsX = child.dataset.layoutConstraintX || 'left';
+      const constraintsY = child.dataset.layoutConstraintY || 'top';
+      if (constraintsX === 'right') shiftElementBy(child, dx, 0);
+      else if (constraintsX === 'center') shiftElementBy(child, dx / 2, 0);
+      else if (constraintsX === 'scale') {
+        const ratio = beforeRect.width > 0 ? afterRect.width / beforeRect.width : 1;
+        const width = clampWithMinMax(child.getBoundingClientRect().width * ratio, child.dataset.layoutMinW, child.dataset.layoutMaxW);
+        setInlineStyle(child, { width: `${Math.round(width)}px` });
+      } else if (constraintsX === 'stretch') {
+        const width = clampWithMinMax(child.getBoundingClientRect().width + dx, child.dataset.layoutMinW, child.dataset.layoutMaxW);
+        setInlineStyle(child, { width: `${Math.round(width)}px` });
+      }
+
+      if (constraintsY === 'bottom') shiftElementBy(child, 0, dy);
+      else if (constraintsY === 'center') shiftElementBy(child, 0, dy / 2);
+      else if (constraintsY === 'scale') {
+        const ratio = beforeRect.height > 0 ? afterRect.height / beforeRect.height : 1;
+        const height = clampWithMinMax(child.getBoundingClientRect().height * ratio, child.dataset.layoutMinH, child.dataset.layoutMaxH);
+        setInlineStyle(child, { height: `${Math.round(height)}px` });
+      } else if (constraintsY === 'stretch') {
+        const height = clampWithMinMax(child.getBoundingClientRect().height + dy, child.dataset.layoutMinH, child.dataset.layoutMaxH);
+        setInlineStyle(child, { height: `${Math.round(height)}px` });
+      }
+    }
+  }
+
+  function runLayoutEngine(container) {
+    if (!container || container.getAttribute(LAYOUT_ENGINE_ATTR) !== '1') return false;
+    const direction = container.dataset.layoutDirection === 'horizontal' ? 'horizontal' : 'vertical';
+    const axis = direction === 'horizontal' ? 'x' : 'y';
+    const gap = Math.max(0, Number.parseFloat(container.dataset.layoutGap || '24') || 24);
+    const align = container.dataset.layoutAlign || 'start';
+    const wrap = container.dataset.layoutWrap === 'wrap';
+    const padding = parseLayoutPadding(container.dataset.layoutPadding || '0');
+    const containerRect = container.getBoundingClientRect();
+    const innerMain = axis === 'x'
+      ? Math.max(0, containerRect.width - padding.left - padding.right)
+      : Math.max(0, containerRect.height - padding.top - padding.bottom);
+    const records = getLayoutChildren(container).map((element) => {
+      const rect = element.getBoundingClientRect();
+      const sizeMode = element.dataset.layoutSize || 'fixed';
+      const mainSizeRaw = axis === 'x' ? rect.width : rect.height;
+      const crossSizeRaw = axis === 'x' ? rect.height : rect.width;
+      const minMain = axis === 'x' ? element.dataset.layoutMinW : element.dataset.layoutMinH;
+      const maxMain = axis === 'x' ? element.dataset.layoutMaxW : element.dataset.layoutMaxH;
+      const minCross = axis === 'x' ? element.dataset.layoutMinH : element.dataset.layoutMinW;
+      const maxCross = axis === 'x' ? element.dataset.layoutMaxH : element.dataset.layoutMaxW;
+      return {
+        element,
+        rect,
+        sizeMode,
+        mainSize: clampWithMinMax(mainSizeRaw, minMain, maxMain),
+        crossSize: clampWithMinMax(crossSizeRaw, minCross, maxCross),
+        minMain,
+        maxMain,
+        minCross,
+        maxCross,
+      };
+    });
+    if (!records.length) return false;
+    const lines = [];
+    let line = [];
+    let lineMain = 0;
+    for (const record of records) {
+      const projected = line.length ? lineMain + gap + record.mainSize : record.mainSize;
+      if (wrap && line.length && projected > innerMain) {
+        lines.push(line);
+        line = [record];
+        lineMain = record.mainSize;
+      } else {
+        line.push(record);
+        lineMain = projected;
+      }
+    }
+    if (line.length) lines.push(line);
+
+    let crossCursor = axis === 'x' ? padding.top : padding.left;
+    for (const currentLine of lines) {
+      const fillItems = currentLine.filter((item) => item.sizeMode === 'fill');
+      const fixedMain = currentLine.reduce((sum, item) => sum + (item.sizeMode === 'fill' ? 0 : item.mainSize), 0);
+      const freeMain = Math.max(0, innerMain - fixedMain - gap * Math.max(0, currentLine.length - 1));
+      const fillMain = fillItems.length ? freeMain / fillItems.length : 0;
+      const lineCross = currentLine.reduce((max, item) => Math.max(max, item.crossSize), 0);
+      let mainCursor = axis === 'x' ? padding.left : padding.top;
+      for (const item of currentLine) {
+        const nextMain = item.sizeMode === 'fill'
+          ? clampWithMinMax(fillMain, item.minMain, item.maxMain)
+          : clampWithMinMax(item.mainSize, item.minMain, item.maxMain);
+        const nextCross = align === 'stretch'
+          ? clampWithMinMax(lineCross, item.minCross, item.maxCross)
+          : clampWithMinMax(item.crossSize, item.minCross, item.maxCross);
+        let crossPos = crossCursor;
+        if (align === 'center') crossPos = crossCursor + (lineCross - nextCross) / 2;
+        else if (align === 'end') crossPos = crossCursor + Math.max(0, lineCross - nextCross);
+        const targetX = axis === 'x' ? mainCursor : crossPos;
+        const targetY = axis === 'x' ? crossPos : mainCursor;
+        const currentRect = item.element.getBoundingClientRect();
+        const dx = targetX - (currentRect.left - containerRect.left);
+        const dy = targetY - (currentRect.top - containerRect.top);
+        shiftElementBy(item.element, dx, dy);
+        setInlineStyle(item.element, {
+          width: `${Math.round(axis === 'x' ? nextMain : nextCross)}px`,
+          height: `${Math.round(axis === 'x' ? nextCross : nextMain)}px`,
+        });
+        mainCursor += nextMain + gap;
+      }
+      crossCursor += lineCross + gap;
+    }
+    return true;
+  }
+
+  function migrateLayoutContainerToManual(container) {
+    if (!container || container.getAttribute(LAYOUT_ENGINE_ATTR) !== '1') return false;
+    for (const attr of LAYOUT_CONTAINER_ATTRS) container.removeAttribute(attr);
+    for (const child of getLayoutChildren(container)) {
+      for (const attr of LAYOUT_CHILD_ATTRS) child.removeAttribute(attr);
+    }
+    return true;
+  }
+
   function applyBatchLayout(action) {
     const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
     if (!targets.length) return { ok: false, message: '먼저 잠기지 않은 요소를 선택해 주세요.' };
+    const managedContainers = new Set(
+      targets
+        .map((element) => element.parentElement)
+        .filter((parent) => parent?.getAttribute?.(LAYOUT_ENGINE_ATTR) === '1'),
+    );
+    for (const container of managedContainers) migrateLayoutContainerToManual(container);
     if (action !== 'reset-transform' && targets.length < 2) return { ok: false, message: '정렬/간격 작업은 2개 이상 선택해야 합니다.' };
     const records = targets.map((element) => ({ element, rect: element.getBoundingClientRect() }));
     const anchor = records[0];
@@ -3591,34 +3766,30 @@ function createFrameEditor({
   }
 
   function applyStackLayout({ direction = 'vertical', gap = 24, align = 'start' } = {}) {
-    const axis = direction === 'horizontal' ? 'x' : 'y';
-    const crossAxis = axis === 'x' ? 'y' : 'x';
     const normalizedGap = Number.isFinite(gap) ? Math.max(0, gap) : 24;
     const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
     if (targets.length < 2) return { ok: false, message: '스택 정렬은 2개 이상 선택해야 합니다.' };
-    const records = targets.map((element) => ({ element, rect: element.getBoundingClientRect() }));
-    const sorted = [...records].sort((a, b) => axis === 'x' ? a.rect.left - b.rect.left : a.rect.top - b.rect.top);
-    const anchor = sorted[0].rect;
-    let cursor = axis === 'x' ? anchor.left : anchor.top;
-    for (const record of sorted) {
-      const primary = axis === 'x' ? record.rect.left : record.rect.top;
-      const secondary = axis === 'x' ? record.rect.top : record.rect.left;
-      const size = axis === 'x' ? record.rect.width : record.rect.height;
-      const crossSize = axis === 'x' ? record.rect.height : record.rect.width;
-      let targetCross = axis === 'x' ? anchor.top : anchor.left;
-      if (align === 'center') {
-        targetCross = (axis === 'x' ? anchor.top + (anchor.height - crossSize) / 2 : anchor.left + (anchor.width - crossSize) / 2);
-      } else if (align === 'end') {
-        targetCross = axis === 'x' ? anchor.bottom - crossSize : anchor.right - crossSize;
-      }
-      const deltaPrimary = cursor - primary;
-      const deltaCross = targetCross - secondary;
-      shiftElementBy(record.element, axis === 'x' ? deltaPrimary : deltaCross, axis === 'x' ? deltaCross : deltaPrimary);
-      cursor += size + normalizedGap;
+    const parents = new Set(targets.map((element) => element.parentElement).filter(Boolean));
+    if (parents.size !== 1) return { ok: false, message: '스택 정렬은 같은 부모 안의 요소만 가능합니다.' };
+    const container = Array.from(parents)[0];
+    container.setAttribute(LAYOUT_ENGINE_ATTR, '1');
+    container.dataset.layoutVersion = '1';
+    container.dataset.layoutDirection = direction === 'horizontal' ? 'horizontal' : 'vertical';
+    container.dataset.layoutGap = String(Math.round(normalizedGap));
+    container.dataset.layoutAlign = ['start', 'center', 'end', 'stretch'].includes(align) ? align : 'start';
+    if (!container.dataset.layoutPadding) container.dataset.layoutPadding = '0';
+    if (!container.dataset.layoutWrap) container.dataset.layoutWrap = 'nowrap';
+    for (const element of targets) {
+      if (!element.dataset.layoutSize) element.dataset.layoutSize = 'fixed';
+      if (!element.dataset.layoutConstraintX) element.dataset.layoutConstraintX = 'left';
+      if (!element.dataset.layoutConstraintY) element.dataset.layoutConstraintY = 'top';
+      element.dataset.editorModified = '1';
+      if (element.dataset.nodeUid) modifiedSlots.add(element.dataset.nodeUid);
     }
+    runLayoutEngine(container);
     emitState();
-    emitMutation(axis === 'x' ? 'stack-horizontal' : 'stack-vertical');
-    return { ok: true, message: `선택 요소 ${records.length}개를 ${direction === 'horizontal' ? '가로' : '세로'} 스택으로 정렬했습니다.` };
+    emitMutation(direction === 'horizontal' ? 'stack-horizontal' : 'stack-vertical');
+    return { ok: true, message: `선택 요소 ${targets.length}개를 오토 레이아웃(${direction === 'horizontal' ? '가로' : '세로'})으로 변환했습니다.` };
   }
 
   function tidySelection({ axis = 'x' } = {}) {
@@ -3645,6 +3816,58 @@ function createFrameEditor({
     emitState();
     emitMutation(normalizedAxis === 'x' ? 'tidy-horizontal' : 'tidy-vertical');
     return { ok: true, message: `선택 요소 ${records.length}개의 ${normalizedAxis === 'x' ? '가로' : '세로'} 간격을 균등화했습니다.` };
+  }
+
+  function configureSelectedLayoutContainer({
+    direction,
+    gap,
+    padding,
+    align,
+    wrap,
+  } = {}) {
+    const container = selectedElement;
+    if (!container) return { ok: false, message: '먼저 컨테이너를 선택해 주세요.' };
+    container.setAttribute(LAYOUT_ENGINE_ATTR, '1');
+    container.dataset.layoutVersion = '1';
+    if (direction) container.dataset.layoutDirection = direction === 'horizontal' ? 'horizontal' : 'vertical';
+    if (gap != null) container.dataset.layoutGap = String(Math.max(0, Number.parseFloat(gap) || 0));
+    if (padding != null) container.dataset.layoutPadding = String(padding);
+    if (align) container.dataset.layoutAlign = align;
+    if (wrap) container.dataset.layoutWrap = wrap === 'wrap' ? 'wrap' : 'nowrap';
+    runLayoutEngine(container);
+    emitState();
+    emitMutation('layout-container-config');
+    return { ok: true, message: '컨테이너 레이아웃 규칙을 업데이트했습니다.' };
+  }
+
+  function configureSelectedChildLayout({
+    size = null,
+    minW = null,
+    maxW = null,
+    minH = null,
+    maxH = null,
+    constraintX = null,
+    constraintY = null,
+  } = {}) {
+    const targets = uniqueConnectedElements(selectedElements).filter((element) => !isLockedElement(element));
+    if (!targets.length) return { ok: false, message: '먼저 자식 요소를 선택해 주세요.' };
+    let hasLayoutContainer = false;
+    for (const element of targets) {
+      if (size) element.dataset.layoutSize = size;
+      if (minW != null) element.dataset.layoutMinW = String(minW);
+      if (maxW != null) element.dataset.layoutMaxW = String(maxW);
+      if (minH != null) element.dataset.layoutMinH = String(minH);
+      if (maxH != null) element.dataset.layoutMaxH = String(maxH);
+      if (constraintX) element.dataset.layoutConstraintX = constraintX;
+      if (constraintY) element.dataset.layoutConstraintY = constraintY;
+      const container = element.parentElement;
+      if (container?.getAttribute?.(LAYOUT_ENGINE_ATTR) === '1') hasLayoutContainer = runLayoutEngine(container) || hasLayoutContainer;
+      element.dataset.editorModified = '1';
+      if (element.dataset.nodeUid) modifiedSlots.add(element.dataset.nodeUid);
+    }
+    emitState();
+    emitMutation(hasLayoutContainer ? 'layout-child-config' : 'constraints-config');
+    return { ok: true, message: `자식 요소 ${targets.length}개의 레이아웃/constraints를 업데이트했습니다.` };
   }
 
   function applyTextStyle(patch = {}, { clear = false } = {}) {
@@ -4571,6 +4794,7 @@ function createFrameEditor({
       win,
     });
     if (!nextState) return false;
+    nextState.startRect = nextState.target.getBoundingClientRect();
     resizeState = nextState;
     return true;
   }
@@ -4606,6 +4830,8 @@ function createFrameEditor({
     });
     applyModelNodesToDom(doc, editorModel, [uid]);
     writeTransformState(target, tx, ty);
+    if (target.getAttribute(LAYOUT_ENGINE_ATTR) === '1') runLayoutEngine(target);
+    else applyConstraintsForContainerResize(target, resizeState.startRect, target.getBoundingClientRect());
     target.dataset.editorModified = '1';
     if (target.dataset.nodeUid) modifiedSlots.add(target.dataset.nodeUid);
     updateResizeOverlay();
@@ -4742,6 +4968,8 @@ function createFrameEditor({
     if (command === 'layer-index-back') return applyLayerIndexCommand('back');
     if (command === 'stack-horizontal') return applyStackLayout({ ...payload, direction: 'horizontal' });
     if (command === 'stack-vertical') return applyStackLayout({ ...payload, direction: 'vertical' });
+    if (command === 'layout-config-container') return configureSelectedLayoutContainer(payload);
+    if (command === 'layout-config-children') return configureSelectedChildLayout(payload);
     if (command === 'tidy-horizontal') return tidySelection({ axis: 'x' });
     if (command === 'tidy-vertical') return tidySelection({ axis: 'y' });
     if (command === 'undo' || command === 'redo' || command === 'save-edited') {
@@ -4969,6 +5197,8 @@ function createFrameEditor({
     applyTextStyle,
     applyBatchLayout,
     applyStackLayout,
+    configureSelectedLayoutContainer,
+    configureSelectedChildLayout,
     tidySelection,
     duplicateSelected,
     deleteSelected,
