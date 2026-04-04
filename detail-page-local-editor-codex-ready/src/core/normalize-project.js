@@ -340,6 +340,8 @@ export function normalizeProject({
     assets,
     slotDetection,
     remoteStylesheets,
+    importFileIndex: fileIndex || null,
+    htmlEntryPath,
     releaseResources: () => resolver.release(),
     fileContext: {
       mode: fileIndex?.mode || sourceType,
