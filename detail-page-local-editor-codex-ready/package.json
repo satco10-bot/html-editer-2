@@ -5,6 +5,10 @@
   "scripts": {
     "build:local": "python3 scripts/build_local_bundle.py",
     "validate": "python3 scripts/validate_phase8.py",
-    "test:workflow": "python3 scripts/test_workflow_html_image_png.py"
+    "test:workflow": "python3 scripts/test_workflow_html_image_png.py",
+    "test:slot-matrix": "node scripts/test_slot_detection_matrix.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^29.0.1"
   }
 }
