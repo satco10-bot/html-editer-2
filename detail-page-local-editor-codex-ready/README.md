@@ -274,6 +274,17 @@ python3 scripts/test_workflow_html_image_png.py
   python3 scripts/build_local_bundle.py
   ```
 
+### CI에서 `bundle-sync`가 실패할 때(초보자용)
+`Run git diff --exit-code -- detail-page-local-editor-codex-ready/app.bundle.js` 단계가 실패하면, 대부분은 **소스(`src/`)는 바뀌었는데 번들(`app.bundle.js`) 커밋이 빠진 상태**입니다.
+
+아래 3줄을 순서대로 실행한 뒤, `app.bundle.js` 변경분까지 같이 커밋하면 해결됩니다.
+
+```bash
+python3 scripts/build_local_bundle.py
+node --check app.bundle.js
+git add app.bundle.js
+```
+
 ## Phase8 파이프라인 실행 가이드 (처음 실행도 바로 동작)
 1. 먼저 아래 **한 줄**만 실행합니다.
    ```bash
